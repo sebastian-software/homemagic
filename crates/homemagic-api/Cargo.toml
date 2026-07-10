@@ -1,0 +1,21 @@
+[package]
+name = "homemagic-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum.workspace = true
+homemagic-application = { path = "../homemagic-application" }
+homemagic-domain = { path = "../homemagic-domain" }
+serde.workspace = true
+serde_json.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

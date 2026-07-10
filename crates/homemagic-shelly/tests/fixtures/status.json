@@ -1,0 +1,28 @@
+{
+  "sys": {
+    "mac": "A8032AB67A84",
+    "uptime": 12345
+  },
+  "switch:0": {
+    "id": 0,
+    "output": true,
+    "apower": 12.4,
+    "voltage": 230.1,
+    "current": 0.06,
+    "aenergy": { "total": 42.5 }
+  },
+  "light:0": {
+    "id": 0,
+    "output": true,
+    "brightness": 64
+  },
+  "cover:0": {
+    "id": 0,
+    "state": "stopped",
+    "current_pos": 37,
+    "apower": 0,
+    "voltage": 230,
+    "current": 0,
+    "aenergy": { "total": 19.2 }
+  }
+}

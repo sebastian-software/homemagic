@@ -1,0 +1,13 @@
+{
+  "sys": {
+    "device": {
+      "name": "Office cover",
+      "mac": "A8032AB67A84",
+      "fw_id": "20260101-120000/1.6.0"
+    }
+  },
+  "cover:0": {
+    "id": 0,
+    "name": null
+  }
+}
