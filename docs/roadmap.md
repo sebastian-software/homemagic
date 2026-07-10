@@ -5,6 +5,8 @@ evidence exists in the repository or a repeatable hardware test report.
 
 ## M0: Architecture and executable discovery prototype
 
+Status: implemented on macOS Apple Silicon; Linux x86_64 CI configured.
+
 Goal: prove the modular boundaries and see local Shelly Gen2+ devices through a
 HomeMagic-owned API.
 
@@ -13,7 +15,8 @@ Acceptance evidence:
 - Home Assistant architecture research and initial ADRs are committed;
 - the application builds on macOS Apple Silicon;
 - tests and Clippy pass;
-- `_shelly._tcp.local.` discovery resolves device addresses;
+- `_shelly._tcp.local.` or Shelly-filtered `_http._tcp.local.` discovery resolves
+  device addresses;
 - device info and unauthenticated status are projected into the capability model;
 - `devices.list` returns the current snapshots through JSON-RPC;
 - a fixture-backed test proves projection for switch, light, and cover examples.
@@ -73,4 +76,3 @@ FFI exception requires the evidence specified by ADR-0005.
 - cloud relay or hosted account system;
 - broad Home Assistant configuration compatibility;
 - arbitrary agent-generated executable code.
-

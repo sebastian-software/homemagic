@@ -18,7 +18,8 @@ the most important initial capabilities.
 
 The first vertical slice supports unauthenticated Shelly Gen2+ devices:
 
-1. discover `_shelly._tcp.local.` services;
+1. discover `_shelly._tcp.local.` services, falling back to Shelly-filtered
+   `_http._tcp.local.` advertisements;
 2. resolve IP address and port;
 3. fetch `Shelly.GetDeviceInfo` and `Shelly.GetStatus`;
 4. project recognized components into HomeMagic capabilities;
@@ -27,6 +28,10 @@ The first vertical slice supports unauthenticated Shelly Gen2+ devices:
 Authentication, persistent WebSocket notifications, Gen1 CoIoT, command dispatch,
 and dynamic component pagination follow in later slices.
 
+On macOS, the prototype may fall back to the operating system's `dns-sd` client
+when the pure-Rust multicast socket cannot observe services already known to
+mDNSResponder. This is a platform adapter, not part of the domain contract.
+
 ## Consequences
 
 - The first executable can be tested against common local hardware.
@@ -34,4 +39,3 @@ and dynamic component pagination follow in later slices.
 - Matter stays an early roadmap item without blocking kernel validation.
 - Authenticated devices are visible by identity but cannot initially provide full
   status.
-

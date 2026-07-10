@@ -1,7 +1,7 @@
 # Initial Shelly Discovery Vertical Slice
 
 - Date: 2026-07-11
-- Status: In progress
+- Status: Implemented prototype; review pending
 
 ## Outcome
 
@@ -15,7 +15,8 @@ a HomeMagic JSON-RPC endpoint.
 ### Included
 
 - Rust workspace with domain, Shelly adapter, API, and application crates;
-- mDNS browse for `_shelly._tcp.local.`;
+- mDNS browse for `_shelly._tcp.local.` with a Shelly-filtered
+  `_http._tcp.local.` fallback;
 - `Shelly.GetDeviceInfo` and `Shelly.GetStatus` over HTTP;
 - in-memory registry with stable IDs and freshness metadata;
 - projections for `switch:*`, `light:*`, and `cover:*` status;
@@ -64,3 +65,18 @@ Hardware verification records the host platform, HomeMagic commit, Shelly model,
 firmware version, discovery result, projected capabilities, and any authentication
 limitation.
 
+## Verification record
+
+On 2026-07-11, macOS Apple Silicon hardware verification found 49 local Shelly
+Gen2/3 devices in a one-shot scan. A separate daemon run populated 44 devices and
+returned all 44 through `devices.list`. The difference is expected for a bounded,
+best-effort discovery window and is recorded rather than normalized away.
+
+The Rust format, Clippy, and test gates passed with nine unit tests. A local Linux
+x86_64 cross-check reached a native TLS dependency build script but could not
+continue without an `x86_64-linux-gnu-gcc` cross compiler. The repository CI runs
+the complete quality gate natively on Linux x86_64.
+
+The remaining scope items intentionally move to M1: authentication, persistent
+subscriptions, durable storage, command dispatch, and stronger discovery
+reconciliation.
