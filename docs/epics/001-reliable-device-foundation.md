@@ -1,7 +1,7 @@
 # EPIC-001: Reliable Device Foundation
 
 - Milestone: M1
-- Status: Ready
+- Status: In progress
 - Depends on: M0 discovery prototype
 - Unlocks: EPIC-002, Matter feasibility work in EPIC-004
 
@@ -18,6 +18,11 @@ then converge with the local network. Their names, endpoints, capabilities,
 availability, and observations remain stable across restarts. State changes arrive
 without a manual refresh, and connection problems are diagnosable without reading
 debug logs.
+
+## Implementation tracking
+
+- [Implementation design](../superpowers/specs/2026-07-11-epic-001-reliable-device-foundation-design.md)
+- [Dependency-ordered issue index](../issues/epic-001/README.md)
 
 ## Scope
 
@@ -162,3 +167,5 @@ debug logs.
 ## Progress log
 
 - 2026-07-11: Epic created from the verified M0 prototype.
+- 2026-07-11: Implementation started with a dependency-ordered design and nine
+  repository-tracked issues. Evidence: `docs/issues/epic-001/README.md`.
