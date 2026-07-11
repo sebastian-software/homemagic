@@ -53,6 +53,9 @@ pub enum AutomationEvaluationError {
     /// A compiled timezone or local-time value was invalid.
     #[error("automation evaluation time window is invalid")]
     InvalidTimeWindow,
+    /// The host must represent continuous duration as durable waiting state.
+    #[error("automation evaluation requires a durable duration wait")]
+    DurableDurationRequired,
 }
 
 /// Evaluates one compiled expression against immutable inputs.

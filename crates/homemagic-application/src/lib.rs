@@ -4,6 +4,7 @@ mod authentication;
 mod automation_compiler;
 mod automation_evaluator;
 mod automation_repository;
+mod automation_runtime;
 mod automation_scheduler;
 mod automation_simulator;
 mod command_service;
@@ -42,6 +43,7 @@ pub use automation_repository::{
     AutomationSimulationEvidence, AutomationStepWrite, AutomationValidationEvidence,
     StoredAutomationVersion,
 };
+pub use automation_runtime::{AutomationRuntime, AutomationRuntimeError, AutomationRuntimeStep};
 pub use automation_scheduler::{
     AutomationScheduler, AutomationSchedulerError, AutomationSchedulerTick,
 };

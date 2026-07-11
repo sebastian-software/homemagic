@@ -738,7 +738,7 @@ fn transition_run(
         });
     }
     if run.revision != expected_revision.saturating_add(1)
-        || !current.state.allows_transition_to(run.state)
+        || !current.state.allows_revision_to(run.state)
         || current.automation_id != run.automation_id
         || current.version != run.version
         || current.occurrence_id != run.occurrence_id

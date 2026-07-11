@@ -1197,6 +1197,17 @@ impl AutomationRunState {
             )
         )
     }
+
+    /// Returns whether a persisted interpreter revision may retain or change
+    /// the run state.
+    ///
+    /// Non-terminal runs checkpoint node, variable, command, and trace
+    /// progress without inventing a state-machine edge. Terminal aggregates
+    /// remain immutable.
+    #[must_use]
+    pub const fn allows_revision_to(self, next: Self) -> bool {
+        (self as u8 == next as u8 && !self.is_terminal()) || self.allows_transition_to(next)
+    }
 }
 
 /// Durable schedule or event occurrence state.
@@ -1455,6 +1466,15 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+
+    #[test]
+    fn run_revision_should_checkpoint_only_non_terminal_states() {
+        assert!(AutomationRunState::Running.allows_revision_to(AutomationRunState::Running));
+        assert!(AutomationRunState::Waiting.allows_revision_to(AutomationRunState::Waiting));
+        assert!(AutomationRunState::Running.allows_revision_to(AutomationRunState::Waiting));
+        assert!(!AutomationRunState::Completed.allows_revision_to(AutomationRunState::Completed));
+        assert!(!AutomationRunState::Failed.allows_revision_to(AutomationRunState::Running));
+    }
 
     fn version() -> AutomationVersion {
         AutomationVersion::new(1).unwrap_or_else(|error| panic!("version: {error}"))

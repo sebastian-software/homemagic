@@ -49,3 +49,7 @@ updated: 2026-07-11
   observation, and IANA-time-window decisions into the shared
   `AutomationEvaluationContext` evaluator. Continuous duration remains an
   explicit host policy so runtime can persist timers instead of blocking.
+- 2026-07-11: Added the first one-node-per-commit runtime path for pending
+  acceptance, variables, branches, joins, completion, and durable delays.
+  SQLite evidence closes and reopens the repository between timer creation and
+  consumption, then proves one terminal run with a contiguous four-step trace.

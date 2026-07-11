@@ -56,3 +56,17 @@ only continuous-duration behavior: simulation advances virtual time, while the
 runtime must represent elapsed time with durable timers. This prevents the two
 hosts from quietly developing different branch or variable semantics while
 preserving restart-safe runtime waiting.
+
+## Durable node checkpoints
+
+The first runtime executor advances at most one lifecycle or plan node per
+call. Pending acceptance, variable assignment, branch selection, joins,
+completion, delay creation, and delay consumption each increment the optimistic
+run revision. A non-terminal run may retain its state while checkpointing
+progress; terminal runs remain immutable. Delay creation stores the waiting run,
+trace, and deterministic timer atomically. After restart, the scheduler readies
+the timer and the executor consumes it atomically with the next run revision.
+
+Command, wait-condition, parallel, and race nodes are not yet enabled by this
+slice. They remain explicit errors until their intent, continuation, and
+failure-policy state is represented durably.

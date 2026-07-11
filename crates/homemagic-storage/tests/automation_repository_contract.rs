@@ -1,13 +1,14 @@
 //! `SQLite` contracts for durable automation governance and restart work.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
     AutomationActivation, AutomationCompiler, AutomationDraft, AutomationRepository,
-    AutomationRetention, AutomationScheduler, AutomationSimulationEvidence, AutomationStepWrite,
-    AutomationValidationEvidence, BoxError, Clock, FoundationSnapshot, StoredAutomationVersion,
+    AutomationRetention, AutomationRuntime, AutomationRuntimeStep, AutomationScheduler,
+    AutomationSimulationEvidence, AutomationStepWrite, AutomationValidationEvidence, BoxError,
+    Clock, FoundationSnapshot, MemoryFoundationRepository, StoredAutomationVersion,
 };
 use homemagic_domain::{
     ActorId, AutomationApprovalId, AutomationApprovalRecord, AutomationApprovalRequirement,
@@ -410,11 +411,126 @@ async fn interpreter_step_should_commit_run_trace_and_timer_atomically() -> Test
     Ok(())
 }
 
+#[tokio::test]
+async fn runtime_should_resume_durable_delay_after_repository_reopen() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("runtime-resume.sqlite3");
+    let repository = Arc::new(SqliteRepository::open(&path)?);
+    let stored = stored_version();
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let occurrence = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(occurrence.clone())
+        .await?;
+    let mut pending = run(&stored, &occurrence, now);
+    pending.id = AutomationRunId::from_occurrence(&occurrence.id);
+    repository.create_automation_run(pending.clone()).await?;
+    let clock = Arc::new(ManualClock::new(now));
+    let runtime = AutomationRuntime::new(
+        repository.clone(),
+        Arc::new(MemoryFoundationRepository::default()),
+        clock.clone(),
+    );
+
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Waiting
+    );
+    let waiting = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("waiting run"));
+    assert_eq!(waiting.state, AutomationRunState::Waiting);
+    assert_eq!(waiting.revision, 2);
+    drop(runtime);
+    drop(repository);
+
+    clock.set(now + TimeDelta::milliseconds(20));
+    let reopened = Arc::new(SqliteRepository::open(&path)?);
+    let scheduler = AutomationScheduler::new(reopened.clone(), clock.clone());
+    let tick = scheduler.tick(clock.now(), clock.now()).await?;
+    assert_eq!(tick.timers_ready, 1);
+    let resumed = AutomationRuntime::new(
+        reopened.clone(),
+        Arc::new(MemoryFoundationRepository::default()),
+        clock,
+    );
+    assert_eq!(
+        resumed.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        resumed.step(&pending.id).await?,
+        AutomationRuntimeStep::Completed
+    );
+
+    let completed = reopened
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("completed run"));
+    assert_eq!(completed.state, AutomationRunState::Completed);
+    assert_eq!(completed.revision, 4);
+    assert_eq!(
+        reopened
+            .automation_trace(&pending.id, None, 10)
+            .await?
+            .iter()
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            AutomationTraceKind::Trigger,
+            AutomationTraceKind::Timer,
+            AutomationTraceKind::Timer,
+            AutomationTraceKind::Outcome,
+        ]
+    );
+    assert!(
+        reopened
+            .recoverable_automation_work(10)
+            .await?
+            .timers
+            .is_empty()
+    );
+    Ok(())
+}
+
 struct FixedClock(chrono::DateTime<Utc>);
 
 impl Clock for FixedClock {
     fn now(&self) -> chrono::DateTime<Utc> {
         self.0
+    }
+}
+
+struct ManualClock(Mutex<chrono::DateTime<Utc>>);
+
+impl ManualClock {
+    fn new(now: chrono::DateTime<Utc>) -> Self {
+        Self(Mutex::new(now))
+    }
+
+    fn set(&self, now: chrono::DateTime<Utc>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = now;
+    }
+}
+
+impl Clock for ManualClock {
+    fn now(&self) -> chrono::DateTime<Utc> {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
