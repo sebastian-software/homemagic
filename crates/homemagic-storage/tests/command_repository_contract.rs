@@ -154,6 +154,8 @@ fn audit(command: &CommandAggregate, from: Option<CommandState>) -> CommandAudit
         actor_id: command.envelope.actor_id.clone(),
         policy: command.policy.clone(),
         failure: command.failure.clone(),
+        acknowledgement: command.acknowledgement.clone(),
+        confirmation: command.confirmation.clone(),
         correlation_id: command.envelope.correlation_id.clone(),
         causation_event_id: command.envelope.causation_event_id.clone(),
         occurred_at: command.updated_at,

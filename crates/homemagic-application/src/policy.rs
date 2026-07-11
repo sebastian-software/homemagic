@@ -206,6 +206,7 @@ impl CommandLimits {
                     }));
                 (rate_capacity, device)
             };
+        let device_was_available = device.available_permits() > 0;
         let permit = if rate_capacity == CapacityState::Available {
             device
                 .try_acquire_owned()
@@ -214,7 +215,7 @@ impl CommandLimits {
         } else {
             None
         };
-        let device_capacity = if permit.is_some() {
+        let device_capacity = if permit.is_some() || device_was_available {
             CapacityState::Available
         } else {
             CapacityState::Exhausted

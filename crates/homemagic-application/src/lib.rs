@@ -1,6 +1,7 @@
 //! `HomeMagic` application services and integration ports.
 
 mod authentication;
+mod command_service;
 mod memory;
 mod policy;
 mod ports;
@@ -25,6 +26,10 @@ pub use authentication::{
     ActorAuthentication, ActorAuthenticationError, ActorManagementError, ActorToken,
     AuthenticateActor,
 };
+pub use command_service::{
+    CommandRequest, CommandService, CommandServiceDependencies, CommandServiceError,
+    NoopCommandAuditSink,
+};
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use policy::{
     CommandLimitCapacities, CommandLimitConfig, CommandLimitConfigError, CommandLimits,
@@ -32,7 +37,8 @@ pub use policy::{
 };
 pub use ports::{
     ActorCredential, ActorSecurity, CanonicalRequestHash, CanonicalRequestHashError, Clock,
-    CommandCreateOutcome, CommandRepository, CommandRetention, CommandRetentionResult, CursorEvent,
+    CommandAuditSink, CommandConfirmation, CommandConfirmationOutcome, CommandCreateOutcome,
+    CommandDispatcher, CommandRepository, CommandRetention, CommandRetentionResult, CursorEvent,
     DomainEventSink, EventPage, FoundationRepository, FoundationSnapshot, FoundationWrite,
     IntegrationSessionPort, LiveObservationBatch, LiveObservationSink, RepositoryHealth,
     SecretStore, SecretStoreError, SecretValue, SystemClock,

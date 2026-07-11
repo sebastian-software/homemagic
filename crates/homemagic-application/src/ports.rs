@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
-    Actor, ActorGrant, ActorId, CapabilityObservation, CommandAggregate, CommandAuditRecord,
-    CommandId, DeviceId, DeviceRecord, DomainEvent, Installation, InstallationId,
-    IntegrationInstance, RepairRecord, SecretRef, Space,
+    Actor, ActorGrant, ActorId, AdapterAcknowledgement, CapabilityObservation, CommandAggregate,
+    CommandAuditRecord, CommandEnvelope, CommandFailure, CommandId, DeviceId, DeviceRecord,
+    DomainEvent, Installation, InstallationId, IntegrationInstance, ObservedConfirmation,
+    RepairRecord, SecretRef, Space,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -255,6 +256,44 @@ pub trait CommandRepository: Send + Sync {
         &self,
         policy: CommandRetention,
     ) -> Result<CommandRetentionResult, BoxError>;
+}
+
+/// Observation-backed confirmation result after dispatch or restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommandConfirmationOutcome {
+    /// Current observation proves the requested physical state.
+    Confirmed(ObservedConfirmation),
+    /// No conclusive observation is available yet.
+    Pending,
+    /// Observation or bounded read proved a terminal failure.
+    Failed(CommandFailure),
+}
+
+/// Adapter boundary receiving only validated, governed common commands.
+#[async_trait]
+pub trait CommandDispatcher: Send + Sync {
+    /// Dispatches one command after the `dispatched` transition is durable.
+    async fn dispatch(
+        &self,
+        command: &CommandEnvelope,
+    ) -> Result<AdapterAcknowledgement, CommandFailure>;
+}
+
+/// Observation boundary used after acknowledgement and during restart recovery.
+#[async_trait]
+pub trait CommandConfirmation: Send + Sync {
+    /// Checks physical outcome without issuing the command again.
+    async fn confirm(
+        &self,
+        command: &CommandAggregate,
+    ) -> Result<CommandConfirmationOutcome, BoxError>;
+}
+
+/// Fan-out boundary invoked only after a command audit transition commits.
+#[async_trait]
+pub trait CommandAuditSink: Send + Sync {
+    /// Publishes one typed committed audit record.
+    async fn publish(&self, audit: &CommandAuditRecord) -> Result<(), BoxError>;
 }
 
 /// Secret bytes that are zeroized when dropped and cannot be serialized.

@@ -269,7 +269,7 @@ impl CommandState {
                 Self::Dispatched | Self::Rejected | Self::TimedOut | Self::Cancelled
             ) | (
                 Self::Dispatched,
-                Self::Acknowledged | Self::Failed | Self::TimedOut
+                Self::Acknowledged | Self::Confirmed | Self::Failed | Self::TimedOut
             ) | (
                 Self::Acknowledged,
                 Self::Confirmed | Self::Failed | Self::TimedOut
@@ -559,6 +559,12 @@ pub struct CommandAuditRecord {
     pub policy: Option<PolicyDecision>,
     /// Stable failure detail for rejected or failed transitions.
     pub failure: Option<CommandFailure>,
+    /// Adapter acknowledgement visible on and after its durable transition.
+    #[serde(default)]
+    pub acknowledgement: Option<AdapterAcknowledgement>,
+    /// Observation-backed confirmation visible on the terminal transition.
+    #[serde(default)]
+    pub confirmation: Option<ObservedConfirmation>,
     /// Operation-wide correlation identity.
     pub correlation_id: CorrelationId,
     /// Optional directly causing event.
@@ -624,6 +630,7 @@ mod tests {
             (Validated, TimedOut),
             (Validated, Cancelled),
             (Dispatched, Acknowledged),
+            (Dispatched, Confirmed),
             (Dispatched, Failed),
             (Dispatched, TimedOut),
             (Acknowledged, Confirmed),

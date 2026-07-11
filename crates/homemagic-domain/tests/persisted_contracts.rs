@@ -133,6 +133,8 @@ fn command_audit_contract_should_round_trip() -> serde_json::Result<()> {
         actor_id: ActorId::new(),
         policy: None,
         failure: None,
+        acknowledgement: None,
+        confirmation: None,
         correlation_id: CorrelationId::new(),
         causation_event_id: None,
         occurred_at: Utc::now(),

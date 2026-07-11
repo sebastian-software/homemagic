@@ -101,11 +101,11 @@ from ADR-0009.
 - [x] Return the existing outcome for a repeated idempotency key and equivalent
   payload.
 - [x] Reject an idempotency-key collision with a different payload.
-- [ ] Enforce deadlines before and during dispatch.
+- [x] Enforce deadlines before and during dispatch.
 - [x] Record every transition in an append-only audit trail.
-- [ ] Include actor, policy decision, target, adapter result, and causation chain.
+- [x] Include actor, policy decision, target, adapter result, and causation chain.
 - [x] Redact credentials and sensitive payload fields.
-- [ ] Recover safely from process termination between dispatch and confirmation.
+- [x] Recover safely from process termination between dispatch and confirmation.
 
 ## Workstream E2.4: Shelly command adapters
 
@@ -138,7 +138,7 @@ from ADR-0009.
 - [ ] Adapter fixtures cover success, timeout, reconnect, protection errors, and
   inconsistent observations.
 - [x] Process-restart test covers commands left in every non-terminal state.
-- [ ] Audit tests prove immutability, ordering, causation, and redaction.
+- [x] Audit tests prove immutability, ordering, causation, and redaction.
 - [ ] Hardware tests cover switch on/off, dimmer level, cover open/close/stop, and
   calibrated positioning.
 - [ ] Hardware tests restore every device to its original state.
@@ -146,17 +146,17 @@ from ADR-0009.
 
 ## Acceptance criteria
 
-- [ ] AC1: Retrying an accepted command with the same idempotency key never causes
+- [x] AC1: Retrying an accepted command with the same idempotency key never causes
   a second physical action.
-- [ ] AC2: Every mutating request has an authenticated actor and persisted policy
+- [x] AC2: Every mutating request has an authenticated actor and persisted policy
   decision before dispatch.
-- [ ] AC3: A caller can distinguish rejection, adapter acknowledgement, observed
+- [x] AC3: A caller can distinguish rejection, adapter acknowledgement, observed
   confirmation, timeout, and failure.
 - [ ] AC4: Switches, dimmers, and covers can be controlled through common
   capability commands rather than Shelly-specific RPC payloads.
 - [ ] AC5: Unauthorized and mechanically unsafe requests are rejected before
   adapter dispatch.
-- [ ] AC6: Command and audit history survives restart and contains a complete
+- [x] AC6: Command and audit history survives restart and contains a complete
   causation chain.
 - [ ] AC7: RPC, CLI, and internal application calls exercise the same validation,
   authorization, and dispatch path.
@@ -196,3 +196,6 @@ from ADR-0009.
 - 2026-07-11: Completed E2-004 one-time actor tokens, Argon2id hash-only
   credentials, rotation/disable/grant management, authenticated HTTP and
   WebSocket transport, minimal public liveness, and anti-spoofing canaries.
+- 2026-07-11: Completed E2-005 single governed command orchestration with durable
+  pre-dispatch facts, typed acknowledgement/confirmation audit, cancellation,
+  post-await deadlines, idempotent retry, and no-blind-redispatch recovery.
