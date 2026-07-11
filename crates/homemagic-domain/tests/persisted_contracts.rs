@@ -1,16 +1,18 @@
-//! Serialization contracts for domain values persisted by EPIC-001 storage.
+//! Serialization contracts for domain values persisted by EPIC-001/002 storage.
 
 use std::collections::BTreeMap;
 use std::error::Error;
 
 use chrono::Utc;
 use homemagic_domain::{
-    AvailabilityState, CapabilityDescriptor, CapabilityDescriptorError, CapabilityObservation,
-    CausationMetadata, CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot,
-    DomainEvent, DomainEventKind, EndpointId, EventId, InstallationId, IntegrationId,
+    ActorId, AuditId, AvailabilityState, CapabilityDescriptor, CapabilityDescriptorError,
+    CapabilityObservation, CausationMetadata, CommandAggregate, CommandAuditRecord,
+    CommandEnvelope, CommandId, CommandPayload, CommandState, CommandTransitionError,
+    CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot, DomainEvent,
+    DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId, IntegrationId,
     LifecycleTransitionError, LifecycleTrigger, ObservationMergeError, ObservationSource,
-    ObservationSourceKind, ObservedValue, RepairKind, RepairRecord, RepairTransitionError,
-    RiskClass,
+    ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind, RepairRecord,
+    RepairTransitionError, RiskClass,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -34,7 +36,7 @@ fn persisted_domain_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
     let device_id = DeviceId::from_integration(&integration, "native");
     let descriptor = CapabilityDescriptor::new("on_off", 1, RiskClass::Comfort)?;
     let record = DeviceRecord::candidate(
-        installation,
+        installation.clone(),
         integration.clone(),
         DeviceSnapshot {
             id: device_id.clone(),
@@ -89,11 +91,27 @@ fn persisted_domain_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
         "Configure device credentials",
         now,
     );
+    let command = CommandAggregate::received(CommandEnvelope {
+        id: CommandId::new(),
+        actor_id: ActorId::new(),
+        device_id: record.snapshot.id.clone(),
+        endpoint_id: EndpointId::new("switch:0"),
+        capability: CapabilityDescriptor::new("on_off", 1, RiskClass::Comfort)?,
+        payload: CommandPayload::OnOff(OnOffCommand::Set { on: true }),
+        idempotency_key: IdempotencyKey::new("round-trip")?,
+        deadline: now + chrono::TimeDelta::seconds(30),
+        expected: None,
+        dry_run: false,
+        correlation_id: CorrelationId::new(),
+        causation_event_id: None,
+        received_at: now,
+    });
 
     round_trip(&record)?;
     round_trip(&observation)?;
     round_trip(&event)?;
     round_trip(&repair)?;
+    round_trip(&command)?;
 
     let transition = DomainEventKind::LifecycleChanged {
         from: homemagic_domain::DeviceLifecycle::Candidate,
@@ -105,6 +123,25 @@ fn persisted_domain_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
 }
 
 #[test]
+fn command_audit_contract_should_round_trip() -> serde_json::Result<()> {
+    let audit = CommandAuditRecord {
+        id: AuditId::new(),
+        command_id: CommandId::new(),
+        sequence: 0,
+        from: None,
+        to: CommandState::Received,
+        actor_id: ActorId::new(),
+        policy: None,
+        failure: None,
+        correlation_id: CorrelationId::new(),
+        causation_event_id: None,
+        occurred_at: Utc::now(),
+    };
+
+    round_trip(&audit)
+}
+
+#[test]
 fn public_errors_should_serialize_without_runtime_context() -> serde_json::Result<()> {
     round_trip(&CapabilityDescriptorError::InvalidVersion)?;
     round_trip(&LifecycleTransitionError {
@@ -113,5 +150,9 @@ fn public_errors_should_serialize_without_runtime_context() -> serde_json::Resul
     })?;
     round_trip(&ObservationMergeError::TargetMismatch)?;
     round_trip(&RepairTransitionError::AlreadyClosed)?;
+    round_trip(&CommandTransitionError {
+        from: CommandState::Confirmed,
+        to: CommandState::Dispatched,
+    })?;
     Ok(())
 }

@@ -119,6 +119,48 @@ impl fmt::Display for SecretRef {
     }
 }
 
+macro_rules! uuid_identity {
+    ($name:ident, $documentation:literal) => {
+        #[doc = $documentation]
+        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(Uuid);
+
+        impl $name {
+            /// Generates a new opaque identity.
+            #[must_use]
+            pub fn new() -> Self {
+                Self(Uuid::new_v4())
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = uuid::Error;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                Uuid::parse_str(value).map(Self)
+            }
+        }
+    };
+}
+
+uuid_identity!(ActorId, "Stable identity for an authenticated actor.");
+uuid_identity!(CommandId, "Stable identity for one durable command.");
+uuid_identity!(GrantId, "Stable identity for one actor policy grant.");
+uuid_identity!(AuditId, "Stable identity for one immutable audit record.");
+
 /// Stable opaque identifier for a device.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]

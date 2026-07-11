@@ -74,15 +74,15 @@ from ADR-0009.
 
 ## Workstream E2.1: Command domain model
 
-- [ ] Define a versioned `CommandEnvelope` with command ID, actor, target,
+- [x] Define a versioned `CommandEnvelope` with command ID, actor, target,
   capability schema, payload, deadline, idempotency key, correlation ID, and
   causation ID.
-- [ ] Define states for received, validated, rejected, dispatched, acknowledged,
+- [x] Define states for received, validated, rejected, dispatched, acknowledged,
   confirmed, failed, timed out, and cancelled.
-- [ ] Define machine-readable validation and execution error codes.
-- [ ] Separate requested state, device acknowledgement, and observed confirmation.
-- [ ] Encode capability constraints without vendor-specific command dictionaries.
-- [ ] Add optimistic concurrency support where stale state makes a command unsafe.
+- [x] Define machine-readable validation and execution error codes.
+- [x] Separate requested state, device acknowledgement, and observed confirmation.
+- [x] Encode capability constraints without vendor-specific command dictionaries.
+- [x] Add optimistic concurrency support where stale state makes a command unsafe.
 
 ## Workstream E2.2: Policy and authorization
 
@@ -186,3 +186,5 @@ from ADR-0009.
   contracts finalized by EPIC-001 and recorded above.
 - 2026-07-11: Accepted command authentication, durability, policy, and transport
   ADRs and created the dependency-ordered EPIC-002 issue set.
+- 2026-07-11: Completed E2-002 typed command, lifecycle, idempotency,
+  precondition, acknowledgement/confirmation, and policy domain contracts.

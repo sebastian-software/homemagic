@@ -5,6 +5,7 @@
 //! dependencies.
 
 mod capability;
+mod command;
 mod configuration;
 mod device;
 mod event;
@@ -16,14 +17,21 @@ mod repair;
 pub use capability::{
     CapabilityDescriptor, CapabilityDescriptorError, CapabilitySnapshot, RiskClass,
 };
+pub use command::{
+    Actor, ActorGrant, AdapterAcknowledgement, CapacityState, CommandAction, CommandAggregate,
+    CommandAuditRecord, CommandEnvelope, CommandErrorCode, CommandFailure, CommandPayload,
+    CommandState, CommandTransitionError, ConstraintState, ExpectedObservation, GrantScope,
+    IdempotencyKey, IdempotencyKeyError, LevelCommand, ObservedConfirmation, OnOffCommand,
+    PolicyDecision, PolicyInput, PolicyReason, PositionCommand,
+};
 pub use configuration::{Installation, IntegrationInstance, Space};
 pub use device::{
     DeviceRecord, DeviceSnapshot, DiscoveryCandidate, EndpointSnapshot, NetworkLocation,
 };
 pub use event::{CausationMetadata, DomainEvent, DomainEventKind};
 pub use identity::{
-    CorrelationId, DeviceId, EndpointId, EventId, InstallationId, IntegrationId, RepairId,
-    SecretRef, SpaceId,
+    ActorId, AuditId, CommandId, CorrelationId, DeviceId, EndpointId, EventId, GrantId,
+    InstallationId, IntegrationId, RepairId, SecretRef, SpaceId,
 };
 pub use lifecycle::{
     Availability, AvailabilityState, DeviceLifecycle, DeviceTimestamps, FreshnessPolicy,
