@@ -19,6 +19,13 @@ active immutable plans, then pending work, and confirms individual run/timer
 state before attempting continuation. This is the base contract for the durable
 step coordinator; it does not itself authorize or dispatch commands.
 
+`AutomationEngine` is the production coordinator. Each 100 ms daemon pass
+consumes a bounded event page, applies one schedule/admission window, reloads
+recoverable work, and advances each returned run by at most one durable step.
+Run-local failures are reported with their run IDs while sibling runs continue;
+stage-wide persistence failures leave the schedule boundary unchanged for
+idempotent retry.
+
 ## Durable scheduler pass
 
 `AutomationScheduler` materializes only schedules belonging to active immutable

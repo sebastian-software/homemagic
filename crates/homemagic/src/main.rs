@@ -10,10 +10,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
-    ActorAuthentication, AuthenticateActor, BroadcastDomainEventSink, CommandLimitConfig,
-    CommandLimits, CommandRepository, CommandService, CommandServiceDependencies, DeviceRegistry,
-    DomainEventCommandAuditSink, FoundationWrite, HomeMagicApplication, IntegrationScanner,
-    RepositoryLiveObservationSink, SecretStore, SecretValue, SystemClock,
+    ActorAuthentication, AuthenticateActor, AutomationEngine, AutomationEventProcessor,
+    AutomationRuntime, AutomationRuntimeCommandDependencies, AutomationScheduler,
+    BroadcastDomainEventSink, CommandLimitConfig, CommandLimits, CommandRepository, CommandService,
+    CommandServiceDependencies, DeviceRegistry, DomainEventCommandAuditSink, FoundationWrite,
+    HomeMagicApplication, IntegrationScanner, RepositoryLiveObservationSink, SecretStore,
+    SecretValue, SystemClock,
 };
 use homemagic_domain::{
     ActorGrant, ActorId, CapabilitySnapshot, CommandAction, FreshnessPolicy, GrantId, GrantScope,
@@ -628,7 +630,13 @@ async fn serve(options: ServeOptions) -> Result<()> {
     let freshness_policy =
         FreshnessPolicy::new(options.stale_after_seconds, options.offline_after_seconds)
             .context("invalid freshness thresholds")?;
-    let (application, refresh_requests, authenticator, commands) = durable_application(
+    let DurableRuntime {
+        application,
+        refresh_requests,
+        authenticator,
+        commands,
+        automation,
+    } = durable_application(
         options.discovery_seconds,
         &options.database,
         options.secret_backend,
@@ -654,6 +662,11 @@ async fn serve(options: ServeOptions) -> Result<()> {
         Duration::from_secs(options.refresh_deadline_seconds.max(1)),
         freshness_policy,
         refresh_requests,
+        shutdown_requested.clone(),
+    ));
+    let automation_worker = tokio::spawn(automation_worker(
+        automation,
+        Duration::from_millis(100),
         shutdown_requested,
     ));
     let result = axum::serve(
@@ -664,11 +677,22 @@ async fn serve(options: ServeOptions) -> Result<()> {
     .await
     .context("HomeMagic API server failed");
     worker.await.context("runtime scheduler task failed")?;
+    automation_worker
+        .await
+        .context("automation engine task failed")?;
     application
         .shutdown()
         .await
         .context("failed to stop managed device sessions")?;
     result
+}
+
+struct DurableRuntime {
+    application: HomeMagicApplication,
+    refresh_requests: tokio::sync::mpsc::Receiver<homemagic_domain::DeviceId>,
+    authenticator: Arc<dyn AuthenticateActor>,
+    commands: CommandService,
+    automation: AutomationEngine,
 }
 
 async fn durable_application(
@@ -678,12 +702,7 @@ async fn durable_application(
     master_key_file: Option<&Path>,
     secret_vault: &Path,
     freshness_policy: FreshnessPolicy,
-) -> Result<(
-    HomeMagicApplication,
-    tokio::sync::mpsc::Receiver<homemagic_domain::DeviceId>,
-    Arc<dyn AuthenticateActor>,
-    CommandService,
-)> {
+) -> Result<DurableRuntime> {
     let repository = Arc::new(
         SqliteRepository::open(database)
             .with_context(|| format!("failed to open database at {}", database.display()))?,
@@ -758,7 +777,7 @@ async fn durable_application(
     let commands = CommandService::new(
         CommandServiceDependencies {
             foundation: repository.clone(),
-            commands: repository,
+            commands: repository.clone(),
             dispatcher: shelly_commands.clone(),
             confirmation: shelly_commands,
             audits: command_events,
@@ -767,12 +786,76 @@ async fn durable_application(
         CommandLimits::new(CommandLimitConfig::default()),
         freshness_policy,
     );
-    Ok((
-        application.with_sessions(sessions),
-        refresh_receiver,
+    let automation = automation_engine(repository, commands.clone());
+    Ok(DurableRuntime {
+        application: application.with_sessions(sessions),
+        refresh_requests: refresh_receiver,
         authenticator,
         commands,
-    ))
+        automation,
+    })
+}
+
+fn automation_engine(
+    repository: Arc<SqliteRepository>,
+    commands: CommandService,
+) -> AutomationEngine {
+    let clock = Arc::new(SystemClock);
+    let events =
+        AutomationEventProcessor::new(repository.clone(), repository.clone(), clock.clone());
+    let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
+    let runtime = AutomationRuntime::new(repository.clone(), repository.clone(), clock)
+        .with_commands(AutomationRuntimeCommandDependencies {
+            repository: repository.clone(),
+            service: commands,
+        });
+    AutomationEngine::new(repository, events, scheduler, runtime)
+}
+
+async fn automation_worker(
+    engine: AutomationEngine,
+    period: Duration,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut interval = tokio::time::interval(period);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut schedule_from = chrono::Utc::now();
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {}
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() { break; }
+                continue;
+            }
+        }
+        let through = chrono::Utc::now();
+        match engine.tick(schedule_from, through).await {
+            Ok(tick) => {
+                schedule_from = through;
+                if tick.events.events > 0
+                    || tick.scheduler.scheduled > 0
+                    || tick.advanced > 0
+                    || tick.waiting > 0
+                    || tick.completed > 0
+                    || !tick.failures.is_empty()
+                {
+                    info!(
+                        events = tick.events.events,
+                        scheduled = tick.scheduler.scheduled,
+                        advanced = tick.advanced,
+                        waiting = tick.waiting,
+                        completed = tick.completed,
+                        failures = tick.failures.len(),
+                        "automation engine pass completed"
+                    );
+                }
+                for failure in tick.failures {
+                    warn!(run_id = %failure.run_id, error = %failure.error, "automation run step failed");
+                }
+            }
+            Err(error) => warn!(%error, "automation engine pass failed"),
+        }
+    }
 }
 
 async fn runtime_worker(

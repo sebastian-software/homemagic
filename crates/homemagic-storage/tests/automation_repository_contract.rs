@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
-    AutomationActivation, AutomationCompiler, AutomationDraft, AutomationEventProcessor,
-    AutomationRepository, AutomationRetention, AutomationRuntime, AutomationRuntimeStep,
-    AutomationScheduler, AutomationSimulationEvidence, AutomationStepWrite,
+    AutomationActivation, AutomationCompiler, AutomationDraft, AutomationEngine,
+    AutomationEventProcessor, AutomationRepository, AutomationRetention, AutomationRuntime,
+    AutomationRuntimeStep, AutomationScheduler, AutomationSimulationEvidence, AutomationStepWrite,
     AutomationValidationEvidence, BoxError, Clock, FoundationRepository, FoundationSnapshot,
     FoundationWrite, MemoryFoundationRepository, StoredAutomationVersion,
 };
@@ -315,6 +315,71 @@ async fn parallel_mode_should_enforce_same_tick_active_bound() -> TestResult {
     assert_eq!(
         repository.recoverable_automation_work(10).await?.runs.len(),
         2
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn engine_should_isolate_one_run_failure_and_advance_its_sibling() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("engine-isolation.sqlite3"),
+    )?);
+    let foundation = Arc::new(MemoryFoundationRepository::default());
+    let mut parallel_document = document();
+    parallel_document.run_mode = AutomationRunMode::Parallel {
+        maximum_parallel: 2,
+    };
+    let stored = stored_version_for(parallel_document);
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let mut expired_occurrence = scheduled_occurrence(&stored, now, 9);
+    expired_occurrence.state = AutomationOccurrenceState::Accepted;
+    let mut healthy_occurrence = scheduled_occurrence(&stored, now, 10);
+    healthy_occurrence.state = AutomationOccurrenceState::Accepted;
+    repository
+        .create_automation_occurrence(expired_occurrence.clone())
+        .await?;
+    repository
+        .create_automation_occurrence(healthy_occurrence.clone())
+        .await?;
+    let mut expired = run(&stored, &expired_occurrence, now);
+    expired.id = AutomationRunId::from_occurrence(&expired_occurrence.id);
+    let over_budget = i64::try_from(stored.plan.budget.maximum_run_duration_ms)? + 1;
+    expired.created_at = now - TimeDelta::milliseconds(over_budget);
+    expired.updated_at = expired.created_at;
+    let mut healthy = run(&stored, &healthy_occurrence, now);
+    healthy.id = AutomationRunId::from_occurrence(&healthy_occurrence.id);
+    repository.create_automation_run(expired.clone()).await?;
+    repository.create_automation_run(healthy.clone()).await?;
+    let clock = Arc::new(FixedClock(now));
+    let events =
+        AutomationEventProcessor::new(repository.clone(), foundation.clone(), clock.clone());
+    let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
+    let runtime = AutomationRuntime::new(repository.clone(), foundation, clock);
+    let engine = AutomationEngine::new(repository.clone(), events, scheduler, runtime);
+
+    let tick = engine.tick(now, now).await?;
+
+    assert_eq!(tick.failures.len(), 1);
+    assert_eq!(tick.failures[0].run_id, expired.id);
+    assert_eq!(tick.advanced, 1);
+    assert_eq!(
+        repository
+            .automation_run(&healthy.id)
+            .await?
+            .map(|run| run.state),
+        Some(AutomationRunState::Running)
+    );
+    assert_eq!(
+        repository
+            .automation_run(&expired.id)
+            .await?
+            .map(|run| run.state),
+        Some(AutomationRunState::Pending)
     );
     Ok(())
 }

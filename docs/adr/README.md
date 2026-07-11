@@ -40,3 +40,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0025: Propagate exact automation causation through commands](0025-propagate-automation-causation.md)
 - [ADR-0026: Checkpoint active automation events after occurrence materialization](0026-checkpoint-active-automation-events.md)
 - [ADR-0027: Enforce run modes against evolving durable admission state](0027-enforce-durable-run-mode-admission.md)
+- [ADR-0028: Orchestrate automation as bounded durable passes](0028-orchestrate-bounded-automation-passes.md)

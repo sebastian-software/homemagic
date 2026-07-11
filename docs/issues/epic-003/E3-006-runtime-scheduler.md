@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: in_progress
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027, ADR-0028]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -14,16 +14,16 @@ updated: 2026-07-12
 
 ## Tasks
 
-- [ ] Implement the shared durable step interpreter.
-- [ ] Subscribe only active versions to durable normalized events.
+- [x] Implement the shared durable step interpreter.
+- [x] Subscribe only active versions to durable normalized events.
 - [x] Persist run intent before interpreting work.
 - [x] Persist each step, variables, timer, command ID, and outcome before continuation.
 - [x] Submit physical actions exclusively through `CommandService`.
 - [x] Implement single, restart, bounded queued, and bounded parallel modes.
-- [ ] Implement same-timestamp ordering and self-trigger suppression.
+- [x] Implement same-timestamp ordering and self-trigger suppression.
 - [ ] Persist missed/skipped occurrences and explicit catch-up runs.
-- [ ] Recover timers, queues, runs, and interrupted commands without blind resubmit.
-- [ ] Isolate run failures from other automations and device sessions.
+- [x] Recover timers, queues, runs, and interrupted commands without blind resubmit.
+- [x] Isolate run failures from other automations and device sessions.
 
 ## Acceptance criteria
 
@@ -95,3 +95,8 @@ updated: 2026-07-12
   FIFO queued deferral and overflow suppression, next-run admission after a
   terminal predecessor, and restart cancellation of the prior run, trace, and
   timer before replacement intent.
+- 2026-07-12: Accepted ADR-0028 and composed event consumption, scheduling,
+  recovery, and one-step-per-run interpretation into the production daemon's
+  dedicated 100 ms worker. SQLite evidence forces one run over its duration
+  budget while a sibling still commits `pending -> running`; command recovery
+  and the runtime continue to share the sole governed `CommandService` path.
