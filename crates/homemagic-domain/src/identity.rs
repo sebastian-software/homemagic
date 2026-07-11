@@ -79,6 +79,45 @@ impl FromStr for IntegrationId {
     }
 }
 
+/// Opaque reference to secret material owned by a configured secret backend.
+///
+/// The value identifies a secret; it never contains the secret itself.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretRef(String);
+
+impl SecretRef {
+    /// Creates a random reference suitable for a new secret.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(format!("secret-{}", Uuid::new_v4()))
+    }
+
+    /// Creates a reference from a backend-owned stable identifier.
+    #[must_use]
+    pub fn from_backend_id(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Returns the non-secret backend identifier.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for SecretRef {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for SecretRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 /// Stable opaque identifier for a device.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]

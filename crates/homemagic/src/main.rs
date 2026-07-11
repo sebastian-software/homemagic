@@ -159,6 +159,7 @@ async fn bootstrap_shelly(
         adapter: "shelly".to_owned(),
         instance_key: "local".to_owned(),
         name: "Local Shelly".to_owned(),
+        credential_ref: None,
     };
     let integration_id = integration.id.clone();
     write.integrations.push(integration);

@@ -2,8 +2,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
     CapabilityObservation, DeviceId, DeviceRecord, DomainEvent, Installation, IntegrationInstance,
-    RepairRecord, Space,
+    RepairRecord, SecretRef, Space,
 };
+use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::BoxError;
 
@@ -61,6 +63,58 @@ pub trait FoundationRepository: Send + Sync {
     ///
     /// Returns a storage-specific error and leaves no partial write.
     async fn apply(&self, write: FoundationWrite) -> Result<(), BoxError>;
+}
+
+/// Secret bytes that are zeroized when dropped and cannot be serialized.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub struct SecretValue(Vec<u8>);
+
+impl SecretValue {
+    /// Wraps secret bytes for immediate protocol use.
+    #[must_use]
+    pub fn new(value: impl Into<Vec<u8>>) -> Self {
+        Self(value.into())
+    }
+
+    /// Exposes the bytes only at the integration boundary that needs them.
+    #[must_use]
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SecretValue([REDACTED])")
+    }
+}
+
+/// Stable, secret-safe failure returned by a secret backend.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("secret backend `{backend}` failed during `{operation}` ({code})")]
+pub struct SecretStoreError {
+    /// Stable backend identifier.
+    pub backend: &'static str,
+    /// Stable operation name.
+    pub operation: &'static str,
+    /// Stable non-sensitive error code.
+    pub code: &'static str,
+}
+
+/// Application-owned boundary for credential storage.
+#[async_trait]
+pub trait SecretStore: Send + Sync {
+    /// Stable backend identifier used in repair records.
+    fn backend(&self) -> &'static str;
+
+    /// Creates or replaces secret material at the opaque reference.
+    async fn put(&self, reference: &SecretRef, value: SecretValue) -> Result<(), SecretStoreError>;
+
+    /// Resolves secret material for one immediate protocol operation.
+    async fn get(&self, reference: &SecretRef) -> Result<SecretValue, SecretStoreError>;
+
+    /// Deletes secret material after references have been detached.
+    async fn delete(&self, reference: &SecretRef) -> Result<(), SecretStoreError>;
 }
 
 /// Fan-out port for committed immutable domain events.

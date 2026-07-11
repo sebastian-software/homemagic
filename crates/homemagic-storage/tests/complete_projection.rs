@@ -107,6 +107,7 @@ fn configuration(now: DateTime<Utc>) -> (Installation, IntegrationInstance, Spac
         adapter: "test".to_owned(),
         instance_key: "local".to_owned(),
         name: "Test".to_owned(),
+        credential_ref: None,
     };
     let space = Space {
         id: SpaceId::new(),

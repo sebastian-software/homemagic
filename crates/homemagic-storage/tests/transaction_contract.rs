@@ -26,6 +26,7 @@ async fn failed_write_should_roll_back_every_prior_row() -> Result<(), BoxError>
         adapter: "test".to_owned(),
         instance_key: "duplicate".to_owned(),
         name: "First".to_owned(),
+        credential_ref: None,
     };
     let conflicting = IntegrationInstance {
         id: IntegrationId::from_native(&installation_id, "test", "second"),
@@ -33,6 +34,7 @@ async fn failed_write_should_roll_back_every_prior_row() -> Result<(), BoxError>
         adapter: "test".to_owned(),
         instance_key: "duplicate".to_owned(),
         name: "Second".to_owned(),
+        credential_ref: None,
     };
 
     let result = repository
@@ -67,6 +69,7 @@ async fn native_identity_collision_should_roll_back_all_devices() -> Result<(), 
         adapter: "test".to_owned(),
         instance_key: "local".to_owned(),
         name: "Test".to_owned(),
+        credential_ref: None,
     };
     repository
         .apply(FoundationWrite {
@@ -102,6 +105,7 @@ async fn foreign_key_violation_should_not_persist_integration() -> Result<(), Bo
         adapter: "test".to_owned(),
         instance_key: "local".to_owned(),
         name: "Test".to_owned(),
+        credential_ref: None,
     };
 
     let result = repository

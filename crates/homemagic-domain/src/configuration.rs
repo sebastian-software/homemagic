@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{InstallationId, IntegrationId, SpaceId};
+use crate::{InstallationId, IntegrationId, SecretRef, SpaceId};
 
 /// Durable installation configuration and display metadata.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -29,6 +29,9 @@ pub struct IntegrationInstance {
     pub instance_key: String,
     /// Mutable display name.
     pub name: String,
+    /// Opaque reference to shared integration credentials, when configured.
+    #[serde(default)]
+    pub credential_ref: Option<SecretRef>,
 }
 
 /// Durable semantic space independent of its mutable name.

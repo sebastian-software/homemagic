@@ -22,7 +22,8 @@ pub use device::{
 };
 pub use event::{CausationMetadata, DomainEvent, DomainEventKind};
 pub use identity::{
-    CorrelationId, DeviceId, EndpointId, EventId, InstallationId, IntegrationId, RepairId, SpaceId,
+    CorrelationId, DeviceId, EndpointId, EventId, InstallationId, IntegrationId, RepairId,
+    SecretRef, SpaceId,
 };
 pub use lifecycle::{
     Availability, AvailabilityState, DeviceLifecycle, DeviceTimestamps, FreshnessPolicy,

@@ -5,7 +5,7 @@ title: Add secret-safe Shelly digest authentication
 status: ready
 priority: high
 depends_on: [E1-001, E1-002]
-adrs: []
+adrs: [ADR-0008]
 created: 2026-07-11
 updated: 2026-07-11
 ---
@@ -20,8 +20,11 @@ domain snapshots and observable diagnostics.
 
 ## Tasks
 
-- [ ] Define the secret-store application port and credential reference type.
-- [ ] Implement configured platform and headless secret adapters.
+- [x] Define the secret-store application port and credential reference type.
+  Evidence: `SecretStore`, zeroizing `SecretValue`, and domain-owned `SecretRef`.
+- [x] Implement configured platform and headless secret adapters. Evidence:
+  `homemagic-secrets` isolates macOS Keychain, Linux Secret Service, and the
+  explicit XChaCha20-Poly1305 file vault.
 - [ ] Implement Shelly RPC digest challenge parsing and response generation.
 - [ ] Support nonce refresh and bounded reauthentication.
 - [ ] Represent missing, rejected, and unavailable credentials as repair states.
@@ -31,7 +34,8 @@ domain snapshots and observable diagnostics.
 ## Acceptance criteria
 
 - [ ] Authenticated info, config, and status RPC calls succeed in fixtures.
-- [ ] Device persistence contains only a credential reference.
+- [x] Device persistence contains only a credential reference. Evidence:
+  `IntegrationInstance::credential_ref` serializes only an opaque `SecretRef`.
 - [ ] Rejected credentials create a diagnostic and actionable repair.
 - [ ] Credential material cannot be found in logs, RPC, fixtures, or snapshots.
 
@@ -44,3 +48,7 @@ domain snapshots and observable diagnostics.
 ## Progress log
 
 - 2026-07-11: Issue created.
+- 2026-07-11: Added the secret-store port, platform adapters, explicit headless
+  vault, zeroizing secret values, permission/ownership validation, associated
+  data binding, and secret-canary tests. Full locked Clippy and workspace tests
+  pass; Shelly digest transport remains in progress.

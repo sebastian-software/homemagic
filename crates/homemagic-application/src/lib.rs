@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 pub use memory::{MemoryFoundationRepository, NoopDomainEventSink};
 pub use ports::{
     Clock, DomainEventSink, FoundationRepository, FoundationSnapshot, FoundationWrite,
-    IntegrationSessionPort, SystemClock,
+    IntegrationSessionPort, SecretStore, SecretStoreError, SecretValue, SystemClock,
 };
 pub use registry::DeviceRegistry;
 
