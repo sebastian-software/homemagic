@@ -22,7 +22,7 @@ use homemagic_domain::{
     AutomationTimerId, AutomationTimerState, AutomationTraceId, AutomationTraceKind,
     AutomationTraceStep, AutomationTrigger, AutomationVersion, AutomationVersionState,
     CausationMetadata, CommandId, CommandState, CorrelationId, DeviceId, DomainEvent,
-    DomainEventKind, EventId, canonical_automation_plan_hash,
+    DomainEventKind, EventId, IdempotencyKey, canonical_automation_plan_hash,
 };
 use homemagic_storage::SqliteRepository;
 
@@ -753,6 +753,79 @@ async fn scheduler_should_materialize_idempotent_runs_and_never_replay_missed() 
 }
 
 #[tokio::test]
+async fn explicit_catch_up_should_audit_one_missed_instant_and_remain_idempotent() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("explicit-catch-up.sqlite3"),
+    )?);
+    let stored = stored_version();
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let scheduled_for = Utc
+        .with_ymd_and_hms(2026, 7, 11, 16, 0, 0)
+        .single()
+        .ok_or("valid schedule instant")?;
+    let now = scheduled_for + TimeDelta::minutes(2);
+    let actor_id = stored.document.provenance.author_id.clone();
+    let key = IdempotencyKey::new("catch-up-2026-07-11")?;
+    let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(now)));
+    assert!(
+        repository
+            .recoverable_automation_work(10)
+            .await?
+            .occurrences
+            .is_empty()
+    );
+
+    let catch_up = scheduler
+        .request_catch_up(
+            &stored.document.id,
+            scheduled_for,
+            actor_id.clone(),
+            key.clone(),
+        )
+        .await?;
+    let repeated = scheduler
+        .request_catch_up(&stored.document.id, scheduled_for, actor_id.clone(), key)
+        .await?;
+
+    assert_eq!(repeated, catch_up);
+    let evidence = catch_up
+        .catch_up
+        .as_ref()
+        .ok_or("catch-up evidence missing")?;
+    assert_eq!(evidence.requested_by, actor_id);
+    assert_eq!(evidence.requested_at, now);
+    assert_eq!(
+        repository
+            .automation_occurrence(&evidence.missed_occurrence_id)
+            .await?
+            .map(|occurrence| occurrence.state),
+        Some(AutomationOccurrenceState::MissedSkipped)
+    );
+    let tick = scheduler.tick(now, now).await?;
+    assert_eq!(tick.accepted, 1);
+    assert_eq!(
+        repository.recoverable_automation_work(10).await?.runs.len(),
+        1
+    );
+    assert!(
+        scheduler
+            .request_catch_up(
+                &stored.document.id,
+                scheduled_for + TimeDelta::days(1),
+                stored.document.provenance.author_id.clone(),
+                IdempotencyKey::new("future-catch-up")?,
+            )
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn interpreter_step_should_commit_run_trace_and_timer_atomically() -> TestResult {
     let directory = tempfile::tempdir()?;
     let repository = SqliteRepository::open(directory.path().join("step.sqlite3"))?;
@@ -1322,6 +1395,7 @@ fn occurrence(
         event_cursor: Some(8),
         correlation_id: CorrelationId::new(),
         causation_event_id: None,
+        catch_up: None,
     }
 }
 
@@ -1344,6 +1418,7 @@ fn scheduled_occurrence(
         event_cursor: Some(event_cursor),
         correlation_id: CorrelationId::from_key(&format!("event:{event_cursor}")),
         causation_event_id: None,
+        catch_up: None,
     }
 }
 

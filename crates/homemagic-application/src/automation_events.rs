@@ -170,6 +170,7 @@ impl AutomationEventProcessor {
                     event_cursor: Some(event.cursor),
                     correlation_id: event.event.causation.correlation_id.clone(),
                     causation_event_id: Some(event.event.id.clone()),
+                    catch_up: None,
                 })
                 .await
                 .map_err(|source| repository_error("create_occurrence", source))?;

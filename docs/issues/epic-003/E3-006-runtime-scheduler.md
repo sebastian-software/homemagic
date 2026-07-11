@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: in_progress
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027, ADR-0028]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027, ADR-0028, ADR-0029]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -21,7 +21,7 @@ updated: 2026-07-12
 - [x] Submit physical actions exclusively through `CommandService`.
 - [x] Implement single, restart, bounded queued, and bounded parallel modes.
 - [x] Implement same-timestamp ordering and self-trigger suppression.
-- [ ] Persist missed/skipped occurrences and explicit catch-up runs.
+- [x] Persist missed/skipped occurrences and explicit catch-up runs.
 - [x] Recover timers, queues, runs, and interrupted commands without blind resubmit.
 - [x] Isolate run failures from other automations and device sessions.
 
@@ -29,7 +29,7 @@ updated: 2026-07-12
 
 - [ ] Runtime and simulator make equivalent decisions for identical histories.
 - [x] Restart cannot duplicate a dispatched command or schedule occurrence.
-- [ ] Missed schedules never execute without an explicit new catch-up request.
+- [x] Missed schedules never execute without an explicit new catch-up request.
 - [ ] Queue, parallelism, trace, retry, and duration bounds hold under load.
 
 ## Progress
@@ -100,3 +100,8 @@ updated: 2026-07-12
   dedicated 100 ms worker. SQLite evidence forces one run over its duration
   budget while a sibling still commits `pending -> running`; command recovery
   and the runtime continue to share the sole governed `CommandService` path.
+- 2026-07-12: Accepted ADR-0029 and added an actor- and idempotency-bound
+  request for one exact missed schedule instant. SQLite evidence proves the
+  original occurrence becomes permanently `missed_skipped`, a separate audited
+  catch-up becomes one run, identical requests reuse it, future/open windows
+  are rejected, and ordinary startup creates no catch-up work.

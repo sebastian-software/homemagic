@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState, AutomationRun,
-    AutomationRunId, AutomationRunMode, AutomationRunState, AutomationTimer, AutomationTimerState,
-    AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationTrigger,
-    AutomationValue, CorrelationId,
+    ActorId, AutomationCatchUp, AutomationId, AutomationOccurrence, AutomationOccurrenceId,
+    AutomationOccurrenceState, AutomationRun, AutomationRunId, AutomationRunMode,
+    AutomationRunState, AutomationTimer, AutomationTimerState, AutomationTraceId,
+    AutomationTraceKind, AutomationTraceStep, AutomationTrigger, AutomationValue, CorrelationId,
+    IdempotencyKey,
 };
 use thiserror::Error;
 
@@ -25,6 +26,18 @@ pub enum AutomationSchedulerError {
     /// Active schedule contract was invalid despite validation.
     #[error("automation scheduler encountered an invalid active schedule")]
     InvalidSchedule,
+    /// Requested instant is not an occurrence of an active schedule.
+    #[error("catch-up instant does not belong to an active automation schedule")]
+    InvalidCatchUpInstant,
+    /// Requested schedule instant is absent or still inside its normal window.
+    #[error("catch-up requires a schedule occurrence whose normal window has elapsed")]
+    ScheduleNotMissed,
+    /// No exact active version exists for the requested automation.
+    #[error("catch-up automation is not active")]
+    AutomationNotActive,
+    /// Schedule-window arithmetic exceeded supported time bounds.
+    #[error("automation schedule window exceeds supported time bounds")]
+    DurationOverflow,
 }
 
 /// Summary of one bounded scheduler pass.
@@ -109,6 +122,7 @@ impl AutomationScheduler {
                             event_cursor: None,
                             correlation_id,
                             causation_event_id: None,
+                            catch_up: None,
                         })
                         .await
                         .map_err(AutomationSchedulerError::Repository)?;
@@ -118,6 +132,148 @@ impl AutomationScheduler {
         }
         self.process_recovery(&active, &mut result).await?;
         Ok(result)
+    }
+
+    /// Creates one separately audited, idempotent catch-up occurrence for a
+    /// concrete missed instant of the exact active schedule.
+    ///
+    /// # Errors
+    ///
+    /// Rejects inactive automations, non-occurrence instants, still-open
+    /// windows, or repository failures. It never scans or replays downtime.
+    pub async fn request_catch_up(
+        &self,
+        automation_id: &AutomationId,
+        scheduled_for: DateTime<Utc>,
+        requested_by: ActorId,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<AutomationOccurrence, AutomationSchedulerError> {
+        let (active, missed_id) = self
+            .prepare_missed_schedule(automation_id, scheduled_for)
+            .await?;
+        let source_key = format!(
+            "catch_up:{}:{}:{}",
+            missed_id,
+            requested_by,
+            idempotency_key.as_str()
+        );
+        let id = AutomationOccurrenceId::from_key(
+            &active.identity.id,
+            active.version.document.version.get(),
+            &source_key,
+        );
+        if let Some(existing) = self
+            .repository
+            .automation_occurrence(&id)
+            .await
+            .map_err(AutomationSchedulerError::Repository)?
+        {
+            return Ok(existing);
+        }
+        let now = self.clock.now();
+        let occurrence = AutomationOccurrence {
+            id: id.clone(),
+            automation_id: active.identity.id,
+            version: active.version.document.version,
+            occurred_at: now,
+            window_ends_at: DateTime::<Utc>::MAX_UTC,
+            state: AutomationOccurrenceState::Scheduled,
+            event_cursor: None,
+            correlation_id: CorrelationId::from_key(&id.to_string()),
+            causation_event_id: None,
+            catch_up: Some(AutomationCatchUp {
+                missed_occurrence_id: missed_id,
+                requested_by,
+                idempotency_key,
+                requested_at: now,
+            }),
+        };
+        self.repository
+            .create_automation_occurrence(occurrence.clone())
+            .await
+            .map_err(AutomationSchedulerError::Repository)?;
+        Ok(occurrence)
+    }
+
+    async fn prepare_missed_schedule(
+        &self,
+        automation_id: &AutomationId,
+        scheduled_for: DateTime<Utc>,
+    ) -> Result<(crate::ActiveAutomationVersion, AutomationOccurrenceId), AutomationSchedulerError>
+    {
+        let active = self
+            .repository
+            .active_automation_versions(RECOVERY_PAGE)
+            .await
+            .map_err(AutomationSchedulerError::Repository)?
+            .into_iter()
+            .find(|active| active.identity.id == *automation_id)
+            .ok_or(AutomationSchedulerError::AutomationNotActive)?;
+        let before = scheduled_for
+            .checked_sub_signed(TimeDelta::milliseconds(1))
+            .ok_or(AutomationSchedulerError::DurationOverflow)?;
+        let schedule = active
+            .version
+            .document
+            .triggers
+            .iter()
+            .filter_map(|trigger| match trigger {
+                AutomationTrigger::Schedule { schedule } => Some(schedule),
+                _ => None,
+            })
+            .find(|schedule| {
+                AutomationSimulator::schedule_occurrences(schedule, before, scheduled_for)
+                    .is_ok_and(|instants| instants == [scheduled_for])
+            })
+            .ok_or(AutomationSchedulerError::InvalidCatchUpInstant)?;
+        let window_millis = i64::try_from(schedule.occurrence_window_ms)
+            .map_err(|_| AutomationSchedulerError::DurationOverflow)?;
+        let window_ends_at = scheduled_for
+            .checked_add_signed(TimeDelta::milliseconds(window_millis))
+            .ok_or(AutomationSchedulerError::DurationOverflow)?;
+        if self.clock.now() <= window_ends_at {
+            return Err(AutomationSchedulerError::ScheduleNotMissed);
+        }
+        let missed_id = AutomationOccurrenceId::from_key(
+            &active.identity.id,
+            active.version.document.version.get(),
+            &format!("schedule:{}", scheduled_for.timestamp_millis()),
+        );
+        self.repository
+            .create_automation_occurrence(AutomationOccurrence {
+                id: missed_id.clone(),
+                automation_id: active.identity.id.clone(),
+                version: active.version.document.version,
+                occurred_at: scheduled_for,
+                window_ends_at,
+                state: AutomationOccurrenceState::MissedSkipped,
+                event_cursor: None,
+                correlation_id: CorrelationId::from_key(&missed_id.to_string()),
+                causation_event_id: None,
+                catch_up: None,
+            })
+            .await
+            .map_err(AutomationSchedulerError::Repository)?;
+        let mut missed = self
+            .repository
+            .automation_occurrence(&missed_id)
+            .await
+            .map_err(AutomationSchedulerError::Repository)?
+            .ok_or(AutomationSchedulerError::ScheduleNotMissed)?;
+        match missed.state {
+            AutomationOccurrenceState::Scheduled => {
+                missed.state = AutomationOccurrenceState::MissedSkipped;
+                self.repository
+                    .transition_automation_occurrence(missed)
+                    .await
+                    .map_err(AutomationSchedulerError::Repository)?;
+            }
+            AutomationOccurrenceState::MissedSkipped => {}
+            AutomationOccurrenceState::Accepted | AutomationOccurrenceState::Suppressed => {
+                return Err(AutomationSchedulerError::ScheduleNotMissed);
+            }
+        }
+        Ok((active, missed_id))
     }
 
     async fn process_recovery(

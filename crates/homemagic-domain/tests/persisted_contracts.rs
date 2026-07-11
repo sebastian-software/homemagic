@@ -6,22 +6,22 @@ use std::error::Error;
 use chrono::Utc;
 use homemagic_domain::{
     ActorId, AuditId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
-    AutomationApprovalRequirement, AutomationApprovalState, AutomationContentHash,
-    AutomationDocument, AutomationExecutionPlan, AutomationOccurrence, AutomationOccurrenceId,
-    AutomationOccurrenceState, AutomationPlanNode, AutomationPlanNodeId, AutomationPlanNodeKind,
-    AutomationPlanSchema, AutomationRegistryRevision, AutomationResourceBudget, AutomationRun,
-    AutomationRunId, AutomationRunMode, AutomationRunState, AutomationSafetyProfile,
-    AutomationSafetyRequirement, AutomationSelfTriggerPolicy, AutomationTimer, AutomationTimerId,
-    AutomationTimerKind, AutomationTimerState, AutomationTraceId, AutomationTraceKind,
-    AutomationTraceStep, AutomationValidationCode, AutomationValidationError,
-    AutomationVersionState, AvailabilityState, CapabilityDescriptor, CapabilityDescriptorError,
-    CapabilityObservation, CausationMetadata, CommandAggregate, CommandAuditRecord,
-    CommandEnvelope, CommandId, CommandPayload, CommandState, CommandTransitionError,
-    CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot, DomainEvent,
-    DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId, IntegrationId,
-    LifecycleTransitionError, LifecycleTrigger, ObservationMergeError, ObservationSource,
-    ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind, RepairRecord,
-    RepairTransitionError, RiskClass, canonical_automation_hash,
+    AutomationApprovalRequirement, AutomationApprovalState, AutomationCatchUp,
+    AutomationContentHash, AutomationDocument, AutomationExecutionPlan, AutomationOccurrence,
+    AutomationOccurrenceId, AutomationOccurrenceState, AutomationPlanNode, AutomationPlanNodeId,
+    AutomationPlanNodeKind, AutomationPlanSchema, AutomationRegistryRevision,
+    AutomationResourceBudget, AutomationRun, AutomationRunId, AutomationRunMode,
+    AutomationRunState, AutomationSafetyProfile, AutomationSafetyRequirement,
+    AutomationSelfTriggerPolicy, AutomationTimer, AutomationTimerId, AutomationTimerKind,
+    AutomationTimerState, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
+    AutomationValidationCode, AutomationValidationError, AutomationVersionState, AvailabilityState,
+    CapabilityDescriptor, CapabilityDescriptorError, CapabilityObservation, CausationMetadata,
+    CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandId, CommandPayload, CommandState,
+    CommandTransitionError, CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot,
+    DomainEvent, DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId,
+    IntegrationId, LifecycleTransitionError, LifecycleTrigger, ObservationMergeError,
+    ObservationSource, ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind,
+    RepairRecord, RepairTransitionError, RiskClass, canonical_automation_hash,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -220,6 +220,12 @@ fn automation_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Erro
         event_cursor: Some(4),
         correlation_id: correlation_id.clone(),
         causation_event_id: None,
+        catch_up: Some(AutomationCatchUp {
+            missed_occurrence_id: AutomationOccurrenceId::new(),
+            requested_by: document.provenance.author_id.clone(),
+            idempotency_key: IdempotencyKey::new("persisted-catch-up")?,
+            requested_at: now,
+        }),
     };
     let run_id = AutomationRunId::new();
     let run = AutomationRun {

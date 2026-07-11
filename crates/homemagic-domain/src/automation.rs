@@ -1371,6 +1371,19 @@ pub struct AutomationApprovalRecord {
 
 /// One durable trigger or schedule occurrence.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationCatchUp {
+    /// Exact missed schedule occurrence selected by the requester.
+    pub missed_occurrence_id: AutomationOccurrenceId,
+    /// Authenticated actor requesting this exceptional execution.
+    pub requested_by: ActorId,
+    /// Actor-scoped request idempotency key.
+    pub idempotency_key: crate::IdempotencyKey,
+    /// Durable request time.
+    pub requested_at: DateTime<Utc>,
+}
+
+/// One durable trigger or schedule occurrence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AutomationOccurrence {
     /// Stable occurrence identity.
     pub id: AutomationOccurrenceId,
@@ -1390,6 +1403,9 @@ pub struct AutomationOccurrence {
     pub correlation_id: CorrelationId,
     /// Directly causing event, when present.
     pub causation_event_id: Option<EventId>,
+    /// Explicit audited catch-up request, when this is exceptional replay.
+    #[serde(default)]
+    pub catch_up: Option<AutomationCatchUp>,
 }
 
 /// Current durable automation run aggregate.

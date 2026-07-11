@@ -261,6 +261,12 @@ pub trait AutomationRepository: Send + Sync {
         occurrence: AutomationOccurrence,
     ) -> Result<(), BoxError>;
 
+    /// Loads one durable occurrence by stable identity.
+    async fn automation_occurrence(
+        &self,
+        occurrence_id: &homemagic_domain::AutomationOccurrenceId,
+    ) -> Result<Option<AutomationOccurrence>, BoxError>;
+
     /// Advances one occurrence through its explicit state machine.
     async fn transition_automation_occurrence(
         &self,

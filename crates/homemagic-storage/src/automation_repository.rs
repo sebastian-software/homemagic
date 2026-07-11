@@ -161,6 +161,22 @@ impl AutomationRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn automation_occurrence(
+        &self,
+        occurrence_id: &homemagic_domain::AutomationOccurrenceId,
+    ) -> Result<Option<AutomationOccurrence>, homemagic_application::BoxError> {
+        let occurrence_id = occurrence_id.clone();
+        run_read(&self.connection, move |connection| {
+            load_optional_payload(
+                connection,
+                "SELECT payload_json FROM automation_occurrences WHERE id = ?1",
+                &occurrence_id.to_string(),
+            )
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn transition_automation_occurrence(
         &self,
         occurrence: AutomationOccurrence,
@@ -692,6 +708,7 @@ fn create_occurrence(
             && existing.event_cursor == occurrence.event_cursor
             && existing.correlation_id == occurrence.correlation_id
             && existing.causation_event_id == occurrence.causation_event_id
+            && existing.catch_up == occurrence.catch_up
         {
             return Ok(());
         }
@@ -743,6 +760,7 @@ fn transition_occurrence(
         || current.event_cursor != occurrence.event_cursor
         || current.correlation_id != occurrence.correlation_id
         || current.causation_event_id != occurrence.causation_event_id
+        || current.catch_up != occurrence.catch_up
         || !current.state.allows_transition_to(occurrence.state)
     {
         return Err(StorageError::InvalidAutomation(

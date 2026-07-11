@@ -635,6 +635,7 @@ async fn automation_runtime_fixture(
         event_cursor: Some(1),
         correlation_id: CorrelationId::new(),
         causation_event_id: None,
+        catch_up: None,
     };
     fixture
         .repository
