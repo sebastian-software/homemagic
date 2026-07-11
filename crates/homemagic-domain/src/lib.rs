@@ -4,6 +4,7 @@
 //! availability, observations, and immutable events. It has no infrastructure
 //! dependencies.
 
+mod automation;
 mod capability;
 mod command;
 mod configuration;
@@ -14,6 +15,7 @@ mod lifecycle;
 mod observation;
 mod repair;
 
+pub use automation::*;
 pub use capability::{
     CapabilityDescriptor, CapabilityDescriptorError, CapabilitySnapshot, RiskClass,
 };
@@ -30,8 +32,9 @@ pub use device::{
 };
 pub use event::{CausationMetadata, DomainEvent, DomainEventKind};
 pub use identity::{
-    ActorId, AuditId, CommandId, CorrelationId, DeviceId, EndpointId, EventId, GrantId,
-    InstallationId, IntegrationId, RepairId, SecretRef, SpaceId,
+    ActorId, AuditId, AutomationApprovalId, AutomationId, AutomationOccurrenceId, AutomationRunId,
+    AutomationTimerId, AutomationTraceId, CommandId, CorrelationId, DeviceId, EndpointId, EventId,
+    GrantId, InstallationId, IntegrationId, RepairId, SecretRef, SpaceId,
 };
 pub use lifecycle::{
     Availability, AvailabilityState, DeviceLifecycle, DeviceTimestamps, FreshnessPolicy,

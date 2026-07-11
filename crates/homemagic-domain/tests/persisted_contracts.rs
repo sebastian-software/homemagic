@@ -1,18 +1,26 @@
 //! Serialization contracts for domain values persisted by EPIC-001/002 storage.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 
 use chrono::Utc;
 use homemagic_domain::{
-    ActorId, AuditId, AvailabilityState, CapabilityDescriptor, CapabilityDescriptorError,
-    CapabilityObservation, CausationMetadata, CommandAggregate, CommandAuditRecord,
-    CommandEnvelope, CommandId, CommandPayload, CommandState, CommandTransitionError,
-    CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot, DomainEvent,
-    DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId, IntegrationId,
-    LifecycleTransitionError, LifecycleTrigger, ObservationMergeError, ObservationSource,
-    ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind, RepairRecord,
-    RepairTransitionError, RiskClass,
+    ActorId, AuditId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
+    AutomationApprovalRequirement, AutomationApprovalState, AutomationContentHash,
+    AutomationDocument, AutomationExecutionPlan, AutomationOccurrence, AutomationOccurrenceId,
+    AutomationOccurrenceState, AutomationPlanNode, AutomationPlanNodeId, AutomationPlanNodeKind,
+    AutomationPlanSchema, AutomationRegistryRevision, AutomationResourceBudget, AutomationRun,
+    AutomationRunId, AutomationRunMode, AutomationRunState, AutomationSafetyProfile,
+    AutomationSafetyRequirement, AutomationSelfTriggerPolicy, AutomationTimer, AutomationTimerId,
+    AutomationTimerState, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
+    AutomationValidationCode, AutomationValidationError, AutomationVersionState, AvailabilityState,
+    CapabilityDescriptor, CapabilityDescriptorError, CapabilityObservation, CausationMetadata,
+    CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandId, CommandPayload, CommandState,
+    CommandTransitionError, CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot,
+    DomainEvent, DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId,
+    IntegrationId, LifecycleTransitionError, LifecycleTrigger, ObservationMergeError,
+    ObservationSource, ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind,
+    RepairRecord, RepairTransitionError, RiskClass, canonical_automation_hash,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -156,5 +164,120 @@ fn public_errors_should_serialize_without_runtime_context() -> serde_json::Resul
         from: CommandState::Confirmed,
         to: CommandState::Dispatched,
     })?;
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one integration fixture covers every persisted automation boundary"
+)]
+fn automation_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Error>> {
+    let document: AutomationDocument = serde_json::from_str(include_str!(
+        "../../../docs/api/examples/automation-document-v1.json"
+    ))?;
+    let document_hash = canonical_automation_hash(&document)?;
+    let plan_hash = AutomationContentHash::new(
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )?;
+    let node_id = AutomationPlanNodeId(0);
+    let plan = AutomationExecutionPlan {
+        schema: AutomationPlanSchema::V1,
+        automation_id: document.id.clone(),
+        automation_version: document.version,
+        document_hash: document_hash.clone(),
+        plan_hash: plan_hash.clone(),
+        registry_revision: AutomationRegistryRevision(7),
+        entry: node_id,
+        nodes: vec![AutomationPlanNode {
+            id: node_id,
+            order: 0,
+            kind: AutomationPlanNodeKind::Complete,
+        }],
+        safety_profiles: BTreeSet::from([AutomationSafetyProfile::Comfort]),
+        safety_requirements: BTreeSet::from([AutomationSafetyRequirement::FreshState]),
+        approval: AutomationApprovalRequirement::ActivationGrant,
+        budget: AutomationResourceBudget::default(),
+    };
+    let occurrence_id = AutomationOccurrenceId::new();
+    let correlation_id = CorrelationId::new();
+    let now = Utc::now();
+    let occurrence = AutomationOccurrence {
+        id: occurrence_id.clone(),
+        automation_id: document.id.clone(),
+        version: document.version,
+        occurred_at: now,
+        window_ends_at: now + chrono::TimeDelta::seconds(60),
+        state: AutomationOccurrenceState::Accepted,
+        event_cursor: Some(4),
+        correlation_id: correlation_id.clone(),
+        causation_event_id: None,
+    };
+    let run_id = AutomationRunId::new();
+    let run = AutomationRun {
+        id: run_id.clone(),
+        automation_id: document.id.clone(),
+        version: document.version,
+        occurrence_id,
+        actor_id: document.provenance.author_id.clone(),
+        state: AutomationRunState::Waiting,
+        revision: 2,
+        node_id: Some(node_id),
+        variables: BTreeMap::new(),
+        command_ids: vec![CommandId::new()],
+        correlation_id: correlation_id.clone(),
+        causation_event_id: None,
+        created_at: now,
+        updated_at: now,
+    };
+    let timer = AutomationTimer {
+        id: AutomationTimerId::new(),
+        run_id: run_id.clone(),
+        node_id,
+        ready_at: now + chrono::TimeDelta::seconds(1),
+        state: AutomationTimerState::Pending,
+    };
+    let trace = AutomationTraceStep {
+        id: AutomationTraceId::new(),
+        run_id,
+        sequence: 0,
+        node_id: Some(node_id),
+        kind: AutomationTraceKind::Timer,
+        details: BTreeMap::new(),
+        occurred_at: now,
+        correlation_id,
+        causation_event_id: None,
+    };
+    let approval = AutomationApprovalRecord {
+        id: AutomationApprovalId::new(),
+        automation_id: document.id.clone(),
+        version: document.version,
+        document_hash,
+        plan_hash,
+        actor_id: document.provenance.author_id.clone(),
+        state: AutomationApprovalState::Approved,
+        rationale: Some("Reviewed".to_owned()),
+        decided_at: now,
+    };
+    let validation = AutomationValidationError {
+        code: AutomationValidationCode::ReferenceMissing,
+        path: "/actions/0/target".to_owned(),
+        reason: "target is absent".to_owned(),
+        remediation: Some("select one device".to_owned()),
+        reference: None,
+    };
+
+    round_trip(&document)?;
+    round_trip(&plan)?;
+    round_trip(&occurrence)?;
+    round_trip(&run)?;
+    round_trip(&timer)?;
+    round_trip(&trace)?;
+    round_trip(&approval)?;
+    round_trip(&validation)?;
+    round_trip(&AutomationVersionState::Ready)?;
+    round_trip(&AutomationRunMode::Queued { capacity: 16 })?;
+    round_trip(&AutomationSelfTriggerPolicy::SuppressSameVersion)?;
+    round_trip(&AutomationAction::Delay { duration_ms: 1 })?;
     Ok(())
 }

@@ -223,7 +223,7 @@ impl CommandEnvelope {
 }
 
 /// Durable command lifecycle state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandState {
     /// Request durably accepted but not yet validated.

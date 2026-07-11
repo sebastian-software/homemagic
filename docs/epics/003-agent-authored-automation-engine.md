@@ -66,17 +66,17 @@ requires it, and activates an immutable version.
 
 ## Workstream E3.1: Automation IR
 
-- [ ] Define immutable automation ID and monotonically versioned documents.
-- [ ] Define triggers for observation changes, events, schedules, and command
+- [x] Define immutable automation ID and monotonically versioned documents.
+- [x] Define triggers for observation changes, events, schedules, and command
   outcomes.
-- [ ] Define typed comparisons, boolean composition, temporal windows, and state
+- [x] Define typed comparisons, boolean composition, temporal windows, and state
   duration conditions.
-- [ ] Define actions for commands, delays, variable assignment, sequence,
+- [x] Define actions for commands, delays, variable assignment, sequence,
   conditional branches, bounded parallel groups, and race groups.
-- [ ] Define explicit single, restart, queued, and bounded-parallel run modes.
-- [ ] Define timeout, retry, and failure behavior without hidden defaults.
-- [ ] Include provenance, author/agent identity, rationale, and source request.
-- [ ] Publish a machine-readable schema suitable for RPC and MCP clients.
+- [x] Define explicit single, restart, queued, and bounded-parallel run modes.
+- [x] Define timeout, retry, and failure behavior without hidden defaults.
+- [x] Include provenance, author/agent identity, rationale, and source request.
+- [x] Publish a machine-readable schema suitable for RPC and MCP clients.
 
 ## Workstream E3.2: Validation and resolution
 
@@ -126,7 +126,7 @@ requires it, and activates an immutable version.
 
 ## Test and verification checklist
 
-- [ ] Schema fixtures cover every IR construct and supported version.
+- [x] Schema fixtures cover every IR construct and supported version.
 - [ ] Property tests cover parser/serializer round trips and bounded execution.
 - [ ] Validator tests cover missing, stale, ambiguous, and incompatible references.
 - [ ] Virtual-time tests cover schedules, delays, duration conditions, retries,
@@ -179,3 +179,6 @@ requires it, and activates an immutable version.
   E3-001 is ready.
 - 2026-07-11: Accepted ADR-0017 through ADR-0020; E3-002 domain implementation is
   ready.
+- 2026-07-11: Completed E3-002 typed automation document/plan contracts,
+  lifecycle records, canonical hashes, absolute resource budgets, published v1
+  schema/example validation, property tests, and persisted round trips.

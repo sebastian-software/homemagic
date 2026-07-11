@@ -160,6 +160,24 @@ uuid_identity!(ActorId, "Stable identity for an authenticated actor.");
 uuid_identity!(CommandId, "Stable identity for one durable command.");
 uuid_identity!(GrantId, "Stable identity for one actor policy grant.");
 uuid_identity!(AuditId, "Stable identity for one immutable audit record.");
+uuid_identity!(AutomationId, "Stable identity for one automation.");
+uuid_identity!(AutomationRunId, "Stable identity for one automation run.");
+uuid_identity!(
+    AutomationOccurrenceId,
+    "Stable identity for one automation trigger occurrence."
+);
+uuid_identity!(
+    AutomationTimerId,
+    "Stable identity for one durable automation timer."
+);
+uuid_identity!(
+    AutomationTraceId,
+    "Stable identity for one automation trace step."
+);
+uuid_identity!(
+    AutomationApprovalId,
+    "Stable identity for one immutable automation approval decision."
+);
 
 /// Stable opaque identifier for a device.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

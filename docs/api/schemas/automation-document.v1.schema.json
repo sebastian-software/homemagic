@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homemagic.dev/schemas/automation-document.v1.schema.json",
+  "title": "HomeMagic Automation Document v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "version", "name", "provenance", "variables", "triggers", "condition", "actions", "run_mode", "self_trigger", "budget", "created_at"],
+  "properties": {
+    "schema": {"const": "automation.document.v1"},
+    "id": {"$ref": "#/$defs/uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "variables": {
+      "type": "object",
+      "maxProperties": 128,
+      "additionalProperties": {"$ref": "#/$defs/variable"}
+    },
+    "triggers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/trigger"}
+    },
+    "condition": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/condition"}]},
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/action"}
+    },
+    "run_mode": {"$ref": "#/$defs/runMode"},
+    "self_trigger": {"enum": ["suppress_same_version", "suppress_same_correlation", "allow"]},
+    "budget": {"$ref": "#/$defs/budget"},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["author_id", "agent_id", "source_request", "rationale"],
+      "properties": {
+        "author_id": {"$ref": "#/$defs/uuid"},
+        "agent_id": {"type": ["string", "null"], "maxLength": 128},
+        "source_request": {"type": "string", "minLength": 1, "maxLength": 16384},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    },
+    "valueType": {
+      "enum": ["null", "boolean", "integer", "decimal", "string", "timestamp", "duration_millis"]
+    },
+    "value": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "null"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "boolean"}, "value": {"type": "boolean"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "integer"}, "value": {"type": "integer"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "decimal"}, "value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "string"}, "value": {"type": "string"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "timestamp"}, "value": {"type": "string", "format": "date-time"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "duration_millis"}, "value": {"type": "integer", "minimum": 0}}}
+      ]
+    },
+    "variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value_type", "initial"],
+      "properties": {
+        "value_type": {"$ref": "#/$defs/valueType"},
+        "initial": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/value"}]}
+      }
+    },
+    "deviceReference": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["selector", "device_id"], "properties": {"selector": {"const": "device"}, "device_id": {"$ref": "#/$defs/uuid"}}},
+        {"type": "object", "additionalProperties": false, "required": ["selector", "alias"], "properties": {"selector": {"const": "alias"}, "alias": {"type": "string", "minLength": 1, "maxLength": 128}}},
+        {"type": "object", "additionalProperties": false, "required": ["selector", "space_id"], "properties": {"selector": {"const": "space"}, "space_id": {"$ref": "#/$defs/uuid"}}}
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device", "endpoint_id", "capability"],
+      "properties": {
+        "device": {"$ref": "#/$defs/deviceReference"},
+        "endpoint_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+        "capability": {"type": "string", "pattern": "^[a-z][a-z0-9_]*\\.v[1-9][0-9]*$"}
+      }
+    },
+    "expression": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["source", "value"], "properties": {"source": {"const": "literal"}, "value": {"$ref": "#/$defs/value"}}},
+        {"type": "object", "additionalProperties": false, "required": ["source", "name"], "properties": {"source": {"const": "variable"}, "name": {"type": "string", "minLength": 1, "maxLength": 128}}},
+        {"type": "object", "additionalProperties": false, "required": ["source", "target", "field"], "properties": {"source": {"const": "observation"}, "target": {"$ref": "#/$defs/target"}, "field": {"type": "string", "minLength": 1, "maxLength": 128}}}
+      ]
+    },
+    "condition": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "literal"}, "value": {"type": "boolean"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "left", "operator", "right"], "properties": {"type": {"const": "compare"}, "left": {"$ref": "#/$defs/expression"}, "operator": {"enum": ["equal", "not_equal", "less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal"]}, "right": {"$ref": "#/$defs/expression"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "conditions"], "properties": {"type": {"const": "all"}, "conditions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/condition"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "conditions"], "properties": {"type": {"const": "any"}, "conditions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/condition"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "condition"], "properties": {"type": {"const": "not"}, "condition": {"$ref": "#/$defs/condition"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "timezone", "start", "end"], "properties": {"type": {"const": "time_window"}, "timezone": {"type": "string"}, "start": {"type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$"}, "end": {"type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "condition", "duration_ms"], "properties": {"type": {"const": "state_duration"}, "condition": {"$ref": "#/$defs/condition"}, "duration_ms": {"type": "integer", "minimum": 1, "maximum": 31536000000}}}
+      ]
+    },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cron", "timezone", "occurrence_window_ms"],
+      "properties": {
+        "cron": {"type": "string", "minLength": 9, "maxLength": 128},
+        "timezone": {"type": "string", "minLength": 1, "maxLength": 128},
+        "occurrence_window_ms": {"type": "integer", "minimum": 1, "maximum": 31536000000}
+      }
+    },
+    "trigger": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "target", "field"], "properties": {"type": {"const": "observation_changed"}, "target": {"$ref": "#/$defs/target"}, "field": {"type": ["string", "null"]}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "target", "event"], "properties": {"type": {"const": "device_event"}, "target": {"$ref": "#/$defs/target"}, "event": {"type": "string", "minLength": 1, "maxLength": 128}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "schedule"], "properties": {"type": {"const": "schedule"}, "schedule": {"$ref": "#/$defs/schedule"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "target", "states"], "properties": {"type": {"const": "command_outcome"}, "target": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/target"}]}, "states": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["received", "validated", "rejected", "dispatched", "acknowledged", "confirmed", "failed", "timed_out", "cancelled"]}}}}
+      ]
+    },
+    "commandPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability", "command"],
+          "properties": {
+            "capability": {"const": "on_off"},
+            "command": {
+              "oneOf": [
+                {"type": "object", "additionalProperties": false, "required": ["action", "on"], "properties": {"action": {"const": "set"}, "on": {"type": "boolean"}}},
+                {"type": "object", "additionalProperties": false, "required": ["action"], "properties": {"action": {"const": "toggle"}}}
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability", "command"],
+          "properties": {
+            "capability": {"const": "level"},
+            "command": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["percent", "transition_ms"],
+              "properties": {
+                "percent": {"type": "integer", "minimum": 0, "maximum": 100},
+                "transition_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 3600000}
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability", "command"],
+          "properties": {
+            "capability": {"const": "position"},
+            "command": {
+              "oneOf": [
+                {"type": "object", "additionalProperties": false, "required": ["action"], "properties": {"action": {"enum": ["open", "close", "stop"]}}},
+                {"type": "object", "additionalProperties": false, "required": ["action", "percent"], "properties": {"action": {"const": "go_to"}, "percent": {"type": "integer", "minimum": 0, "maximum": 100}}}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_retries", "backoff_ms", "retryable_command_errors"],
+      "properties": {
+        "maximum_retries": {"type": "integer", "minimum": 0, "maximum": 16},
+        "backoff_ms": {"type": "integer", "minimum": 0, "maximum": 31536000000},
+        "retryable_command_errors": {"type": "array", "maxItems": 32, "items": {"type": "string"}}
+      }
+    },
+    "failure": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {"mode": {"const": "stop_run"}}},
+        {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {"mode": {"const": "stop_branch"}}},
+        {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {"mode": {"const": "continue"}}},
+        {"type": "object", "additionalProperties": false, "required": ["mode", "actions"], "properties": {"mode": {"const": "fallback"}, "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}}}}
+      ]
+    },
+    "action": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "target", "payload", "retry", "on_failure"], "properties": {"type": {"const": "command"}, "target": {"$ref": "#/$defs/target"}, "payload": {"$ref": "#/$defs/commandPayload"}, "retry": {"$ref": "#/$defs/retry"}, "on_failure": {"$ref": "#/$defs/failure"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "duration_ms"], "properties": {"type": {"const": "delay"}, "duration_ms": {"type": "integer", "minimum": 1, "maximum": 31536000000}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "condition", "timeout_ms", "on_timeout"], "properties": {"type": {"const": "wait"}, "condition": {"$ref": "#/$defs/condition"}, "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 31536000000}, "on_timeout": {"$ref": "#/$defs/failure"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "name", "value"], "properties": {"type": {"const": "set_variable"}, "name": {"type": "string"}, "value": {"$ref": "#/$defs/expression"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "actions"], "properties": {"type": {"const": "sequence"}, "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "condition", "then_actions", "else_actions"], "properties": {"type": {"const": "if"}, "condition": {"$ref": "#/$defs/condition"}, "then_actions": {"type": "array", "items": {"$ref": "#/$defs/action"}}, "else_actions": {"type": "array", "items": {"$ref": "#/$defs/action"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "branches", "maximum_parallel"], "properties": {"type": {"const": "parallel"}, "branches": {"type": "array", "minItems": 1, "items": {"type": "array", "items": {"$ref": "#/$defs/action"}}}, "maximum_parallel": {"type": "integer", "minimum": 1, "maximum": 32}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "branches", "maximum_parallel"], "properties": {"type": {"const": "race"}, "branches": {"type": "array", "minItems": 1, "items": {"type": "array", "items": {"$ref": "#/$defs/action"}}}, "maximum_parallel": {"type": "integer", "minimum": 1, "maximum": 32}}}
+      ]
+    },
+    "runMode": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {"mode": {"const": "single"}}},
+        {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {"mode": {"const": "restart"}}},
+        {"type": "object", "additionalProperties": false, "required": ["mode", "capacity"], "properties": {"mode": {"const": "queued"}, "capacity": {"type": "integer", "minimum": 1, "maximum": 1024}}},
+        {"type": "object", "additionalProperties": false, "required": ["mode", "maximum_parallel"], "properties": {"mode": {"const": "parallel"}, "maximum_parallel": {"type": "integer", "minimum": 1, "maximum": 32}}}
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_nodes", "maximum_nesting_depth", "maximum_parallel_width", "maximum_queue_length", "maximum_trace_steps", "maximum_run_duration_ms"],
+      "properties": {
+        "maximum_nodes": {"type": "integer", "minimum": 1, "maximum": 2048},
+        "maximum_nesting_depth": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maximum_parallel_width": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maximum_queue_length": {"type": "integer", "minimum": 1, "maximum": 1024},
+        "maximum_trace_steps": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "maximum_run_duration_ms": {"type": "integer", "minimum": 1, "maximum": 31536000000}
+      }
+    }
+  }
+}
