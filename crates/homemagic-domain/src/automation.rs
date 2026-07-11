@@ -1417,6 +1417,8 @@ pub struct AutomationRun {
     pub command_ids: Vec<CommandId>,
     /// Current restart-safe command attempt, when a command node is active.
     pub command_attempt: Option<AutomationCommandAttempt>,
+    /// Continuous-condition intervals retained for the current plan node.
+    pub condition_durations: Vec<AutomationConditionDuration>,
     /// Nested group continuations required to resume branch execution.
     pub continuations: Vec<AutomationRunContinuation>,
     /// Operation correlation identity.
@@ -1427,6 +1429,33 @@ pub struct AutomationRun {
     pub created_at: DateTime<Utc>,
     /// Latest transition time.
     pub updated_at: DateTime<Utc>,
+}
+
+/// Durable phase of one continuously true condition interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationConditionDurationPhase {
+    /// Inner condition is true but its interval has not completed.
+    Pending,
+    /// The stability timer was consumed while the inner condition stayed true.
+    Mature,
+}
+
+/// Restart-safe continuous-condition interval.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationConditionDuration {
+    /// Owning compiled condition node.
+    pub node_id: AutomationPlanNodeId,
+    /// Canonical hash of the nested condition and duration contract.
+    pub condition_hash: AutomationContentHash,
+    /// Required continuously true interval.
+    pub duration_ms: u64,
+    /// Absolute interval completion instant.
+    pub ready_at: DateTime<Utc>,
+    /// Scoped durable stability timer.
+    pub timer_id: AutomationTimerId,
+    /// Current interval phase.
+    pub phase: AutomationConditionDurationPhase,
 }
 
 /// Durable phase of one command-node attempt.

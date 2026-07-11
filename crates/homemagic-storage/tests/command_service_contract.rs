@@ -634,6 +634,7 @@ async fn automation_runtime_fixture(
         variables: BTreeMap::new(),
         command_ids: Vec::new(),
         command_attempt: None,
+        condition_durations: Vec::new(),
         continuations: Vec::new(),
         correlation_id: occurrence.correlation_id,
         causation_event_id: None,

@@ -36,3 +36,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0021: Persist automation group continuations in run state](0021-persist-automation-group-continuations.md)
 - [ADR-0022: Persist automation command attempts explicitly](0022-persist-automation-command-attempts.md)
 - [ADR-0023: Scope durable automation timers by semantic role](0023-scope-durable-automation-timers.md)
+- [ADR-0024: Persist continuous-condition intervals](0024-persist-continuous-condition-intervals.md)

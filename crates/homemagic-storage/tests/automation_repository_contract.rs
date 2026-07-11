@@ -842,6 +842,7 @@ fn run(
         variables: BTreeMap::new(),
         command_ids: Vec::new(),
         command_attempt: None,
+        condition_durations: Vec::new(),
         continuations: Vec::new(),
         correlation_id: occurrence.correlation_id.clone(),
         causation_event_id: None,

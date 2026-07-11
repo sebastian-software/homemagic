@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: planned
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024]
 created: 2026-07-11
 updated: 2026-07-12
 ---
