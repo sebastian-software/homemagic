@@ -4,6 +4,7 @@
 //! public device information and current status through Shelly HTTP RPC.
 
 mod auth;
+mod command;
 mod notification;
 mod session;
 mod websocket;

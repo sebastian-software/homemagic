@@ -19,7 +19,7 @@ updated: 2026-07-11
 | [E2-003](E2-003-command-storage.md) | Done | E2-002 | Durable idempotency and audit |
 | [E2-004](E2-004-actor-policy.md) | Done | E2-002, E2-003 | Authentication and policy |
 | [E2-005](E2-005-command-orchestrator.md) | Done | E2-003, E2-004 | Single command path |
-| [E2-006](E2-006-shelly-dispatch.md) | Ready | E2-005 | Switch, dimmer, cover dispatch |
+| [E2-006](E2-006-shelly-dispatch.md) | In progress | E2-005 | Switch, dimmer, cover dispatch |
 | [E2-007](E2-007-command-rpc.md) | Planned | E2-005, E2-006 | Authenticated JSON-RPC surface |
 | [E2-008](E2-008-command-exit-audit.md) | Planned | E2-007 | Hardware, threat, exit evidence |
 
@@ -38,3 +38,6 @@ updated: 2026-07-11
 - 2026-07-11: E2-005 completed with the single durable command path, committed
   typed audit facts, post-await deadlines, cancellation, and no-redispatch
   restart recovery; E2-006 is ready.
+- 2026-07-11: E2-006 typed private Switch, Light, and Cover RPC mapping plus
+  structured safety error normalization completed; transport and confirmation
+  remain.

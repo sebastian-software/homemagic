@@ -409,6 +409,14 @@ pub enum CommandErrorCode {
     DeviceBusy,
     /// Adapter returned a stable rejection.
     AdapterRejected,
+    /// Adapter or network transport failed before acknowledgement.
+    TransportFailure,
+    /// Device protection state prevented safe execution.
+    ProtectionActive,
+    /// Mechanical obstruction prevented the requested outcome.
+    ObstructionDetected,
+    /// Device thermal protection prevented execution.
+    Overtemperature,
     /// Observed state did not match the requested outcome.
     ConfirmationMismatch,
     /// Restart recovery could not prove whether physical dispatch completed.

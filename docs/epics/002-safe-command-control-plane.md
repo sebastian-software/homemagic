@@ -109,13 +109,13 @@ from ADR-0009.
 
 ## Workstream E2.4: Shelly command adapters
 
-- [ ] Map `on_off.v1` set/toggle to the correct Shelly component method.
-- [ ] Map `level.v1` set to dimmer/light constraints and transitions.
-- [ ] Map `position.v1` open, close, stop, and go-to-position.
-- [ ] Reject go-to-position when calibration or position control is unavailable.
-- [ ] Add command origin tags where supported.
+- [x] Map `on_off.v1` set/toggle to the correct Shelly component method.
+- [x] Map `level.v1` set to dimmer/light constraints and transitions.
+- [x] Map `position.v1` open, close, stop, and go-to-position.
+- [x] Reject go-to-position when calibration or position control is unavailable.
+- [x] Add command origin tags where supported.
 - [ ] Confirm outcomes from push observations with bounded read fallback.
-- [ ] Surface protection, obstruction, overtemperature, and vendor RPC failures as
+- [x] Surface protection, obstruction, overtemperature, and vendor RPC failures as
   structured outcomes.
 - [ ] Prevent duplicate physical dispatch during retries and reconnects.
 
@@ -199,3 +199,5 @@ from ADR-0009.
 - 2026-07-11: Completed E2-005 single governed command orchestration with durable
   pre-dispatch facts, typed acknowledgement/confirmation audit, cancellation,
   post-await deadlines, idempotent retry, and no-blind-redispatch recovery.
+- 2026-07-11: Added E2-006 private typed Shelly Switch, Light, and Cover mappings,
+  origin tags, calibration gating, and stable safety/RPC error normalization.
