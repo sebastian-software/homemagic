@@ -60,6 +60,7 @@ See the [prototype operator guide](docs/operations/shelly-prototype.md) and
 - [Home Assistant architecture analysis](docs/research/home-assistant-architecture.md)
 - [Target architecture](docs/architecture/target-architecture.md)
 - [Roadmap](docs/roadmap.md)
+- [Delivery epics](docs/epics/README.md)
 - [Architecture decisions](docs/adr/README.md)
 - [Prototype operator guide](docs/operations/shelly-prototype.md)
 - [JSON-RPC reference](docs/api/json-rpc.md)

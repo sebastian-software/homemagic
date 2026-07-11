@@ -21,51 +21,60 @@ Acceptance evidence:
 - `devices.list` returns the current snapshots through JSON-RPC;
 - a fixture-backed test proves projection for switch, light, and cover examples.
 
-## M1: Reliable Shelly Gen2+ control
+## Next delivery milestones
 
-- durable SQLite registry and migrations;
-- authenticated Shelly RPC;
-- WebSocket status/event subscriptions with reconnect and backoff;
-- typed commands for switch, dimmer, and cover;
-- energy and diagnostic observations;
-- idempotency, deadlines, command outcomes, and audit records;
-- hardware compatibility matrix and repeatable smoke-test command.
+The next five milestones are defined as checkable epics. The
+[epic index](epics/README.md) is the source of truth for dependencies, progress,
+acceptance evidence, and exit gates.
 
-## M2: Agent-authored automation foundation
+### M1: Reliable device foundation
 
-- versioned automation intermediate representation;
-- type/reference validation;
-- deterministic engine with simulated time;
-- recorded-event simulation and explainable trace;
-- risk classification and approval policy;
-- RPC lifecycle for draft through activation;
-- initial MCP tools and resources using the official Rust SDK.
+See [EPIC-001](epics/001-reliable-device-foundation.md).
 
-## M3: Matter controller integration
+Persist device identity and state, reconcile discovery, support authenticated
+Shelly RPC, consume push updates, and make lifecycle and repair state explicit.
 
-- decide the Matter controller implementation in a dedicated ADR;
-- commission Wi-Fi devices on macOS and Linux where platform support permits;
-- import nodes/endpoints/clusters into capabilities;
-- subscriptions, commands, fabric backup, and OTA visibility;
-- Thread/BLE boundary and supported-host documentation;
-- conformance fixtures derived from Matter device types and clusters.
+### M2: Safe command control plane
+
+See [EPIC-002](epics/002-safe-command-control-plane.md).
+
+Create the single authorized, idempotent, and audited mutation path, then control
+Shelly switches, dimmers, and covers through common capabilities.
+
+### M3: Agent-authored automation engine
+
+See [EPIC-003](epics/003-agent-authored-automation-engine.md).
+
+Deliver a versioned automation IR, validation, deterministic simulation, governed
+activation, durable execution, and explainable traces.
+
+### M4: Matter controller integration
+
+See [EPIC-004](epics/004-matter-controller-integration.md).
+
+Select the controller boundary through evidence, commission Matter-over-Wi-Fi
+devices, map clusters to capabilities, subscribe, control, and protect fabric
+state. Feasibility work may start during M1; full control depends on M2.
 
 The implementation must preserve the 95% Rust policy. Any non-Rust controller or
 FFI exception requires the evidence specified by ADR-0005.
 
-## M4: Security-sensitive and media integrations
+### M5: MCP and intent-driven interaction
 
-- lock capability, credential isolation, and approval policy;
-- camera discovery, snapshots, and stream descriptors;
-- selective media backend ADR for codec/transport dependencies;
-- explicit privacy zones, retention, and access audit;
-- first robot-vacuum adapter selected from documented local APIs.
+See [EPIC-005](epics/005-mcp-intent-driven-interaction.md).
 
-## M5: Generated interaction surfaces
+Expose curated tools and resources, resolve household language safely, support
+the automation lifecycle, and establish transport-neutral presentation
+descriptors for later generated UIs.
 
-- need-oriented view schema derived from capabilities and context;
-- agent-generated views that remain editable and versioned;
-- reference web client generated from the same RPC schemas;
+## Later horizons
+
+After the five delivery epics:
+
+- security-sensitive lock capability and credential management;
+- camera discovery, snapshots, streams, privacy, and media backend ADR;
+- first robot-vacuum integration selected from documented local APIs;
+- generated, need-oriented web/mobile interaction surfaces;
 - accessibility and mobile interaction acceptance criteria.
 
 ## Deferred until evidence justifies them
