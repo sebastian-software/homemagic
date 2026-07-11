@@ -156,6 +156,7 @@ async fn pending_work_trace_conflicts_and_retention_should_obey_invariants() -> 
         id: AutomationTimerId::new(),
         run_id: run.id.clone(),
         node_id: AutomationPlanNodeId(0),
+        kind: homemagic_domain::AutomationTimerKind::Delay,
         ready_at: now + TimeDelta::seconds(5),
         state: AutomationTimerState::Pending,
     };
@@ -376,6 +377,7 @@ async fn interpreter_step_should_commit_run_trace_and_timer_atomically() -> Test
         id: AutomationTimerId::from_key(&running.id, 0, now.timestamp_millis() + 10),
         run_id: running.id.clone(),
         node_id: AutomationPlanNodeId(0),
+        kind: homemagic_domain::AutomationTimerKind::Delay,
         ready_at: now + TimeDelta::milliseconds(10),
         state: AutomationTimerState::Pending,
     };

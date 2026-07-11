@@ -12,15 +12,16 @@ use homemagic_domain::{
     AutomationPlanSchema, AutomationRegistryRevision, AutomationResourceBudget, AutomationRun,
     AutomationRunId, AutomationRunMode, AutomationRunState, AutomationSafetyProfile,
     AutomationSafetyRequirement, AutomationSelfTriggerPolicy, AutomationTimer, AutomationTimerId,
-    AutomationTimerState, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
-    AutomationValidationCode, AutomationValidationError, AutomationVersionState, AvailabilityState,
-    CapabilityDescriptor, CapabilityDescriptorError, CapabilityObservation, CausationMetadata,
-    CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandId, CommandPayload, CommandState,
-    CommandTransitionError, CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot,
-    DomainEvent, DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId,
-    IntegrationId, LifecycleTransitionError, LifecycleTrigger, ObservationMergeError,
-    ObservationSource, ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind,
-    RepairRecord, RepairTransitionError, RiskClass, canonical_automation_hash,
+    AutomationTimerKind, AutomationTimerState, AutomationTraceId, AutomationTraceKind,
+    AutomationTraceStep, AutomationValidationCode, AutomationValidationError,
+    AutomationVersionState, AvailabilityState, CapabilityDescriptor, CapabilityDescriptorError,
+    CapabilityObservation, CausationMetadata, CommandAggregate, CommandAuditRecord,
+    CommandEnvelope, CommandId, CommandPayload, CommandState, CommandTransitionError,
+    CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot, DomainEvent,
+    DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId, IntegrationId,
+    LifecycleTransitionError, LifecycleTrigger, ObservationMergeError, ObservationSource,
+    ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind, RepairRecord,
+    RepairTransitionError, RiskClass, canonical_automation_hash,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -241,6 +242,7 @@ fn automation_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Erro
         id: AutomationTimerId::new(),
         run_id: run_id.clone(),
         node_id,
+        kind: AutomationTimerKind::Delay,
         ready_at: now + chrono::TimeDelta::seconds(1),
         state: AutomationTimerState::Pending,
     };

@@ -88,6 +88,14 @@ timeout failure policy. Workers never sleep or hold mutable device state.
 Nested continuous state-duration conditions still require their own durable
 stability timer and are rejected explicitly rather than approximated.
 
+## Scoped timer recovery
+
+ADR-0023 assigns every durable timer a semantic kind and includes that kind in
+its deterministic identity scope. Delay, wait-timeout, command-retry, and
+state-duration timers can therefore coexist on one run/node without ambiguous
+recovery or equal-instant ID collisions. Storage prevents a timer transition
+from changing its kind, and runtime lookup always matches both node and kind.
+
 ## Governed command crash window
 
 Command nodes can be enabled only by attaching CommandService and its durable

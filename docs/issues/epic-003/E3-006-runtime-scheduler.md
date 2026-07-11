@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: planned
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -72,3 +72,7 @@ updated: 2026-07-12
   timer, dispatches attempt one exactly once, and completes. Pure tests prove
   partial multi-target retry selects only failed targets and stops at the
   compiled attempt bound.
+- 2026-07-12: Accepted ADR-0023 and scoped every runtime timer by semantic kind.
+  Delay, wait-timeout, command-retry, and state-duration IDs can no longer
+  collide at the same node/instant; storage keeps the role immutable and
+  runtime recovery uses kind-safe lookups.

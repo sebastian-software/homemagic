@@ -8,9 +8,9 @@ use homemagic_domain::{
     AutomationCommandAttempt, AutomationCommandAttemptPhase, AutomationPlanFailurePolicy,
     AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRetryPolicy, AutomationRun,
     AutomationRunContinuation, AutomationRunContinuationKind, AutomationRunId, AutomationRunState,
-    AutomationTimer, AutomationTimerId, AutomationTimerState, AutomationTraceId,
-    AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandAggregate, CommandId,
-    CommandState, IdempotencyKey, ResolvedAutomationCondition, ResolvedAutomationTarget,
+    AutomationTimer, AutomationTimerId, AutomationTimerKind, AutomationTimerState,
+    AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandAggregate,
+    CommandId, CommandState, IdempotencyKey, ResolvedAutomationCondition, ResolvedAutomationTarget,
 };
 use thiserror::Error;
 
@@ -522,9 +522,15 @@ impl AutomationRuntime {
                 .checked_add_signed(TimeDelta::milliseconds(milliseconds))
                 .ok_or(AutomationRuntimeError::DurationOverflow)?;
             let timer = AutomationTimer {
-                id: AutomationTimerId::from_key(&run.id, node_id.0, ready_at.timestamp_millis()),
+                id: AutomationTimerId::from_scoped_key(
+                    &run.id,
+                    node_id.0,
+                    AutomationTimerKind::WaitTimeout.scope_key(),
+                    ready_at.timestamp_millis(),
+                ),
                 run_id: run.id.clone(),
                 node_id,
+                kind: AutomationTimerKind::WaitTimeout,
                 ready_at,
                 state: AutomationTimerState::Pending,
             };
@@ -547,11 +553,11 @@ impl AutomationRuntime {
             .recoverable_automation_work(RECOVERY_PAGE)
             .await
             .map_err(AutomationRuntimeError::Repository)?;
-        let Some(mut timer) = recovery
-            .timers
-            .into_iter()
-            .find(|timer| timer.run_id == run.id && timer.node_id == node_id)
-        else {
+        let Some(mut timer) = recovery.timers.into_iter().find(|timer| {
+            timer.run_id == run.id
+                && timer.node_id == node_id
+                && timer.kind == AutomationTimerKind::WaitTimeout
+        }) else {
             return Err(AutomationRuntimeError::InvalidPlan);
         };
         if satisfied {
@@ -806,13 +812,15 @@ impl AutomationRuntime {
             AutomationRuntimeStep::Waiting
         } else if let Some(retry) = retry_plan(attempt, &target_indices, &commands, node.retry)? {
             let timer = AutomationTimer {
-                id: AutomationTimerId::from_key(
+                id: AutomationTimerId::from_scoped_key(
                     &run.id,
                     node.node_id.0,
+                    AutomationTimerKind::CommandRetry.scope_key(),
                     retry.ready_at.timestamp_millis(),
                 ),
                 run_id: run.id.clone(),
                 node_id: node.node_id,
+                kind: AutomationTimerKind::CommandRetry,
                 ready_at: retry.ready_at,
                 state: AutomationTimerState::Pending,
             };
@@ -866,8 +874,12 @@ impl AutomationRuntime {
         let ready_at = attempt
             .retry_ready_at
             .ok_or(AutomationRuntimeError::InvalidPlan)?;
-        let timer_id =
-            AutomationTimerId::from_key(&run.id, node.node_id.0, ready_at.timestamp_millis());
+        let timer_id = AutomationTimerId::from_scoped_key(
+            &run.id,
+            node.node_id.0,
+            AutomationTimerKind::CommandRetry.scope_key(),
+            ready_at.timestamp_millis(),
+        );
         let Some(mut timer) = self
             .repository
             .automation_timer(&timer_id)
@@ -920,9 +932,15 @@ impl AutomationRuntime {
                 .checked_add_signed(TimeDelta::milliseconds(milliseconds))
                 .ok_or(AutomationRuntimeError::DurationOverflow)?;
             let timer = AutomationTimer {
-                id: AutomationTimerId::from_key(&run.id, node_id.0, ready_at.timestamp_millis()),
+                id: AutomationTimerId::from_scoped_key(
+                    &run.id,
+                    node_id.0,
+                    AutomationTimerKind::Delay.scope_key(),
+                    ready_at.timestamp_millis(),
+                ),
                 run_id: run.id.clone(),
                 node_id,
+                kind: AutomationTimerKind::Delay,
                 ready_at,
                 state: AutomationTimerState::Pending,
             };
@@ -948,11 +966,11 @@ impl AutomationRuntime {
             .recoverable_automation_work(RECOVERY_PAGE)
             .await
             .map_err(AutomationRuntimeError::Repository)?;
-        let Some(mut timer) = recovery
-            .timers
-            .into_iter()
-            .find(|timer| timer.run_id == run.id && timer.node_id == node_id)
-        else {
+        let Some(mut timer) = recovery.timers.into_iter().find(|timer| {
+            timer.run_id == run.id
+                && timer.node_id == node_id
+                && timer.kind == AutomationTimerKind::Delay
+        }) else {
             return Err(AutomationRuntimeError::InvalidPlan);
         };
         if timer.state != AutomationTimerState::Ready {

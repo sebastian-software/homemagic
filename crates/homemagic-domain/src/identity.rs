@@ -203,9 +203,20 @@ impl AutomationTimerId {
     /// Derives one stable timer identity from its run, node, and ready instant.
     #[must_use]
     pub fn from_key(run_id: &AutomationRunId, node_id: u32, ready_at_millis: i64) -> Self {
+        Self::from_scoped_key(run_id, node_id, "generic", ready_at_millis)
+    }
+
+    /// Derives an idempotent timer identity including its semantic scope.
+    #[must_use]
+    pub fn from_scoped_key(
+        run_id: &AutomationRunId,
+        node_id: u32,
+        scope: &str,
+        ready_at_millis: i64,
+    ) -> Self {
         Self(Uuid::new_v5(
             &AUTOMATION_TIMER_NAMESPACE,
-            format!("{run_id}:{node_id}:{ready_at_millis}").as_bytes(),
+            format!("{run_id}:{node_id}:{scope}:{ready_at_millis}").as_bytes(),
         ))
     }
 }

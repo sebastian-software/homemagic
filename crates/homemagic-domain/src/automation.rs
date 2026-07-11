@@ -1252,6 +1252,33 @@ pub enum AutomationTimerState {
     Cancelled,
 }
 
+/// Semantic owner of one durable automation timer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationTimerKind {
+    /// Explicit delay action.
+    Delay,
+    /// Timeout bound for a wait action.
+    WaitTimeout,
+    /// Backoff before another command attempt.
+    CommandRetry,
+    /// Continuous-condition stability interval.
+    StateDuration,
+}
+
+impl AutomationTimerKind {
+    /// Returns the stable identity scope used for timer derivation.
+    #[must_use]
+    pub const fn scope_key(self) -> &'static str {
+        match self {
+            Self::Delay => "delay",
+            Self::WaitTimeout => "wait_timeout",
+            Self::CommandRetry => "command_retry",
+            Self::StateDuration => "state_duration",
+        }
+    }
+}
+
 impl AutomationTimerState {
     /// Returns whether the explicit lifecycle permits `next`.
     #[must_use]
@@ -1467,6 +1494,8 @@ pub struct AutomationTimer {
     pub run_id: AutomationRunId,
     /// Plan node waiting on this timer.
     pub node_id: AutomationPlanNodeId,
+    /// Semantic timer role within the plan node.
+    pub kind: AutomationTimerKind,
     /// Absolute UTC ready instant.
     pub ready_at: DateTime<Utc>,
     /// Current timer state.

@@ -804,6 +804,7 @@ fn transition_timer(
     )?;
     if current.run_id != timer.run_id
         || current.node_id != timer.node_id
+        || current.kind != timer.kind
         || current.ready_at != timer.ready_at
         || !current.state.allows_transition_to(timer.state)
     {
