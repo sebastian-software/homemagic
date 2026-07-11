@@ -2,10 +2,10 @@
 id: E1-006
 epic: EPIC-001
 title: Maintain Shelly WebSocket observation sessions
-status: planned
+status: ready
 priority: high
 depends_on: [E1-004, E1-005]
-adrs: [ADR-0006]
+adrs: [ADR-0006, ADR-0010]
 created: 2026-07-11
 updated: 2026-07-11
 ---
@@ -46,3 +46,5 @@ events.
 ## Progress log
 
 - 2026-07-11: Issue created.
+- 2026-07-11: Accepted ADR-0010 for per-device ownership, baseline overlays,
+  idempotency, cancellation, and gap-triggered refresh semantics.

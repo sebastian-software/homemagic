@@ -22,3 +22,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0007: Own SQLite schemas and use forward-only migrations](0007-sqlite-schema-migrations-and-backups.md)
 - [ADR-0008: Store device credentials behind platform secret stores](0008-platform-secret-stores-and-headless-vault.md)
 - [ADR-0009: Separate current state from bounded event retention](0009-current-state-and-event-retention.md)
+- [ADR-0010: Own one managed session per active device](0010-managed-device-sessions-and-notification-gaps.md)
