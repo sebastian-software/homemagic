@@ -2,6 +2,7 @@
 
 mod authentication;
 mod automation_compiler;
+mod automation_repository;
 mod command_service;
 mod memory;
 mod policy;
@@ -28,6 +29,11 @@ pub use authentication::{
     AuthenticateActor,
 };
 pub use automation_compiler::{AutomationCompilationError, AutomationCompiler};
+pub use automation_repository::{
+    AutomationActivation, AutomationDraft, AutomationIdentityState, AutomationRecovery,
+    AutomationRepository, AutomationRetention, AutomationRetentionResult,
+    AutomationSimulationEvidence, AutomationValidationEvidence, StoredAutomationVersion,
+};
 pub use command_service::{
     CommandRequest, CommandService, CommandServiceDependencies, CommandServiceError,
     DomainEventCommandAuditSink, NoopCommandAuditSink,

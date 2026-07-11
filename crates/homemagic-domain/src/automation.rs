@@ -983,6 +983,55 @@ pub struct AutomationExecutionPlan {
     pub budget: AutomationResourceBudget,
 }
 
+/// Computes the canonical normalized-plan hash while excluding `plan_hash`.
+///
+/// # Errors
+///
+/// Returns a serialization failure when the normalized contract cannot be
+/// encoded.
+pub fn canonical_automation_plan_hash(
+    plan: &AutomationExecutionPlan,
+) -> Result<AutomationContentHash, CanonicalAutomationError> {
+    #[derive(Serialize)]
+    struct HashablePlan<'a> {
+        schema: &'a AutomationPlanSchema,
+        automation_id: &'a AutomationId,
+        automation_version: AutomationVersion,
+        document_hash: &'a AutomationContentHash,
+        registry_revision: AutomationRegistryRevision,
+        variables: &'a BTreeMap<String, AutomationVariableDefinition>,
+        triggers: &'a [ResolvedAutomationTrigger],
+        condition: &'a Option<ResolvedAutomationCondition>,
+        run_mode: AutomationRunMode,
+        self_trigger: AutomationSelfTriggerPolicy,
+        entry: AutomationPlanNodeId,
+        nodes: &'a [AutomationPlanNode],
+        safety_profiles: &'a BTreeSet<AutomationSafetyProfile>,
+        safety_requirements: &'a BTreeSet<AutomationSafetyRequirement>,
+        approval: AutomationApprovalRequirement,
+        budget: AutomationResourceBudget,
+    }
+
+    canonical_automation_hash(&HashablePlan {
+        schema: &plan.schema,
+        automation_id: &plan.automation_id,
+        automation_version: plan.automation_version,
+        document_hash: &plan.document_hash,
+        registry_revision: plan.registry_revision,
+        variables: &plan.variables,
+        triggers: &plan.triggers,
+        condition: &plan.condition,
+        run_mode: plan.run_mode,
+        self_trigger: plan.self_trigger,
+        entry: plan.entry,
+        nodes: &plan.nodes,
+        safety_profiles: &plan.safety_profiles,
+        safety_requirements: &plan.safety_requirements,
+        approval: plan.approval,
+        budget: plan.budget,
+    })
+}
+
 /// Stable machine-readable validation code.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

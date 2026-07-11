@@ -138,7 +138,7 @@ async fn repository_should_report_schema_and_wal_health() -> Result<(), BoxError
 
     let health = fixture.repository.health().await?;
 
-    assert_eq!(health.schema_version, 2);
+    assert_eq!(health.schema_version, 3);
     assert_eq!(health.integrity, "ok");
     assert!(health.wal_enabled);
     Ok(())

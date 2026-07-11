@@ -1,5 +1,6 @@
 //! `SQLite` persistence adapter for the `HomeMagic` device foundation.
 
+mod automation_repository;
 mod backup;
 mod command_repository;
 mod migrations;
@@ -83,6 +84,33 @@ pub enum StorageError {
         /// Version supplied by the caller.
         expected: u64,
         /// Current durable version.
+        found: u64,
+    },
+    /// An automation mutation violated a durable invariant.
+    #[error("invalid durable automation mutation: {0}")]
+    InvalidAutomation(&'static str),
+    /// Optimistic draft revision did not match durable state.
+    #[error("automation draft revision conflict: expected {expected:?}, found {found:?}")]
+    AutomationDraftConflict {
+        /// Revision supplied by the caller, or absence for create.
+        expected: Option<u64>,
+        /// Current durable revision, or absence when no draft exists.
+        found: Option<u64>,
+    },
+    /// Optimistic automation identity revision did not match durable state.
+    #[error("automation identity revision conflict: expected {expected}, found {found}")]
+    AutomationIdentityConflict {
+        /// Revision supplied by the caller.
+        expected: u64,
+        /// Current durable revision.
+        found: u64,
+    },
+    /// Optimistic run revision did not match durable state.
+    #[error("automation run revision conflict: expected {expected}, found {found}")]
+    AutomationRunConflict {
+        /// Revision supplied by the caller.
+        expected: u64,
+        /// Current durable revision.
         found: u64,
     },
     /// An unsigned contract value exceeded `SQLite`'s signed integer range.

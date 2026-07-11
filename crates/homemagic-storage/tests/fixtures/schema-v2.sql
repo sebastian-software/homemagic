@@ -1,0 +1,10 @@
+DROP TABLE automation_trace;
+DROP TABLE automation_timers;
+DROP TABLE automation_runs;
+DROP TABLE automation_occurrences;
+DROP TABLE automation_approvals;
+DROP TABLE automation_versions;
+DROP TABLE automation_drafts;
+DROP TABLE automation_identities;
+DELETE FROM schema_migrations WHERE version = 3;
+PRAGMA user_version = 2;

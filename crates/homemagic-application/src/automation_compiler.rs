@@ -1,6 +1,6 @@
 //! Side-effect-free validation and deterministic automation plan compilation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use chrono::NaiveTime;
@@ -8,18 +8,17 @@ use chrono_tz::Tz;
 use cron::Schedule;
 use homemagic_domain::{
     AutomationAction, AutomationApprovalRequirement, AutomationComparison, AutomationCondition,
-    AutomationContentHash, AutomationDeviceReference, AutomationDocument, AutomationExecutionPlan,
-    AutomationExpression, AutomationFailurePolicy, AutomationPlanFailurePolicy, AutomationPlanNode,
-    AutomationPlanNodeId, AutomationPlanNodeKind, AutomationPlanSchema, AutomationRegistryRevision,
+    AutomationDeviceReference, AutomationDocument, AutomationExecutionPlan, AutomationExpression,
+    AutomationFailurePolicy, AutomationPlanFailurePolicy, AutomationPlanNode, AutomationPlanNodeId,
+    AutomationPlanNodeKind, AutomationPlanSchema, AutomationRegistryRevision,
     AutomationResourceBudgetError, AutomationSafetyProfile, AutomationSafetyRequirement,
     AutomationTargetReference, AutomationTrigger, AutomationValidationCode,
     AutomationValidationError, AutomationValue, AutomationValueType, CommandPayload,
     DeviceLifecycle, DeviceRecord, MAX_AUTOMATION_DOCUMENT_BYTES, MAX_AUTOMATION_RETRIES,
     MAX_AUTOMATION_TIMER_MILLIS, PositionCommand, ResolvedAutomationCondition,
     ResolvedAutomationExpression, ResolvedAutomationTarget, ResolvedAutomationTrigger,
-    canonical_automation_hash,
+    canonical_automation_hash, canonical_automation_plan_hash,
 };
-use serde::Serialize;
 use thiserror::Error;
 
 use crate::FoundationSnapshot;
@@ -164,7 +163,7 @@ impl<'a> Compiler<'a> {
             approval,
             budget: self.document.budget,
         };
-        plan.plan_hash = match hash_plan_without_hash(&plan) {
+        plan.plan_hash = match canonical_automation_plan_hash(&plan) {
             Ok(hash) => hash,
             Err(error) => {
                 return Err(AutomationCompilationError {
@@ -1230,48 +1229,6 @@ fn reduce_failure(policy: &AutomationFailurePolicy) -> AutomationFailurePolicy {
         },
         _ => policy.clone(),
     }
-}
-
-fn hash_plan_without_hash(
-    plan: &AutomationExecutionPlan,
-) -> Result<AutomationContentHash, homemagic_domain::CanonicalAutomationError> {
-    #[derive(Serialize)]
-    struct HashablePlan<'a> {
-        schema: &'a AutomationPlanSchema,
-        automation_id: &'a homemagic_domain::AutomationId,
-        automation_version: homemagic_domain::AutomationVersion,
-        document_hash: &'a AutomationContentHash,
-        registry_revision: AutomationRegistryRevision,
-        variables: &'a BTreeMap<String, homemagic_domain::AutomationVariableDefinition>,
-        triggers: &'a [ResolvedAutomationTrigger],
-        condition: &'a Option<ResolvedAutomationCondition>,
-        run_mode: homemagic_domain::AutomationRunMode,
-        self_trigger: homemagic_domain::AutomationSelfTriggerPolicy,
-        entry: AutomationPlanNodeId,
-        nodes: &'a [AutomationPlanNode],
-        safety_profiles: &'a BTreeSet<AutomationSafetyProfile>,
-        safety_requirements: &'a BTreeSet<AutomationSafetyRequirement>,
-        approval: AutomationApprovalRequirement,
-        budget: homemagic_domain::AutomationResourceBudget,
-    }
-    canonical_automation_hash(&HashablePlan {
-        schema: &plan.schema,
-        automation_id: &plan.automation_id,
-        automation_version: plan.automation_version,
-        document_hash: &plan.document_hash,
-        registry_revision: plan.registry_revision,
-        variables: &plan.variables,
-        triggers: &plan.triggers,
-        condition: &plan.condition,
-        run_mode: plan.run_mode,
-        self_trigger: plan.self_trigger,
-        entry: plan.entry,
-        nodes: &plan.nodes,
-        safety_profiles: &plan.safety_profiles,
-        safety_requirements: &plan.safety_requirements,
-        approval: plan.approval,
-        budget: plan.budget,
-    })
 }
 
 #[cfg(test)]

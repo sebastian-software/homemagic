@@ -6,6 +6,7 @@ use crate::StorageError;
 const INITIAL_SCHEMA: &str = include_str!("../migrations/0001_initial.sql");
 const COMMAND_CONTROL_PLANE_SCHEMA: &str =
     include_str!("../migrations/0002_command_control_plane.sql");
+const AUTOMATION_ENGINE_SCHEMA: &str = include_str!("../migrations/0003_automation_engine.sql");
 
 struct Migration {
     version: u32,
@@ -24,9 +25,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "command_control_plane",
         sql: COMMAND_CONTROL_PLANE_SCHEMA,
     },
+    Migration {
+        version: 3,
+        name: "automation_engine",
+        sql: AUTOMATION_ENGINE_SCHEMA,
+    },
 ];
 
-pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let found = schema_version(connection)?;
