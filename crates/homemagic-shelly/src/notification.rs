@@ -152,6 +152,8 @@ fn take_string(object: &mut Map<String, Value>, key: &str) -> Result<String, Not
 pub struct StatusApply {
     /// Components whose effective status changed.
     pub changed_components: Vec<String>,
+    /// Raw top-level component fields whose effective values changed.
+    pub changed_fields: BTreeMap<String, Vec<String>>,
     /// Whether a full refresh is required before more patches are trusted.
     pub requires_refresh: bool,
 }
@@ -179,6 +181,7 @@ impl StatusCache {
         {
             return StatusApply {
                 changed_components: Vec::new(),
+                changed_fields: BTreeMap::new(),
                 requires_refresh: true,
             };
         }
@@ -196,23 +199,44 @@ impl StatusCache {
             }
         }
         self.last_timestamp = Some(notification.timestamp);
-        let changed_components = self
-            .components
-            .iter()
-            .filter(|(component, value)| before.get(*component) != Some(*value))
-            .map(|(component, _)| component.clone())
-            .chain(
-                before
-                    .keys()
-                    .filter(|component| !self.components.contains_key(*component))
-                    .cloned(),
-            )
+        let all_components: BTreeSet<_> = before
+            .keys()
+            .chain(self.components.keys())
+            .cloned()
             .collect();
+        let changed_fields: BTreeMap<_, _> = all_components
+            .into_iter()
+            .filter_map(|component| {
+                let fields = changed_top_level_fields(
+                    before.get(&component),
+                    self.components.get(&component),
+                );
+                (!fields.is_empty()).then_some((component, fields))
+            })
+            .collect();
+        let changed_components = changed_fields.keys().cloned().collect();
         StatusApply {
             changed_components,
+            changed_fields,
             requires_refresh: false,
         }
     }
+}
+
+fn changed_top_level_fields(before: Option<&Value>, after: Option<&Value>) -> Vec<String> {
+    let before = before.and_then(Value::as_object);
+    let after = after.and_then(Value::as_object);
+    let keys: BTreeSet<_> = before
+        .into_iter()
+        .flat_map(Map::keys)
+        .chain(after.into_iter().flat_map(Map::keys))
+        .cloned()
+        .collect();
+    keys.into_iter()
+        .filter(|key| {
+            before.and_then(|value| value.get(key)) != after.and_then(|value| value.get(key))
+        })
+        .collect()
 }
 
 fn merge_value(current: &mut Value, patch: Value) {
@@ -310,6 +334,11 @@ mod tests {
             .unwrap_or_else(|| panic!("switch status object"));
 
         assert_eq!(outcome.changed_components, vec!["switch:0"]);
+        assert_eq!(
+            outcome.changed_fields["switch:0"],
+            vec!["output", "temperature"]
+        );
+        assert!(!outcome.changed_fields["switch:0"].contains(&"apower".to_owned()));
         assert_eq!(switch.get("output"), Some(&Value::Bool(true)));
         assert_eq!(switch.get("apower"), Some(&Value::from(12.5)));
         assert!(!switch.contains_key("temperature"));

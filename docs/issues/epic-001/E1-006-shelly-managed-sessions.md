@@ -2,7 +2,7 @@
 id: E1-006
 epic: EPIC-001
 title: Maintain Shelly WebSocket observation sessions
-status: ready
+status: done
 priority: high
 depends_on: [E1-004, E1-005]
 adrs: [ADR-0006, ADR-0010]
@@ -23,7 +23,9 @@ events.
 - [x] Add a per-device session supervisor owned by the Shelly adapter. Evidence:
   `ShellySessionSupervisor` implements the application session lifecycle port
   with atomic replace semantics keyed by `DeviceId`.
-- [ ] Authenticate WebSocket RPC without exposing credentials.
+- [x] Authenticate WebSocket RPC without exposing credentials. Evidence:
+  `ShellyWebSocketRunner` handles RPC error challenges with the documented
+  dummy-method HA2 formula and opaque `SecretStore` resolution.
 - [x] Parse `NotifyStatus` and `NotifyEvent` frames. Evidence: strict
   `parse_notification` support for status, full-status, and event envelopes.
 - [x] Merge partial component updates into current observations. Evidence:
@@ -35,19 +37,29 @@ events.
 - [x] Deduplicate replayed or identical notifications. Evidence: identical
   status patches yield no changed components and `EventDeduplicator` maintains
   a bounded replay window.
-- [ ] Detect sequence or subscription gaps and request refresh fallback.
-- [ ] Stop replaced, removed, and shutdown sessions cleanly.
+- [x] Detect sequence or subscription gaps and request refresh fallback.
+  Evidence: timestamp regressions, malformed/binary frames, sink failures, and
+  socket closure invoke `LiveObservationSink::request_refresh`.
+- [x] Stop replaced, removed, and shutdown sessions cleanly. Evidence:
+  Application reconciliation/removal/shutdown drive the session lifecycle port;
+  the supervisor cancels and joins owned tasks.
 
 ## Acceptance criteria
 
-- [ ] A physical-status fixture updates state without explicit refresh.
+- [x] A physical-status fixture updates state without explicit refresh. Evidence:
+  the local WebSocket integration test publishes baseline and partial normalized
+  observations without invoking discovery refresh.
 - [x] Partial frames do not erase unchanged component fields. Evidence:
   `partial_status_should_preserve_unchanged_fields_and_remove_nulls`.
-- [ ] Duplicate frames do not create duplicate persisted events.
+- [x] Duplicate frames do not create duplicate persisted events. Evidence:
+  replayed `NotifyEvent` frames yield exactly one typed event batch before the
+  durable repository sink.
 - [x] No device has more than one active managed session. Evidence:
   `replacement_should_never_overlap_same_device` observes a maximum of one
   active runner across replacement.
-- [ ] Malformed frames degrade one session without crashing the runtime.
+- [x] Malformed frames degrade one session without crashing the runtime.
+  Evidence: the malformed WebSocket integration test requests a scoped refresh
+  and returns a stable session error.
 
 ## Verification
 
@@ -69,3 +81,7 @@ events.
 - 2026-07-11: Added the adapter-owned session supervisor with replace, stop,
   shutdown, task joining, and deterministic uniqueness/cancellation tests.
   WebSocket transport and runtime lifecycle wiring remain in progress.
+- 2026-07-11: Completed authenticated WebSocket sessions, field-level
+  observation projection, typed device events, commit-before-fan-out delivery,
+  gap refresh requests, and daemon lifecycle wiring. Full locked format,
+  Clippy, workspace tests, and doctests pass.

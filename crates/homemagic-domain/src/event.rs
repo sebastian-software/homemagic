@@ -63,6 +63,13 @@ pub enum DomainEventKind {
         /// Schema field names that changed.
         changed_fields: Vec<String>,
     },
+    /// Device-originated event that is not represented by current status.
+    DeviceEvent {
+        /// Stable endpoint or component target.
+        endpoint_id: EndpointId,
+        /// Adapter-normalized stable event name.
+        event: String,
+    },
     /// An actionable repair record was opened or changed.
     RepairChanged {
         /// Stable repair identifier.

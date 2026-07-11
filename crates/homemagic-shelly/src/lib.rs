@@ -6,12 +6,14 @@
 mod auth;
 mod notification;
 mod session;
+mod websocket;
 
 pub use notification::{
     EventDeduplicator, NotificationError, NotificationFrame, ShellyEvent, StatusApply, StatusCache,
     StatusNotification, parse_notification,
 };
 pub use session::{SessionRunner, ShellySessionSupervisor};
+pub use websocket::ShellyWebSocketRunner;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};

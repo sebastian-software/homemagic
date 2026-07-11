@@ -9,11 +9,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
     DeviceRegistry, FoundationWrite, HomeMagicApplication, IntegrationScanner, NoopDomainEventSink,
-    SecretStore,
+    RepositoryLiveObservationSink, SecretStore,
 };
 use homemagic_domain::{Installation, InstallationId, IntegrationId, IntegrationInstance};
 use homemagic_secrets::{FileSecretStore, PlatformSecretStore};
-use homemagic_shelly::ShellyScanner;
+use homemagic_shelly::{ShellyScanner, ShellySessionSupervisor, ShellyWebSocketRunner};
 use homemagic_storage::SqliteRepository;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
@@ -141,10 +141,15 @@ async fn serve(
             Err(error) => warn!(%error, "initial device reconciliation failed"),
         }
     });
-    axum::serve(listener, homemagic_api::router(application))
+    let result = axum::serve(listener, homemagic_api::router(application.clone()))
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("HomeMagic API server failed")
+        .context("HomeMagic API server failed");
+    application
+        .shutdown()
+        .await
+        .context("failed to stop managed device sessions")?;
+    result
 }
 
 async fn durable_application(
@@ -159,8 +164,8 @@ async fn durable_application(
             .with_context(|| format!("failed to open database at {}", database.display()))?,
     );
     let integration = bootstrap_shelly(repository.as_ref()).await?;
-    let scanner = if let Some(reference) = integration.credential_ref.clone() {
-        let secret_store: Arc<dyn SecretStore> = match secret_backend {
+    let secret_store: Option<Arc<dyn SecretStore>> = if integration.credential_ref.is_some() {
+        Some(match secret_backend {
             SecretBackend::Platform => Arc::new(PlatformSecretStore::new("dev.homemagic.shelly")),
             SecretBackend::File => {
                 let key_file = master_key_file.context(
@@ -172,7 +177,13 @@ async fn durable_application(
                         .context("failed to open encrypted secret vault")?,
                 )
             }
-        };
+        })
+    } else {
+        None
+    };
+    let scanner = if let (Some(reference), Some(secret_store)) =
+        (integration.credential_ref.clone(), secret_store.clone())
+    {
         ShellyScanner::with_authentication(
             Duration::from_secs(discovery_seconds),
             integration.installation_id.clone(),
@@ -189,9 +200,22 @@ async fn durable_application(
     }
     .context("failed to create Shelly scanner")?;
     let shelly: Arc<dyn IntegrationScanner> = Arc::new(scanner);
-    HomeMagicApplication::from_repository(repository, Arc::new(NoopDomainEventSink), [shelly])
+    let event_sink = Arc::new(NoopDomainEventSink);
+    let live_sink = Arc::new(RepositoryLiveObservationSink::new(
+        repository.clone(),
+        event_sink.clone(),
+    ));
+    let runner =
+        if let (Some(reference), Some(secret_store)) = (integration.credential_ref, secret_store) {
+            ShellyWebSocketRunner::with_authentication(live_sink, secret_store, reference)
+        } else {
+            ShellyWebSocketRunner::new(live_sink)
+        };
+    let sessions = Arc::new(ShellySessionSupervisor::new(Arc::new(runner)));
+    HomeMagicApplication::from_repository(repository, event_sink, [shelly])
         .await
         .context("failed to load durable device state")
+        .map(|application| application.with_sessions(sessions))
 }
 
 async fn bootstrap_shelly(repository: &SqliteRepository) -> Result<IntegrationInstance> {

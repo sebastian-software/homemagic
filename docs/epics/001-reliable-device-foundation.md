@@ -92,9 +92,9 @@ debug logs.
   collision reconciliation test and `RepairKind::IdentityCollision`.
 - [x] Define explicit removal and rediscovery behavior. Evidence: application
   tombstone and reconciliation tests.
-- [ ] Publish typed lifecycle and observation events with causation metadata.
-  Partial evidence: correlated lifecycle/availability event fan-out is complete;
-  live observation publication remains in E1-006.
+- [x] Publish typed lifecycle and observation events with causation metadata.
+  Evidence: correlated lifecycle/availability events plus durable live
+  observation batches and typed device events.
 
 ## Workstream E1.3: Shelly sessions and authentication
 
@@ -104,13 +104,18 @@ debug logs.
 - [x] Implement Shelly digest authentication and reauthentication failure states.
   Evidence: strict SHA-256 challenge response, bounded stale retry, and stable
   credential repair records.
-- [ ] Establish one managed WebSocket RPC session per active device.
-- [ ] Consume `NotifyStatus` and `NotifyEvent` frames.
-- [ ] Merge partial status notifications without dropping unchanged fields.
+- [x] Establish one managed WebSocket RPC session per active device. Evidence:
+  `ShellySessionSupervisor` replace semantics and uniqueness tests.
+- [x] Consume `NotifyStatus` and `NotifyEvent` frames. Evidence: authenticated
+  local WebSocket integration tests and sanitized notification fixtures.
+- [x] Merge partial status notifications without dropping unchanged fields.
+  Evidence: field-level `StatusCache` overlays and partial observation batches.
 - [ ] Reconnect with jittered exponential backoff and a configured upper bound.
 - [ ] Fall back to a bounded HTTP refresh after subscription gaps.
 - [ ] Respect sleeping-device behavior without treating normal sleep as failure.
-- [ ] Shut down sessions and mDNS workers cleanly on process termination.
+- [x] Shut down sessions and mDNS workers cleanly on process termination.
+  Evidence: application lifecycle orchestration, supervisor cancellation/join,
+  and daemon post-server shutdown.
 - [x] Redact credentials, nonces, and sensitive headers from diagnostics.
   Evidence: secret/challenge debug redaction and captured-error canary tests.
 
@@ -144,8 +149,10 @@ debug logs.
   Evidence: `crates/homemagic-storage/tests`.
 - [x] Migration tests start from every committed schema fixture. Evidence:
   `migration_fixtures.rs`.
-- [ ] Recorded Shelly fixtures cover full status, partial notifications, events,
+- [x] Recorded Shelly fixtures cover full status, partial notifications, events,
   authentication challenges, malformed frames, and firmware variations.
+  Evidence: `crates/homemagic-shelly/tests/fixtures` and focused modern/legacy
+  authentication and notification integration tests.
 - [ ] Reconnect tests use deterministic time and verify backoff bounds.
 - [x] Restart test proves stable device and endpoint IDs. Evidence: storage
   reopen contract and daemon bootstrap identity reuse test.
@@ -208,3 +215,5 @@ debug logs.
   contracts, backup/restore, and health diagnostics.
 - 2026-07-11: Completed E1-004 load-first startup and durable discovery
   reconciliation; local daemon health and device-list smoke tests pass.
+- 2026-07-11: Completed E1-006 managed WebSocket sessions, live durable
+  observations, typed events, gap signaling, and graceful lifecycle wiring.

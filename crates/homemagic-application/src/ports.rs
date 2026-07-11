@@ -128,6 +128,29 @@ pub trait DomainEventSink: Send + Sync {
     async fn publish(&self, events: &[DomainEvent]) -> Result<(), BoxError>;
 }
 
+/// One normalized, durable live-device delivery.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LiveObservationBatch {
+    /// Current or partial capability observations to merge.
+    pub observations: Vec<CapabilityObservation>,
+    /// Immutable typed device events to append.
+    pub events: Vec<DomainEvent>,
+}
+
+/// Application-owned sink used by managed integration sessions.
+#[async_trait]
+pub trait LiveObservationSink: Send + Sync {
+    /// Persists normalized observations and events before event fan-out.
+    async fn publish(&self, batch: LiveObservationBatch) -> Result<(), BoxError>;
+
+    /// Requests a bounded full refresh after subscription state becomes unsafe.
+    async fn request_refresh(
+        &self,
+        device_id: &DeviceId,
+        reason: &'static str,
+    ) -> Result<(), BoxError>;
+}
+
 /// Time source injected into scheduling and freshness calculations.
 pub trait Clock: Send + Sync {
     /// Returns the current UTC time.

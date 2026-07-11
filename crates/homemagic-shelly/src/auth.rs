@@ -1,4 +1,6 @@
 use reqwest::header::HeaderValue;
+use serde::Deserialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -9,6 +11,7 @@ const QOP: &str = "auth";
 pub(crate) struct DigestChallenge {
     realm: String,
     nonce: String,
+    rpc_nonce: Value,
     stale: bool,
 }
 
@@ -19,7 +22,7 @@ impl std::fmt::Debug for DigestChallenge {
             .field("realm", &self.realm)
             .field("nonce", &"[REDACTED]")
             .field("stale", &self.stale)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -103,8 +106,43 @@ impl DigestChallenge {
             .ok_or(DigestError::Malformed)?;
         Ok(Self {
             realm,
+            rpc_nonce: Value::String(nonce.clone()),
             nonce,
             stale,
+        })
+    }
+
+    pub(crate) fn from_rpc_message(message: &str) -> Result<Self, DigestError> {
+        #[derive(Deserialize)]
+        struct RpcChallenge {
+            auth_type: String,
+            nonce: Value,
+            realm: String,
+            algorithm: String,
+            #[serde(default)]
+            stale: bool,
+        }
+        let challenge: RpcChallenge =
+            serde_json::from_str(message).map_err(|_| DigestError::Malformed)?;
+        if challenge.auth_type != "digest" {
+            return Err(DigestError::UnsupportedScheme);
+        }
+        if !challenge.algorithm.eq_ignore_ascii_case(ALGORITHM) {
+            return Err(DigestError::UnsupportedAlgorithm);
+        }
+        if challenge.realm.is_empty() {
+            return Err(DigestError::Malformed);
+        }
+        let nonce = match &challenge.nonce {
+            Value::String(value) if !value.is_empty() => value.clone(),
+            Value::Number(value) => value.to_string(),
+            _ => return Err(DigestError::Malformed),
+        };
+        Ok(Self {
+            realm: challenge.realm,
+            nonce,
+            rpc_nonce: challenge.nonce,
+            stale: challenge.stale,
         })
     }
 
@@ -133,6 +171,31 @@ impl DigestChallenge {
             self.realm, self.nonce
         );
         HeaderValue::from_str(&value).map_err(|_| DigestError::InvalidHeader)
+    }
+
+    pub(crate) fn rpc_authorization(
+        &self,
+        password: &[u8],
+        nonce_count: u32,
+        client_nonce: u32,
+    ) -> Result<Value, DigestError> {
+        let password = std::str::from_utf8(password).map_err(|_| DigestError::InvalidCredential)?;
+        let nonce_count = format!("{nonce_count:08x}");
+        let ha1 = sha256_hex(format!("{USERNAME}:{}:{password}", self.realm));
+        let ha2 = sha256_hex("dummy_method:dummy_uri");
+        let response = sha256_hex(format!(
+            "{ha1}:{}:{nonce_count}:{client_nonce}:{QOP}:{ha2}",
+            self.nonce
+        ));
+        Ok(serde_json::json!({
+            "realm": self.realm,
+            "username": USERNAME,
+            "nonce": self.rpc_nonce,
+            "cnonce": client_nonce,
+            "nc": nonce_count,
+            "response": response,
+            "algorithm": ALGORITHM
+        }))
     }
 }
 
@@ -177,6 +240,7 @@ mod tests {
         let challenge = DigestChallenge {
             realm: "shellyplus1-aabbccddeeff".to_owned(),
             nonce: "1625053638".to_owned(),
+            rpc_nonce: Value::from(1_625_053_638_u64),
             stale: false,
         };
 
@@ -199,6 +263,21 @@ mod tests {
             "response=\"3db1ea2b1a2e9ed7249975d83ecf4c05ee3cd524f39c1695e0db08aeb1a56da0\""
         ));
         assert!(!header.contains("fixture-password"));
+    }
+
+    #[test]
+    fn rpc_challenge_should_preserve_legacy_numeric_nonce() {
+        let challenge = DigestChallenge::from_rpc_message(
+            r#"{"auth_type":"digest","nonce":1625053638,"realm":"shelly-fixture","algorithm":"SHA-256"}"#,
+        )
+        .unwrap_or_else(|error| panic!("RPC challenge: {error}"));
+        let auth = challenge
+            .rpc_authorization(b"fixture-password", 1, 42)
+            .unwrap_or_else(|error| panic!("RPC authorization: {error}"));
+
+        assert_eq!(auth.get("nonce"), Some(&Value::from(1_625_053_638_u64)));
+        assert_eq!(auth.get("nc"), Some(&Value::from("00000001")));
+        assert!(!auth.to_string().contains("fixture-password"));
     }
 
     #[test]

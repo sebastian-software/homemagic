@@ -22,8 +22,52 @@ use tokio::sync::RwLock;
 pub use memory::{MemoryFoundationRepository, NoopDomainEventSink};
 pub use ports::{
     Clock, DomainEventSink, FoundationRepository, FoundationSnapshot, FoundationWrite,
-    IntegrationSessionPort, SecretStore, SecretStoreError, SecretValue, SystemClock,
+    IntegrationSessionPort, LiveObservationBatch, LiveObservationSink, SecretStore,
+    SecretStoreError, SecretValue, SystemClock,
 };
+
+/// Durable live-observation sink backed by the foundation repository.
+#[derive(Clone)]
+pub struct RepositoryLiveObservationSink {
+    repository: Arc<dyn FoundationRepository>,
+    event_sink: Arc<dyn DomainEventSink>,
+}
+
+impl RepositoryLiveObservationSink {
+    /// Creates a sink that commits before publishing events.
+    #[must_use]
+    pub fn new(
+        repository: Arc<dyn FoundationRepository>,
+        event_sink: Arc<dyn DomainEventSink>,
+    ) -> Self {
+        Self {
+            repository,
+            event_sink,
+        }
+    }
+}
+
+#[async_trait]
+impl LiveObservationSink for RepositoryLiveObservationSink {
+    async fn publish(&self, batch: LiveObservationBatch) -> Result<(), BoxError> {
+        self.repository
+            .apply(FoundationWrite {
+                observations: batch.observations,
+                events: batch.events.clone(),
+                ..FoundationWrite::default()
+            })
+            .await?;
+        self.event_sink.publish(&batch.events).await
+    }
+
+    async fn request_refresh(
+        &self,
+        _device_id: &DeviceId,
+        _reason: &'static str,
+    ) -> Result<(), BoxError> {
+        Ok(())
+    }
+}
 pub use registry::DeviceRegistry;
 
 use reconciliation::reconcile;
@@ -84,6 +128,14 @@ pub enum ApplicationError {
     /// Requested device does not exist.
     #[error("device `{0}` was not found")]
     DeviceNotFound(DeviceId),
+    /// Managed integration session lifecycle failed.
+    #[error("managed session `{operation}` failed: {source}")]
+    Session {
+        /// Stable lifecycle operation.
+        operation: &'static str,
+        /// Adapter-specific, secret-safe failure.
+        source: BoxError,
+    },
 }
 
 /// Main application facade used by RPC and future MCP transports.
@@ -94,6 +146,7 @@ pub struct HomeMagicApplication {
     repository: Arc<dyn FoundationRepository>,
     event_sink: Arc<dyn DomainEventSink>,
     repairs: Arc<RwLock<BTreeMap<RepairId, RepairRecord>>>,
+    sessions: Option<Arc<dyn IntegrationSessionPort>>,
 }
 
 impl HomeMagicApplication {
@@ -109,6 +162,7 @@ impl HomeMagicApplication {
             repository: Arc::new(MemoryFoundationRepository::default()),
             event_sink: Arc::new(NoopDomainEventSink),
             repairs: Arc::default(),
+            sessions: None,
         }
     }
 
@@ -142,7 +196,15 @@ impl HomeMagicApplication {
             repository,
             event_sink,
             repairs: Arc::new(RwLock::new(repairs)),
+            sessions: None,
         })
+    }
+
+    /// Attaches managed integration-session lifecycle orchestration.
+    #[must_use]
+    pub fn with_sessions(mut self, sessions: Arc<dyn IntegrationSessionPort>) -> Self {
+        self.sessions = Some(sessions);
+        self
     }
 
     /// Returns the current registry projection.
@@ -187,7 +249,20 @@ impl HomeMagicApplication {
                     operation: "reconcile",
                     source,
                 })?;
+            let changed_devices = outcome.devices.clone();
             self.registry.upsert_all(outcome.devices).await;
+            if let Some(sessions) = &self.sessions {
+                for device in &changed_devices {
+                    if device.lifecycle == DeviceLifecycle::Enrolled {
+                        sessions.start(device).await.map_err(|source| {
+                            ApplicationError::Session {
+                                operation: "start",
+                                source,
+                            }
+                        })?;
+                    }
+                }
+            }
             {
                 let mut repairs = self.repairs.write().await;
                 repairs.extend(
@@ -281,10 +356,37 @@ impl HomeMagicApplication {
                 source,
             })?;
         self.registry.upsert_all([record]).await;
+        if let Some(sessions) = &self.sessions {
+            sessions
+                .stop(id)
+                .await
+                .map_err(|source| ApplicationError::Session {
+                    operation: "stop",
+                    source,
+                })?;
+        }
         self.event_sink
             .publish(&events)
             .await
             .map_err(ApplicationError::EventDelivery)
+    }
+
+    /// Stops and joins every managed integration session.
+    ///
+    /// # Errors
+    ///
+    /// Returns a secret-safe adapter shutdown failure after cleanup attempts.
+    pub async fn shutdown(&self) -> Result<(), ApplicationError> {
+        if let Some(sessions) = &self.sessions {
+            sessions
+                .shutdown()
+                .await
+                .map_err(|source| ApplicationError::Session {
+                    operation: "shutdown",
+                    source,
+                })?;
+        }
+        Ok(())
     }
 }
 
@@ -318,6 +420,31 @@ mod tests {
     #[derive(Default)]
     struct RecordingSink {
         events: Mutex<Vec<DomainEvent>>,
+    }
+
+    #[derive(Default)]
+    struct RecordingSessions {
+        started: Mutex<Vec<DeviceId>>,
+        stopped: Mutex<Vec<DeviceId>>,
+        shutdowns: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl IntegrationSessionPort for RecordingSessions {
+        async fn start(&self, device: &DeviceRecord) -> Result<(), BoxError> {
+            self.started.lock().await.push(device.snapshot.id.clone());
+            Ok(())
+        }
+
+        async fn stop(&self, device_id: &DeviceId) -> Result<(), BoxError> {
+            self.stopped.lock().await.push(device_id.clone());
+            Ok(())
+        }
+
+        async fn shutdown(&self) -> Result<(), BoxError> {
+            *self.shutdowns.lock().await += 1;
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -413,6 +540,40 @@ mod tests {
             events[1].kind,
             DomainEventKind::AvailabilityChanged { .. }
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn device_lifecycle_should_drive_managed_sessions() -> Result<(), BoxError> {
+        let repository = Arc::new(MemoryFoundationRepository::default());
+        let record = record();
+        let id = record.snapshot.id.clone();
+        let candidate = DiscoveryCandidate {
+            installation_id: record.installation_id,
+            integration_id: record.integration_id,
+            discovered_at: record.snapshot.observed_at,
+            snapshot: record.snapshot,
+            repairs: Vec::new(),
+        };
+        let scanner: Arc<dyn IntegrationScanner> = Arc::new(StaticScanner {
+            candidates: vec![candidate],
+        });
+        let sessions = Arc::new(RecordingSessions::default());
+        let application = HomeMagicApplication::from_repository(
+            repository,
+            Arc::new(NoopDomainEventSink),
+            [scanner],
+        )
+        .await?
+        .with_sessions(sessions.clone());
+
+        application.refresh().await?;
+        application.remove_device(&id, None).await?;
+        application.shutdown().await?;
+
+        assert_eq!(sessions.started.lock().await.first(), Some(&id));
+        assert_eq!(sessions.stopped.lock().await.first(), Some(&id));
+        assert_eq!(*sessions.shutdowns.lock().await, 1);
         Ok(())
     }
 
