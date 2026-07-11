@@ -619,6 +619,7 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
         node_id: Some(plan.entry),
         variables: BTreeMap::new(),
         command_ids: Vec::new(),
+        continuations: Vec::new(),
         correlation_id: occurrence.correlation_id,
         causation_event_id: None,
         created_at: now,

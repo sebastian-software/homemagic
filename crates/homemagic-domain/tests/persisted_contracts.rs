@@ -230,6 +230,7 @@ fn automation_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Erro
         node_id: Some(node_id),
         variables: BTreeMap::new(),
         command_ids: vec![CommandId::new()],
+        continuations: Vec::new(),
         correlation_id: correlation_id.clone(),
         causation_event_id: None,
         created_at: now,

@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: planned
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019]
+adrs: [ADR-0018, ADR-0019, ADR-0021]
 created: 2026-07-11
 updated: 2026-07-11
 ---
@@ -62,3 +62,7 @@ updated: 2026-07-11
   atomic timeout timer, subsequent event-driven steps can cancel it on success,
   and ready timers are consumed with the compiled failure policy. SQLite
   evidence proves a false wait times out, continues, and completes exactly once.
+- 2026-07-11: Accepted ADR-0021 and added bounded persistent continuations for
+  nested parallel/race groups and group-local stop-branch handling. SQLite
+  evidence proves both branches of a parallel group checkpoint independently,
+  resume through durable timers, remove the frame, and complete once.

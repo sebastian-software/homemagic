@@ -1388,6 +1388,8 @@ pub struct AutomationRun {
     pub variables: BTreeMap<String, AutomationValue>,
     /// Commands submitted by this run in durable order.
     pub command_ids: Vec<CommandId>,
+    /// Nested group continuations required to resume branch execution.
+    pub continuations: Vec<AutomationRunContinuation>,
     /// Operation correlation identity.
     pub correlation_id: CorrelationId,
     /// Direct causation event.
@@ -1396,6 +1398,33 @@ pub struct AutomationRun {
     pub created_at: DateTime<Utc>,
     /// Latest transition time.
     pub updated_at: DateTime<Utc>,
+}
+
+/// Kind of durable group continuation owned by one run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationRunContinuationKind {
+    /// Every branch must reach the group join.
+    Parallel,
+    /// The first successful branch wins.
+    Race,
+}
+
+/// Minimal serializable continuation for a nested parallel or race group.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationRunContinuation {
+    /// Plan node that opened the group.
+    pub group_node_id: AutomationPlanNodeId,
+    /// Group completion semantics.
+    pub kind: AutomationRunContinuationKind,
+    /// Explicit compiled join node.
+    pub join_node_id: AutomationPlanNodeId,
+    /// Branch entries not yet started, in deterministic plan order.
+    pub remaining_branches: Vec<AutomationPlanNodeId>,
+    /// Whether the current branch reached the join through `stop_branch`.
+    pub current_branch_failed: bool,
+    /// Compiler-validated ready-branch bound.
+    pub maximum_parallel: u16,
 }
 
 /// One durable timer owned by an automation run.

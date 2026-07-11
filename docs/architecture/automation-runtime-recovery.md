@@ -67,8 +67,13 @@ progress; terminal runs remain immutable. Delay creation stores the waiting run,
 trace, and deterministic timer atomically. After restart, the scheduler readies
 the timer and the executor consumes it atomically with the next run revision.
 
-Parallel and race nodes are not yet enabled by this slice. They remain explicit
-errors until their continuation state is represented durably.
+Parallel and race nodes use the bounded continuation stack defined by ADR-0021.
+Entering a group persists its join, remaining branches, completion rule, and
+compiler-owned width bound before the first branch runs. Each matching join
+either starts the next branch, completes all branches, or selects the first
+successful race branch. Nested groups push another frame. The initial executor
+runs one ready branch at a time in plan order, which stays within every
+maximum-parallel bound and matches simulator ordering.
 
 ## Durable condition waits
 

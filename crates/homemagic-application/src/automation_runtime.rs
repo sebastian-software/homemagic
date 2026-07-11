@@ -6,9 +6,10 @@ use std::sync::Arc;
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
     AutomationPlanFailurePolicy, AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRun,
-    AutomationRunId, AutomationRunState, AutomationTimer, AutomationTimerId, AutomationTimerState,
-    AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandState,
-    IdempotencyKey, ResolvedAutomationCondition, ResolvedAutomationTarget,
+    AutomationRunContinuation, AutomationRunContinuationKind, AutomationRunId, AutomationRunState,
+    AutomationTimer, AutomationTimerId, AutomationTimerState, AutomationTraceId,
+    AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandState, IdempotencyKey,
+    ResolvedAutomationCondition, ResolvedAutomationTarget,
 };
 use thiserror::Error;
 
@@ -280,11 +281,7 @@ impl AutomationRuntime {
                 Ok(AutomationRuntimeStep::Advanced)
             }
             AutomationPlanNodeKind::Join { next } => {
-                let mut next_run = checkpoint(&run, self.clock.now());
-                next_run.node_id = *next;
-                self.commit(next_run, run.revision, vec![], vec![], vec![])
-                    .await?;
-                Ok(AutomationRuntimeStep::Advanced)
+                self.step_join(run, node_id, *next, sequence).await
             }
             AutomationPlanNodeKind::Command {
                 targets,
@@ -322,10 +319,147 @@ impl AutomationRuntime {
                 )
                 .await
             }
-            AutomationPlanNodeKind::Parallel { .. } | AutomationPlanNodeKind::Race { .. } => {
-                Err(AutomationRuntimeError::InvalidPlan)
+            AutomationPlanNodeKind::Parallel {
+                branches,
+                maximum_parallel,
+                join,
+            } => {
+                self.enter_group(
+                    run,
+                    node_id,
+                    branches,
+                    *maximum_parallel,
+                    *join,
+                    AutomationRunContinuationKind::Parallel,
+                    sequence,
+                )
+                .await
+            }
+            AutomationPlanNodeKind::Race {
+                branches,
+                maximum_parallel,
+                join,
+            } => {
+                self.enter_group(
+                    run,
+                    node_id,
+                    branches,
+                    *maximum_parallel,
+                    *join,
+                    AutomationRunContinuationKind::Race,
+                    sequence,
+                )
+                .await
             }
         }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "all compiler-bounded group continuation fields are checkpointed together"
+    )]
+    async fn enter_group(
+        &self,
+        run: AutomationRun,
+        node_id: AutomationPlanNodeId,
+        branches: &[AutomationPlanNodeId],
+        maximum_parallel: u16,
+        join: Option<AutomationPlanNodeId>,
+        kind: AutomationRunContinuationKind,
+        sequence: u64,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let (first, remaining) = branches
+            .split_first()
+            .ok_or(AutomationRuntimeError::InvalidPlan)?;
+        let join_node_id = join.ok_or(AutomationRuntimeError::InvalidPlan)?;
+        let mut next = checkpoint(&run, self.clock.now());
+        next.node_id = Some(*first);
+        next.continuations.push(AutomationRunContinuation {
+            group_node_id: node_id,
+            kind,
+            join_node_id,
+            remaining_branches: remaining.to_vec(),
+            current_branch_failed: false,
+            maximum_parallel,
+        });
+        let trace = trace_step(
+            &next,
+            sequence,
+            Some(node_id),
+            AutomationTraceKind::Branch,
+            details([
+                ("event", AutomationValue::String("group_started".to_owned())),
+                (
+                    "branches",
+                    AutomationValue::Integer(i64::try_from(branches.len()).unwrap_or(i64::MAX)),
+                ),
+            ]),
+            self.clock.now(),
+        );
+        self.commit(next, run.revision, vec![trace], vec![], vec![])
+            .await?;
+        Ok(AutomationRuntimeStep::Advanced)
+    }
+
+    async fn step_join(
+        &self,
+        run: AutomationRun,
+        node_id: AutomationPlanNodeId,
+        following: Option<AutomationPlanNodeId>,
+        sequence: u64,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let mut next = checkpoint(&run, self.clock.now());
+        let mut event = "join";
+        let outcome = if next
+            .continuations
+            .last()
+            .is_some_and(|frame| frame.join_node_id == node_id)
+        {
+            let frame = next
+                .continuations
+                .last_mut()
+                .ok_or(AutomationRuntimeError::InvalidPlan)?;
+            let success = !frame.current_branch_failed;
+            if frame.kind == AutomationRunContinuationKind::Race && success {
+                next.continuations.pop();
+                next.node_id = following;
+                event = "race_won";
+                AutomationRuntimeStep::Advanced
+            } else if let Some(branch) = frame.remaining_branches.first().copied() {
+                frame.remaining_branches.remove(0);
+                frame.current_branch_failed = false;
+                next.node_id = Some(branch);
+                event = "next_branch";
+                AutomationRuntimeStep::Advanced
+            } else {
+                let failed_race = frame.kind == AutomationRunContinuationKind::Race && !success;
+                next.continuations.pop();
+                if failed_race {
+                    next.state = AutomationRunState::Failed;
+                    next.node_id = None;
+                    event = "race_failed";
+                    AutomationRuntimeStep::Completed
+                } else {
+                    next.node_id = following;
+                    event = "group_completed";
+                    AutomationRuntimeStep::Advanced
+                }
+            }
+        } else {
+            next.node_id = following;
+            AutomationRuntimeStep::Advanced
+        };
+        let trace = trace_step(
+            &next,
+            sequence,
+            Some(node_id),
+            AutomationTraceKind::Branch,
+            details([("event", AutomationValue::String(event.to_owned()))]),
+            self.clock.now(),
+        );
+        self.commit(next, run.revision, vec![trace], vec![], vec![])
+            .await?;
+        Ok(outcome)
     }
 
     #[expect(
@@ -719,6 +853,16 @@ fn apply_failure(
         AutomationPlanFailurePolicy::Fallback { entry } => {
             run.state = AutomationRunState::Running;
             run.node_id = (*entry).or(following);
+            AutomationRuntimeStep::Advanced
+        }
+        AutomationPlanFailurePolicy::StopBranch if !run.continuations.is_empty() => {
+            let frame = run
+                .continuations
+                .last_mut()
+                .unwrap_or_else(|| unreachable!("checked non-empty continuation"));
+            frame.current_branch_failed = true;
+            run.state = AutomationRunState::Running;
+            run.node_id = Some(frame.join_node_id);
             AutomationRuntimeStep::Advanced
         }
         AutomationPlanFailurePolicy::StopRun | AutomationPlanFailurePolicy::StopBranch => {

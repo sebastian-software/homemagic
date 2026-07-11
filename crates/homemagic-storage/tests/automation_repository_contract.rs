@@ -574,6 +574,100 @@ async fn runtime_wait_timeout_should_apply_failure_policy_durably() -> TestResul
     Ok(())
 }
 
+#[tokio::test]
+async fn runtime_parallel_should_checkpoint_each_branch_continuation() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("runtime-parallel.sqlite3"),
+    )?);
+    let stored = stored_version_for(parallel_document());
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let occurrence = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(occurrence.clone())
+        .await?;
+    let mut pending = run(&stored, &occurrence, now);
+    pending.id = AutomationRunId::from_occurrence(&occurrence.id);
+    repository.create_automation_run(pending.clone()).await?;
+    let clock = Arc::new(ManualClock::new(now));
+    let runtime = AutomationRuntime::new(
+        repository.clone(),
+        Arc::new(MemoryFoundationRepository::default()),
+        clock.clone(),
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    let entered = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("entered parallel run"));
+    assert_eq!(entered.continuations.len(), 1);
+    assert_eq!(entered.continuations[0].remaining_branches.len(), 1);
+
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Waiting
+    );
+    clock.set(now + TimeDelta::milliseconds(10));
+    let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
+    assert_eq!(
+        scheduler.tick(clock.now(), clock.now()).await?.timers_ready,
+        1
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    let second = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("second parallel branch"));
+    assert_eq!(second.continuations[0].remaining_branches.len(), 0);
+
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Waiting
+    );
+    clock.set(now + TimeDelta::milliseconds(20));
+    assert_eq!(
+        scheduler.tick(clock.now(), clock.now()).await?.timers_ready,
+        1
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Completed
+    );
+    let completed = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("completed parallel run"));
+    assert_eq!(completed.state, AutomationRunState::Completed);
+    assert!(completed.continuations.is_empty());
+    Ok(())
+}
+
 struct FixedClock(chrono::DateTime<Utc>);
 
 impl Clock for FixedClock {
@@ -687,6 +781,19 @@ fn wait_document() -> AutomationDocument {
     document
 }
 
+fn parallel_document() -> AutomationDocument {
+    let mut document = document();
+    "Durable parallel".clone_into(&mut document.name);
+    document.actions = vec![AutomationAction::Parallel {
+        branches: vec![
+            vec![AutomationAction::Delay { duration_ms: 1 }],
+            vec![AutomationAction::Delay { duration_ms: 1 }],
+        ],
+        maximum_parallel: 2,
+    }];
+    document
+}
+
 fn activation(stored: &StoredAutomationVersion, expected_revision: u64) -> AutomationActivation {
     AutomationActivation {
         automation_id: stored.document.id.clone(),
@@ -732,6 +839,7 @@ fn run(
         node_id: Some(stored.plan.entry),
         variables: BTreeMap::new(),
         command_ids: Vec::new(),
+        continuations: Vec::new(),
         correlation_id: occurrence.correlation_id.clone(),
         causation_event_id: None,
         created_at: now,
