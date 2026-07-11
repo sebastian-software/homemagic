@@ -57,12 +57,12 @@ requires it, and activates an immutable version.
 
 ## Required decisions
 
-- [ ] E3.D1: Finalize the automation IR and compatibility/versioning rules in an
+- [x] E3.D1: Finalize the automation IR and compatibility/versioning rules in an
   ADR that supersedes or refines ADR-0004 where necessary.
-- [ ] E3.D2: Add an ADR for deterministic time, scheduling, and restart semantics.
-- [ ] E3.D3: Add an ADR for automation approval, risk aggregation, and activation
+- [x] E3.D2: Add an ADR for deterministic time, scheduling, and restart semantics.
+- [x] E3.D3: Add an ADR for automation approval, risk aggregation, and activation
   authority.
-- [ ] E3.D4: Define trace and run retention separately from device telemetry.
+- [x] E3.D4: Define trace and run retention separately from device telemetry.
 
 ## Workstream E3.1: Automation IR
 
@@ -177,3 +177,5 @@ requires it, and activates an immutable version.
   Profiles, desired-state reduction, no automatic missed-schedule catch-up, and
   shared simulation/runtime semantics. Added the dependency-ordered E3 issue set;
   E3-001 is ready.
+- 2026-07-11: Accepted ADR-0017 through ADR-0020; E3-002 domain implementation is
+  ready.

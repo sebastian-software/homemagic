@@ -29,3 +29,7 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0014: Persist idempotent command lifecycles before dispatch](0014-persist-idempotent-command-lifecycles.md)
 - [ADR-0015: Evaluate a default-deny risk policy before dispatch](0015-evaluate-default-deny-risk-policy.md)
 - [ADR-0016: Keep JSON-RPC as the command transport](0016-keep-json-rpc-as-command-transport.md)
+- [ADR-0017: Version automation documents and normalized plans independently](0017-version-automation-documents-and-plans.md)
+- [ADR-0018: Use deterministic automation time and never replay missed schedules](0018-use-deterministic-automation-time-and-scheduling.md)
+- [ADR-0019: Govern automation activation with capability Safety Profiles](0019-govern-automation-activation-with-safety-profiles.md)
+- [ADR-0020: Retain automation versions, runs, and traces independently](0020-retain-automation-evidence-independently.md)
