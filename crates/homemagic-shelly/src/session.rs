@@ -7,6 +7,84 @@ use homemagic_domain::{DeviceId, DeviceRecord};
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 
+/// Bounded exponential reconnect parameters.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BackoffPolicy {
+    base: std::time::Duration,
+    cap: std::time::Duration,
+    jitter_ratio: f64,
+    stable_reset: std::time::Duration,
+}
+
+impl BackoffPolicy {
+    /// Creates a validated reconnect policy.
+    ///
+    /// # Errors
+    ///
+    /// Rejects zero/unordered durations and jitter outside `0.0..=1.0`.
+    pub fn new(
+        base: std::time::Duration,
+        cap: std::time::Duration,
+        jitter_ratio: f64,
+        stable_reset: std::time::Duration,
+    ) -> Result<Self, BackoffPolicyError> {
+        if base.is_zero()
+            || cap < base
+            || stable_reset.is_zero()
+            || !(0.0..=1.0).contains(&jitter_ratio)
+        {
+            return Err(BackoffPolicyError);
+        }
+        Ok(Self {
+            base,
+            cap,
+            jitter_ratio,
+            stable_reset,
+        })
+    }
+
+    /// Calculates a deterministic delay for an attempt and jitter sample.
+    #[must_use]
+    pub fn delay(self, attempt: u32, jitter_sample: f64) -> std::time::Duration {
+        let multiplier = 1_u32.checked_shl(attempt.min(31)).unwrap_or(u32::MAX);
+        let exponential = self
+            .base
+            .checked_mul(multiplier)
+            .unwrap_or(self.cap)
+            .min(self.cap);
+        let jitter = exponential.mul_f64(self.jitter_ratio * jitter_sample.clamp(0.0, 1.0));
+        exponential.saturating_add(jitter).min(self.cap)
+    }
+
+    const fn stable_reset(self) -> std::time::Duration {
+        self.stable_reset
+    }
+
+    fn next_attempt(self, attempt: u32, connected_for: std::time::Duration) -> u32 {
+        if connected_for >= self.stable_reset() {
+            0
+        } else {
+            attempt.saturating_add(1)
+        }
+    }
+}
+
+impl Default for BackoffPolicy {
+    fn default() -> Self {
+        Self {
+            base: std::time::Duration::from_secs(1),
+            cap: std::time::Duration::from_secs(60),
+            jitter_ratio: 0.25,
+            stable_reset: std::time::Duration::from_secs(300),
+        }
+    }
+}
+
+/// Invalid reconnect bounds.
+#[derive(Clone, Copy, Debug, Eq, thiserror::Error, PartialEq)]
+#[error("invalid reconnect backoff policy")]
+pub struct BackoffPolicyError;
+
 /// Adapter-specific execution of one device session.
 #[async_trait]
 pub trait SessionRunner: Send + Sync {
@@ -28,6 +106,7 @@ struct ManagedSession {
 pub struct ShellySessionSupervisor {
     runner: Arc<dyn SessionRunner>,
     sessions: Arc<Mutex<BTreeMap<DeviceId, ManagedSession>>>,
+    backoff: BackoffPolicy,
 }
 
 impl ShellySessionSupervisor {
@@ -37,6 +116,17 @@ impl ShellySessionSupervisor {
         Self {
             runner,
             sessions: Arc::default(),
+            backoff: BackoffPolicy::default(),
+        }
+    }
+
+    /// Creates a supervisor with explicit reconnect bounds.
+    #[must_use]
+    pub fn with_backoff(runner: Arc<dyn SessionRunner>, backoff: BackoffPolicy) -> Self {
+        Self {
+            runner,
+            sessions: Arc::default(),
+            backoff,
         }
     }
 
@@ -68,7 +158,10 @@ impl IntegrationSessionPort for ShellySessionSupervisor {
         let (cancel, cancelled) = watch::channel(false);
         let runner = self.runner.clone();
         let owned_device = device.clone();
-        let task = tokio::spawn(async move { runner.run(owned_device, cancelled).await });
+        let backoff = self.backoff;
+        let task = tokio::spawn(async move {
+            supervise_session(runner, owned_device, cancelled, backoff).await
+        });
         sessions.insert(device.snapshot.id.clone(), ManagedSession { cancel, task });
         Ok(())
     }
@@ -100,6 +193,48 @@ impl IntegrationSessionPort for ShellySessionSupervisor {
     }
 }
 
+async fn supervise_session(
+    runner: Arc<dyn SessionRunner>,
+    device: DeviceRecord,
+    mut cancelled: watch::Receiver<bool>,
+    backoff: BackoffPolicy,
+) -> Result<(), BoxError> {
+    let mut attempt = 0_u32;
+    loop {
+        if *cancelled.borrow() {
+            return Ok(());
+        }
+        let started = tokio::time::Instant::now();
+        let result = runner.run(device.clone(), cancelled.clone()).await;
+        if *cancelled.borrow() {
+            return Ok(());
+        }
+        attempt = backoff.next_attempt(attempt, started.elapsed());
+        match result {
+            Ok(()) => tracing::warn!(
+                device_id = %device.snapshot.id,
+                attempt,
+                "Shelly session ended unexpectedly; scheduling reconnect"
+            ),
+            Err(error) => tracing::warn!(
+                device_id = %device.snapshot.id,
+                attempt,
+                error = %error,
+                "Shelly session failed; scheduling reconnect"
+            ),
+        }
+        let delay = backoff.delay(attempt.saturating_sub(1), rand::random());
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            changed = cancelled.changed() => {
+                if changed.is_err() || *cancelled.borrow() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -115,11 +250,68 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn backoff_should_be_deterministic_bounded_and_resettable() {
+        let policy = BackoffPolicy::new(
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(10),
+            0.25,
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap_or_else(|error| panic!("backoff policy: {error}"));
+
+        assert_eq!(policy.delay(0, 0.0), std::time::Duration::from_secs(1));
+        assert_eq!(
+            policy.delay(1, 1.0),
+            std::time::Duration::from_millis(2_500)
+        );
+        assert_eq!(policy.delay(20, 1.0), std::time::Duration::from_secs(10));
+        assert_eq!(policy.delay(1, -1.0), std::time::Duration::from_secs(2));
+        assert_eq!(
+            policy.next_attempt(7, std::time::Duration::from_secs(29)),
+            8
+        );
+        assert_eq!(
+            policy.next_attempt(7, std::time::Duration::from_secs(30)),
+            0
+        );
+    }
+
     struct CountingRunner {
         active: AtomicUsize,
         maximum: AtomicUsize,
         starts: AtomicUsize,
         started: Notify,
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("fixture connection lost")]
+    struct FixtureConnectionLost;
+
+    struct RecoveringRunner {
+        starts: AtomicUsize,
+        started: Notify,
+    }
+
+    #[async_trait]
+    impl SessionRunner for RecoveringRunner {
+        async fn run(
+            &self,
+            _device: DeviceRecord,
+            mut cancelled: watch::Receiver<bool>,
+        ) -> Result<(), BoxError> {
+            let starts = self.starts.fetch_add(1, Ordering::SeqCst) + 1;
+            self.started.notify_waiters();
+            if starts < 3 {
+                return Err(Box::new(FixtureConnectionLost));
+            }
+            while !*cancelled.borrow() {
+                if cancelled.changed().await.is_err() {
+                    break;
+                }
+            }
+            Ok(())
+        }
     }
 
     impl CountingRunner {
@@ -223,6 +415,34 @@ mod tests {
 
         assert_eq!(supervisor.session_count().await, 0);
         assert_eq!(runner.active.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_session_should_reconnect_until_recovered() -> Result<(), BoxError> {
+        let runner = Arc::new(RecoveringRunner {
+            starts: AtomicUsize::new(0),
+            started: Notify::new(),
+        });
+        let policy = BackoffPolicy::new(
+            std::time::Duration::from_millis(1),
+            std::time::Duration::from_millis(2),
+            0.0,
+            std::time::Duration::from_secs(1),
+        )?;
+        let supervisor = ShellySessionSupervisor::with_backoff(runner.clone(), policy);
+
+        supervisor.start(&device("recovering")).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while runner.starts.load(Ordering::SeqCst) < 3 {
+                runner.started.notified().await;
+            }
+        })
+        .await
+        .map_err(|error| -> BoxError { Box::new(error) })?;
+
+        supervisor.shutdown().await?;
+        assert_eq!(runner.starts.load(Ordering::SeqCst), 3);
         Ok(())
     }
 }

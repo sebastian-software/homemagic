@@ -12,8 +12,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use homemagic_domain::{
     AvailabilityState, CausationMetadata, CorrelationId, DeviceId, DeviceLifecycle,
-    DiscoveryCandidate, DomainEvent, DomainEventKind, EventId, LifecycleTrigger, RepairId,
-    RepairRecord,
+    DiscoveryCandidate, DomainEvent, DomainEventKind, EventId, FreshnessPolicy, FreshnessState,
+    LifecycleTrigger, RepairId, RepairRecord,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -31,6 +31,8 @@ pub use ports::{
 pub struct RepositoryLiveObservationSink {
     repository: Arc<dyn FoundationRepository>,
     event_sink: Arc<dyn DomainEventSink>,
+    refresh_requests: Option<tokio::sync::mpsc::Sender<DeviceId>>,
+    registry: Option<DeviceRegistry>,
 }
 
 impl RepositoryLiveObservationSink {
@@ -43,31 +45,97 @@ impl RepositoryLiveObservationSink {
         Self {
             repository,
             event_sink,
+            refresh_requests: None,
+            registry: None,
         }
+    }
+
+    /// Attaches a bounded refresh-request channel owned by runtime scheduling.
+    #[must_use]
+    pub fn with_refresh_requests(
+        mut self,
+        refresh_requests: tokio::sync::mpsc::Sender<DeviceId>,
+    ) -> Self {
+        self.refresh_requests = Some(refresh_requests);
+        self
+    }
+
+    /// Attaches the loaded registry projection updated after durable commits.
+    #[must_use]
+    pub fn with_registry(mut self, registry: DeviceRegistry) -> Self {
+        self.registry = Some(registry);
+        self
     }
 }
 
 #[async_trait]
 impl LiveObservationSink for RepositoryLiveObservationSink {
     async fn publish(&self, batch: LiveObservationBatch) -> Result<(), BoxError> {
+        let mut successes = BTreeMap::new();
+        for observation in &batch.observations {
+            let observed_at = observation
+                .values
+                .values()
+                .map(|value| value.observed_at)
+                .max()
+                .unwrap_or(observation.received_at);
+            successes
+                .entry(observation.device_id.clone())
+                .and_modify(|current: &mut chrono::DateTime<chrono::Utc>| {
+                    *current = (*current).max(observed_at);
+                })
+                .or_insert(observed_at);
+        }
+        let mut devices = Vec::new();
+        if let Some(registry) = &self.registry {
+            for (device_id, observed_at) in successes {
+                if let Some(mut device) = registry.get_record(&device_id).await {
+                    device.timestamps.record_success(observed_at)?;
+                    if device.availability.state != AvailabilityState::Sleeping {
+                        device.availability = device.availability.transition(
+                            AvailabilityState::Online,
+                            observed_at,
+                            None,
+                        );
+                    }
+                    devices.push(device);
+                }
+            }
+        }
         self.repository
             .apply(FoundationWrite {
+                devices: devices.clone(),
                 observations: batch.observations,
                 events: batch.events.clone(),
                 ..FoundationWrite::default()
             })
             .await?;
+        if let Some(registry) = &self.registry {
+            registry.upsert_all(devices).await;
+        }
         self.event_sink.publish(&batch.events).await
     }
 
     async fn request_refresh(
         &self,
-        _device_id: &DeviceId,
+        device_id: &DeviceId,
         _reason: &'static str,
     ) -> Result<(), BoxError> {
+        if let Some(requests) = &self.refresh_requests {
+            match requests.try_send(device_id.clone()) {
+                Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(Box::new(RefreshChannelClosed));
+                }
+            }
+        }
         Ok(())
     }
 }
+
+#[derive(Debug, Error)]
+#[error("runtime refresh request channel is closed")]
+struct RefreshChannelClosed;
 pub use registry::DeviceRegistry;
 
 use reconciliation::reconcile;
@@ -388,15 +456,147 @@ impl HomeMagicApplication {
         }
         Ok(())
     }
+
+    /// Evaluates durable freshness without changing observed capability values.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain, repository, or event-delivery failure.
+    #[allow(clippy::too_many_lines)]
+    pub async fn evaluate_freshness(
+        &self,
+        policy: FreshnessPolicy,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, ApplicationError> {
+        let causation = CausationMetadata {
+            correlation_id: CorrelationId::new(),
+            causation_event_id: None,
+            actor: Some("system:freshness".to_owned()),
+        };
+        let mut changed = Vec::new();
+        let mut events = Vec::new();
+        for mut device in self.registry.records().await {
+            if matches!(
+                device.lifecycle,
+                DeviceLifecycle::Candidate | DeviceLifecycle::Removed
+            ) {
+                continue;
+            }
+            let lifecycle_before = device.lifecycle;
+            let availability_before = device.availability.state;
+            match device.freshness_at(policy, now) {
+                FreshnessState::Unknown | FreshnessState::Sleeping => continue,
+                FreshnessState::Fresh => {
+                    if device.lifecycle == DeviceLifecycle::Stale {
+                        device
+                            .transition(LifecycleTrigger::Rediscover)
+                            .map_err(|error| {
+                                ApplicationError::DomainInvariant(error.to_string())
+                            })?;
+                    }
+                    device.availability =
+                        device
+                            .availability
+                            .transition(AvailabilityState::Online, now, None);
+                }
+                FreshnessState::Stale => {
+                    if device.lifecycle == DeviceLifecycle::Enrolled {
+                        device
+                            .transition(LifecycleTrigger::MarkStale)
+                            .map_err(|error| {
+                                ApplicationError::DomainInvariant(error.to_string())
+                            })?;
+                    }
+                    device.availability = device.availability.transition(
+                        AvailabilityState::Degraded,
+                        now,
+                        Some("stale".to_owned()),
+                    );
+                }
+                FreshnessState::Offline => {
+                    if device.lifecycle == DeviceLifecycle::Enrolled {
+                        device
+                            .transition(LifecycleTrigger::MarkStale)
+                            .map_err(|error| {
+                                ApplicationError::DomainInvariant(error.to_string())
+                            })?;
+                    }
+                    device.availability = device.availability.transition(
+                        AvailabilityState::Offline,
+                        now,
+                        Some("freshness_timeout".to_owned()),
+                    );
+                }
+            }
+            if device.lifecycle != lifecycle_before {
+                events.push(DomainEvent {
+                    id: EventId::new(),
+                    device_id: device.snapshot.id.clone(),
+                    occurred_at: now,
+                    causation: causation.clone(),
+                    kind: DomainEventKind::LifecycleChanged {
+                        from: lifecycle_before,
+                        to: device.lifecycle,
+                        trigger: if device.lifecycle == DeviceLifecycle::Stale {
+                            LifecycleTrigger::MarkStale
+                        } else {
+                            LifecycleTrigger::Rediscover
+                        },
+                    },
+                });
+            }
+            if device.availability.state != availability_before {
+                events.push(DomainEvent {
+                    id: EventId::new(),
+                    device_id: device.snapshot.id.clone(),
+                    occurred_at: now,
+                    causation: causation.clone(),
+                    kind: DomainEventKind::AvailabilityChanged {
+                        from: availability_before,
+                        to: device.availability.state,
+                        reason: device.availability.reason.clone(),
+                    },
+                });
+            }
+            if device.lifecycle != lifecycle_before
+                || device.availability.state != availability_before
+            {
+                changed.push(device);
+            }
+        }
+        if changed.is_empty() {
+            return Ok(0);
+        }
+        self.repository
+            .apply(FoundationWrite {
+                devices: changed.clone(),
+                events: events.clone(),
+                ..FoundationWrite::default()
+            })
+            .await
+            .map_err(|source| ApplicationError::Repository {
+                operation: "freshness",
+                source,
+            })?;
+        let count = changed.len();
+        self.registry.upsert_all(changed).await;
+        self.event_sink
+            .publish(&events)
+            .await
+            .map_err(ApplicationError::EventDelivery)?;
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use chrono::Utc;
+    use chrono::{TimeDelta, Utc};
     use homemagic_domain::{
-        DeviceRecord, DeviceSnapshot, DiscoveryCandidate, InstallationId, IntegrationId,
+        CapabilityDescriptor, CapabilityObservation, DeviceRecord, DeviceSnapshot,
+        DiscoveryCandidate, EndpointId, InstallationId, IntegrationId, ObservationSource,
+        ObservationSourceKind, ObservedValue, RiskClass,
     };
     use tokio::sync::Mutex;
 
@@ -574,6 +774,122 @@ mod tests {
         assert_eq!(sessions.started.lock().await.first(), Some(&id));
         assert_eq!(sessions.stopped.lock().await.first(), Some(&id));
         assert_eq!(*sessions.shutdowns.lock().await, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn freshness_should_change_metadata_without_changing_observed_values()
+    -> Result<(), BoxError> {
+        let repository = Arc::new(MemoryFoundationRepository::default());
+        let mut record = record();
+        let observed_at = record.snapshot.observed_at;
+        record.timestamps.record_success(observed_at)?;
+        record
+            .snapshot
+            .vendor_data
+            .insert("fixture.value".to_owned(), serde_json::json!(42));
+        repository
+            .apply(FoundationWrite {
+                devices: vec![record.clone()],
+                ..FoundationWrite::default()
+            })
+            .await?;
+        let application = HomeMagicApplication::from_repository(
+            repository.clone(),
+            Arc::new(NoopDomainEventSink),
+            [],
+        )
+        .await?;
+        let policy = FreshnessPolicy::new(10, 20)?;
+
+        application
+            .evaluate_freshness(policy, observed_at + TimeDelta::seconds(10))
+            .await?;
+        application
+            .evaluate_freshness(policy, observed_at + TimeDelta::seconds(20))
+            .await?;
+        let offline = application.registry().records().await;
+
+        assert_eq!(offline[0].lifecycle, DeviceLifecycle::Stale);
+        assert_eq!(offline[0].availability.state, AvailabilityState::Offline);
+        assert_eq!(
+            offline[0].snapshot.vendor_data.get("fixture.value"),
+            Some(&serde_json::json!(42))
+        );
+
+        let recovered_at = observed_at + TimeDelta::seconds(21);
+        let observation = CapabilityObservation {
+            device_id: record.snapshot.id,
+            endpoint_id: EndpointId::new("switch:0"),
+            capability: CapabilityDescriptor::new("on_off", 1, RiskClass::Comfort)?,
+            values: BTreeMap::from([(
+                "on".to_owned(),
+                ObservedValue {
+                    value: serde_json::json!(true),
+                    observed_at: recovered_at,
+                },
+            )]),
+            received_at: recovered_at,
+            source: ObservationSource {
+                integration_id: record.integration_id,
+                kind: ObservationSourceKind::Notification,
+                sequence: Some(1),
+            },
+        };
+        RepositoryLiveObservationSink::new(repository.clone(), Arc::new(NoopDomainEventSink))
+            .with_registry(application.registry().clone())
+            .publish(LiveObservationBatch {
+                observations: vec![observation],
+                events: Vec::new(),
+            })
+            .await?;
+        application
+            .evaluate_freshness(policy, recovered_at + TimeDelta::seconds(1))
+            .await?;
+
+        let recovered = application.registry().records().await;
+        let durable = repository.load().await?;
+        assert_eq!(recovered[0].lifecycle, DeviceLifecycle::Enrolled);
+        assert_eq!(recovered[0].availability.state, AvailabilityState::Online);
+        assert_eq!(recovered[0].timestamps.last_success, Some(recovered_at));
+        assert_eq!(durable.devices, recovered);
+        assert_eq!(durable.observations.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn freshness_should_not_turn_sleeping_device_offline() -> Result<(), BoxError> {
+        let repository = Arc::new(MemoryFoundationRepository::default());
+        let mut record = record();
+        let observed_at = record.snapshot.observed_at;
+        record.timestamps.record_success(observed_at)?;
+        record.availability = record.availability.transition(
+            AvailabilityState::Sleeping,
+            observed_at,
+            Some("expected_sleep".to_owned()),
+        );
+        repository
+            .apply(FoundationWrite {
+                devices: vec![record],
+                ..FoundationWrite::default()
+            })
+            .await?;
+        let application =
+            HomeMagicApplication::from_repository(repository, Arc::new(NoopDomainEventSink), [])
+                .await?;
+
+        let changed = application
+            .evaluate_freshness(
+                FreshnessPolicy::new(10, 20)?,
+                observed_at + TimeDelta::hours(24),
+            )
+            .await?;
+
+        assert_eq!(changed, 0);
+        assert_eq!(
+            application.registry().records().await[0].availability.state,
+            AvailabilityState::Sleeping
+        );
         Ok(())
     }
 

@@ -110,9 +110,12 @@ debug logs.
   local WebSocket integration tests and sanitized notification fixtures.
 - [x] Merge partial status notifications without dropping unchanged fields.
   Evidence: field-level `StatusCache` overlays and partial observation batches.
-- [ ] Reconnect with jittered exponential backoff and a configured upper bound.
-- [ ] Fall back to a bounded HTTP refresh after subscription gaps.
-- [ ] Respect sleeping-device behavior without treating normal sleep as failure.
+- [x] Reconnect with jittered exponential backoff and a configured upper bound.
+  Evidence: `BackoffPolicy` and reconnect recovery tests.
+- [x] Fall back to a bounded HTTP refresh after subscription gaps. Evidence:
+  bounded gap channel, request coalescing, and runtime refresh deadlines.
+- [x] Respect sleeping-device behavior without treating normal sleep as failure.
+  Evidence: sleeping-device freshness tests.
 - [x] Shut down sessions and mDNS workers cleanly on process termination.
   Evidence: application lifecycle orchestration, supervisor cancellation/join,
   and daemon post-server shutdown.
@@ -121,13 +124,20 @@ debug logs.
 
 ## Workstream E1.4: Reconciliation and scheduling
 
-- [ ] Run discovery on startup and a configurable periodic schedule.
-- [ ] Deduplicate dedicated Shelly and generic HTTP advertisements.
-- [ ] Bound concurrent DNS resolution and device requests.
-- [ ] Apply per-device timeouts and global refresh deadlines.
-- [ ] Ensure one slow device cannot block registry convergence.
-- [ ] Coalesce duplicate observations before persistence and fan-out.
-- [ ] Record refresh summaries and per-device failure reasons.
+- [x] Run discovery on startup and a configurable periodic schedule. Evidence:
+  `runtime_worker` and its immediate-start/shutdown test.
+- [x] Deduplicate dedicated Shelly and generic HTTP advertisements. Evidence:
+  ordered service/target sets and native discovery parser tests.
+- [x] Bound concurrent DNS resolution and device requests. Evidence: bounded
+  discovery windows and the Shelly refresh semaphore.
+- [x] Apply per-device timeouts and global refresh deadlines. Evidence: the
+  Shelly HTTP client timeout and scheduler timeout.
+- [x] Ensure one slow device cannot block registry convergence. Evidence:
+  `slow_target_should_time_out_without_losing_fast_candidate`.
+- [x] Coalesce duplicate observations before persistence and fan-out. Evidence:
+  field-level status cache, observation upserts, and gap-request draining.
+- [x] Record refresh summaries and per-device failure reasons. Evidence:
+  structured reconciliation and session reconnect logs.
 
 ## Workstream E1.5: Read API and operations
 
@@ -153,10 +163,13 @@ debug logs.
   authentication challenges, malformed frames, and firmware variations.
   Evidence: `crates/homemagic-shelly/tests/fixtures` and focused modern/legacy
   authentication and notification integration tests.
-- [ ] Reconnect tests use deterministic time and verify backoff bounds.
+- [x] Reconnect tests use deterministic inputs and verify backoff bounds and the
+  stable-run reset rule. Evidence: `backoff_should_be_deterministic_bounded_and_resettable`.
 - [x] Restart test proves stable device and endpoint IDs. Evidence: storage
   reopen contract and daemon bootstrap identity reuse test.
-- [ ] Network-loss test proves stale/offline behavior and recovery.
+- [x] Network-loss tests prove reconnect plus stale/offline and durable recovery.
+  Evidence: `failed_session_should_reconnect_until_recovered` and
+  `freshness_should_change_metadata_without_changing_observed_values`.
 - [ ] macOS Apple Silicon hardware test covers at least one switch, dimmer, and
   cover.
 - [ ] Linux x86_64 CI runs format, Clippy, unit tests, integration tests, and
@@ -217,3 +230,5 @@ debug logs.
   reconciliation; local daemon health and device-list smoke tests pass.
 - 2026-07-11: Completed E1-006 managed WebSocket sessions, live durable
   observations, typed events, gap signaling, and graceful lifecycle wiring.
+- 2026-07-11: Completed E1-007 bounded scheduling, refresh concurrency and
+  deadlines, reconnect recovery, freshness transitions, and graceful shutdown.

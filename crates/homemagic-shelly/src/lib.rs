@@ -12,7 +12,7 @@ pub use notification::{
     EventDeduplicator, NotificationError, NotificationFrame, ShellyEvent, StatusApply, StatusCache,
     StatusNotification, parse_notification,
 };
-pub use session::{SessionRunner, ShellySessionSupervisor};
+pub use session::{BackoffPolicy, BackoffPolicyError, SessionRunner, ShellySessionSupervisor};
 pub use websocket::ShellyWebSocketRunner;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -154,6 +154,7 @@ pub struct ShellyScanner {
     integration_id: IntegrationId,
     credential_ref: Option<SecretRef>,
     secret_store: Option<Arc<dyn SecretStore>>,
+    max_refresh_concurrency: usize,
 }
 
 impl ShellyScanner {
@@ -186,7 +187,15 @@ impl ShellyScanner {
             integration_id,
             credential_ref: None,
             secret_store: None,
+            max_refresh_concurrency: 16,
         })
+    }
+
+    /// Sets the maximum number of concurrent per-device refreshes.
+    #[must_use]
+    pub fn with_max_refresh_concurrency(mut self, maximum: usize) -> Self {
+        self.max_refresh_concurrency = maximum.max(1);
+        self
     }
 
     /// Creates a scanner with an opaque credential reference and secret backend.
@@ -410,6 +419,44 @@ impl ShellyScanner {
             source,
         })
     }
+
+    async fn scan_targets(&self, targets: Vec<DiscoveredShelly>) -> Vec<DiscoveryCandidate> {
+        let mut snapshots = BTreeMap::new();
+        let mut tasks = JoinSet::new();
+        let permits = Arc::new(tokio::sync::Semaphore::new(self.max_refresh_concurrency));
+
+        for target in targets {
+            let scanner = self.clone();
+            let permits = permits.clone();
+            tasks.spawn(async move {
+                let permit = permits.acquire_owned().await;
+                let Ok(_permit) = permit else {
+                    return (
+                        target,
+                        Err(ShellyError::DiscoveryWorker(
+                            "refresh limiter closed".to_owned(),
+                        )),
+                    );
+                };
+                let result = scanner.fetch_candidate(&target).await;
+                (target, result)
+            });
+        }
+
+        while let Some(task) = tasks.join_next().await {
+            match task {
+                Ok((_, Ok(candidate))) => {
+                    snapshots.insert(candidate.snapshot.id.clone(), candidate);
+                }
+                Ok((target, Err(error))) => {
+                    warn!(address = %target.address, %error, "Shelly refresh failed");
+                }
+                Err(error) => warn!(%error, "Shelly refresh task failed"),
+            }
+        }
+
+        snapshots.into_values().collect()
+    }
 }
 
 async fn decode_response<T>(url: &str, response: Response) -> Result<T, ShellyError>
@@ -436,30 +483,7 @@ impl IntegrationScanner for ShellyScanner {
 
     async fn scan(&self) -> Result<Vec<DiscoveryCandidate>, BoxError> {
         let targets = discover(self.discovery_window).await?;
-        let mut snapshots = BTreeMap::new();
-        let mut tasks = JoinSet::new();
-
-        for target in targets {
-            let scanner = self.clone();
-            tasks.spawn(async move {
-                let result = scanner.fetch_candidate(&target).await;
-                (target, result)
-            });
-        }
-
-        while let Some(task) = tasks.join_next().await {
-            match task {
-                Ok((_, Ok(candidate))) => {
-                    snapshots.insert(candidate.snapshot.id.clone(), candidate);
-                }
-                Ok((target, Err(error))) => {
-                    warn!(address = %target.address, %error, "Shelly refresh failed");
-                }
-                Err(error) => warn!(%error, "Shelly refresh task failed"),
-            }
-        }
-
-        Ok(snapshots.into_values().collect())
+        Ok(self.scan_targets(targets).await)
     }
 }
 
@@ -898,6 +922,63 @@ mod tests {
         )
     }
 
+    async fn device_server(slow: bool) -> (DiscoveredShelly, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|error| panic!("bind device fixture: {error}"));
+        let address = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("device fixture address: {error}"));
+        let task = tokio::spawn(async move {
+            let request_count = if slow { 1 } else { 3 };
+            for _ in 0..request_count {
+                let (mut stream, _) = listener
+                    .accept()
+                    .await
+                    .unwrap_or_else(|error| panic!("accept device fixture: {error}"));
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 1024];
+                    let read = stream
+                        .read(&mut chunk)
+                        .await
+                        .unwrap_or_else(|error| panic!("read device fixture: {error}"));
+                    request.extend_from_slice(&chunk[..read]);
+                    if read == 0 || request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                if slow {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
+                let request = String::from_utf8_lossy(&request);
+                let body = if request.contains("Shelly.GetDeviceInfo") {
+                    include_str!("../tests/fixtures/device_info.json")
+                } else if request.contains("Shelly.GetStatus") {
+                    include_str!("../tests/fixtures/status.json")
+                } else {
+                    include_str!("../tests/fixtures/config.json")
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap_or_else(|error| panic!("write device fixture: {error}"));
+            }
+        });
+        (
+            DiscoveredShelly {
+                address: address.ip(),
+                port: address.port(),
+            },
+            task,
+        )
+    }
+
     fn fixture_info() -> ShellyDeviceInfo {
         serde_json::from_str(include_str!("../tests/fixtures/device_info.json"))
             .unwrap_or_else(|error| panic!("valid Shelly info fixture: {error}"))
@@ -943,6 +1024,39 @@ mod tests {
                 .iter()
                 .any(|capability| capability.schema() == "position.v1")
         }));
+    }
+
+    #[tokio::test]
+    async fn slow_target_should_time_out_without_losing_fast_candidate() {
+        let (slow, slow_task) = device_server(true).await;
+        let (fast, fast_task) = device_server(false).await;
+        let installation_id = InstallationId::new();
+        let integration_id = IntegrationId::from_native(&installation_id, INTEGRATION, "test");
+        let mut scanner = ShellyScanner::with_identity(
+            Duration::from_millis(10),
+            installation_id,
+            integration_id,
+        )
+        .unwrap_or_else(|error| panic!("scanner: {error}"))
+        .with_max_refresh_concurrency(2);
+        scanner.client = Client::builder()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .unwrap_or_else(|error| panic!("test client: {error}"));
+
+        let candidates = tokio::time::timeout(
+            Duration::from_secs(1),
+            scanner.scan_targets(vec![slow, fast]),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("bounded target scan: {error}"));
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].snapshot.native_id, fixture_info().id);
+        fast_task
+            .await
+            .unwrap_or_else(|error| panic!("fast device fixture: {error}"));
+        slow_task.abort();
     }
 
     #[test]

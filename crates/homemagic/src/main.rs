@@ -11,7 +11,9 @@ use homemagic_application::{
     DeviceRegistry, FoundationWrite, HomeMagicApplication, IntegrationScanner, NoopDomainEventSink,
     RepositoryLiveObservationSink, SecretStore,
 };
-use homemagic_domain::{Installation, InstallationId, IntegrationId, IntegrationInstance};
+use homemagic_domain::{
+    FreshnessPolicy, Installation, InstallationId, IntegrationId, IntegrationInstance,
+};
 use homemagic_secrets::{FileSecretStore, PlatformSecretStore};
 use homemagic_shelly::{ShellyScanner, ShellySessionSupervisor, ShellyWebSocketRunner};
 use homemagic_storage::SqliteRepository;
@@ -51,6 +53,22 @@ enum Command {
         /// Number of seconds to collect mDNS responses per refresh.
         #[arg(long, default_value_t = 4, env = "HOMEMAGIC_DISCOVERY_SECONDS")]
         discovery_seconds: u64,
+        /// Seconds between periodic discovery and reconciliation cycles.
+        #[arg(
+            long,
+            default_value_t = 60,
+            env = "HOMEMAGIC_DISCOVERY_INTERVAL_SECONDS"
+        )]
+        discovery_interval_seconds: u64,
+        /// Global deadline for one discovery or gap-refresh convergence cycle.
+        #[arg(long, default_value_t = 30, env = "HOMEMAGIC_REFRESH_DEADLINE_SECONDS")]
+        refresh_deadline_seconds: u64,
+        /// Seconds after the last success before a device becomes stale.
+        #[arg(long, default_value_t = 120, env = "HOMEMAGIC_STALE_AFTER_SECONDS")]
+        stale_after_seconds: i64,
+        /// Seconds after the last success before a device becomes offline.
+        #[arg(long, default_value_t = 300, env = "HOMEMAGIC_OFFLINE_AFTER_SECONDS")]
+        offline_after_seconds: i64,
         /// Path to the durable `HomeMagic` `SQLite` database.
         #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
         database: PathBuf,
@@ -70,6 +88,19 @@ enum Command {
     },
 }
 
+struct ServeOptions {
+    bind: SocketAddr,
+    discovery_seconds: u64,
+    discovery_interval_seconds: u64,
+    refresh_deadline_seconds: u64,
+    stale_after_seconds: i64,
+    offline_after_seconds: i64,
+    database: PathBuf,
+    secret_backend: SecretBackend,
+    master_key_file: Option<PathBuf>,
+    secret_vault: PathBuf,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -83,19 +114,27 @@ async fn main() -> Result<()> {
         Command::Serve {
             bind,
             discovery_seconds,
+            discovery_interval_seconds,
+            refresh_deadline_seconds,
+            stale_after_seconds,
+            offline_after_seconds,
             database,
             secret_store,
             master_key_file,
             secret_vault,
         } => {
-            serve(
+            serve(ServeOptions {
                 bind,
                 discovery_seconds,
-                &database,
-                secret_store,
-                master_key_file.as_deref(),
-                &secret_vault,
-            )
+                discovery_interval_seconds,
+                refresh_deadline_seconds,
+                stale_after_seconds,
+                offline_after_seconds,
+                database,
+                secret_backend: secret_store,
+                master_key_file,
+                secret_vault,
+            })
             .await
         }
     }
@@ -114,37 +153,35 @@ async fn scan(discovery_seconds: u64, summary: bool) -> Result<()> {
     Ok(())
 }
 
-async fn serve(
-    bind: SocketAddr,
-    discovery_seconds: u64,
-    database: &Path,
-    secret_backend: SecretBackend,
-    master_key_file: Option<&Path>,
-    secret_vault: &Path,
-) -> Result<()> {
-    let application = durable_application(
-        discovery_seconds,
-        database,
-        secret_backend,
-        master_key_file,
-        secret_vault,
+async fn serve(options: ServeOptions) -> Result<()> {
+    let (application, refresh_requests) = durable_application(
+        options.discovery_seconds,
+        &options.database,
+        options.secret_backend,
+        options.master_key_file.as_deref(),
+        &options.secret_vault,
     )
     .await?;
-    let listener = TcpListener::bind(bind)
+    let listener = TcpListener::bind(options.bind)
         .await
-        .with_context(|| format!("failed to bind HomeMagic API to {bind}"))?;
-    info!(%bind, "HomeMagic JSON-RPC API listening");
-    let refresh_application = application.clone();
-    tokio::spawn(async move {
-        match refresh_application.refresh().await {
-            Ok(summary) => info!(?summary, "initial device reconciliation completed"),
-            Err(error) => warn!(%error, "initial device reconciliation failed"),
-        }
-    });
+        .with_context(|| format!("failed to bind HomeMagic API to {}", options.bind))?;
+    info!(bind = %options.bind, "HomeMagic JSON-RPC API listening");
+    let (shutdown, shutdown_requested) = tokio::sync::watch::channel(false);
+    let worker_application = application.clone();
+    let worker = tokio::spawn(runtime_worker(
+        worker_application,
+        Duration::from_secs(options.discovery_interval_seconds.max(1)),
+        Duration::from_secs(options.refresh_deadline_seconds.max(1)),
+        FreshnessPolicy::new(options.stale_after_seconds, options.offline_after_seconds)
+            .context("invalid freshness thresholds")?,
+        refresh_requests,
+        shutdown_requested,
+    ));
     let result = axum::serve(listener, homemagic_api::router(application.clone()))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown))
         .await
         .context("HomeMagic API server failed");
+    worker.await.context("runtime scheduler task failed")?;
     application
         .shutdown()
         .await
@@ -158,7 +195,10 @@ async fn durable_application(
     secret_backend: SecretBackend,
     master_key_file: Option<&Path>,
     secret_vault: &Path,
-) -> Result<HomeMagicApplication> {
+) -> Result<(
+    HomeMagicApplication,
+    tokio::sync::mpsc::Receiver<homemagic_domain::DeviceId>,
+)> {
     let repository = Arc::new(
         SqliteRepository::open(database)
             .with_context(|| format!("failed to open database at {}", database.display()))?,
@@ -201,10 +241,16 @@ async fn durable_application(
     .context("failed to create Shelly scanner")?;
     let shelly: Arc<dyn IntegrationScanner> = Arc::new(scanner);
     let event_sink = Arc::new(NoopDomainEventSink);
-    let live_sink = Arc::new(RepositoryLiveObservationSink::new(
-        repository.clone(),
-        event_sink.clone(),
-    ));
+    let application =
+        HomeMagicApplication::from_repository(repository.clone(), event_sink.clone(), [shelly])
+            .await
+            .context("failed to load durable device state")?;
+    let (refresh_requests, refresh_receiver) = tokio::sync::mpsc::channel(256);
+    let live_sink = Arc::new(
+        RepositoryLiveObservationSink::new(repository.clone(), event_sink.clone())
+            .with_refresh_requests(refresh_requests)
+            .with_registry(application.registry().clone()),
+    );
     let runner =
         if let (Some(reference), Some(secret_store)) = (integration.credential_ref, secret_store) {
             ShellyWebSocketRunner::with_authentication(live_sink, secret_store, reference)
@@ -212,10 +258,47 @@ async fn durable_application(
             ShellyWebSocketRunner::new(live_sink)
         };
     let sessions = Arc::new(ShellySessionSupervisor::new(Arc::new(runner)));
-    HomeMagicApplication::from_repository(repository, event_sink, [shelly])
-        .await
-        .context("failed to load durable device state")
-        .map(|application| application.with_sessions(sessions))
+    Ok((application.with_sessions(sessions), refresh_receiver))
+}
+
+async fn runtime_worker(
+    application: HomeMagicApplication,
+    discovery_interval: Duration,
+    refresh_deadline: Duration,
+    freshness_policy: FreshnessPolicy,
+    mut refresh_requests: tokio::sync::mpsc::Receiver<homemagic_domain::DeviceId>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut interval = tokio::time::interval(discovery_interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        let trigger = tokio::select! {
+            _ = interval.tick() => Some("scheduled"),
+            request = refresh_requests.recv() => request.map(|_| "subscription_gap"),
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() { None } else { continue }
+            }
+        };
+        let Some(trigger) = trigger else {
+            break;
+        };
+        if trigger == "subscription_gap" {
+            while refresh_requests.try_recv().is_ok() {}
+        }
+        match tokio::time::timeout(refresh_deadline, application.refresh()).await {
+            Ok(Ok(summary)) => info!(?summary, trigger, "device reconciliation completed"),
+            Ok(Err(error)) => warn!(%error, trigger, "device reconciliation failed"),
+            Err(_) => warn!(trigger, "device reconciliation exceeded global deadline"),
+        }
+        match application
+            .evaluate_freshness(freshness_policy, chrono::Utc::now())
+            .await
+        {
+            Ok(changed) if changed > 0 => info!(changed, "device freshness metadata changed"),
+            Ok(_) => {}
+            Err(error) => warn!(%error, "device freshness evaluation failed"),
+        }
+    }
 }
 
 async fn bootstrap_shelly(repository: &SqliteRepository) -> Result<IntegrationInstance> {
@@ -272,10 +355,11 @@ fn application(discovery_seconds: u64) -> Result<HomeMagicApplication> {
     ))
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(shutdown: tokio::sync::watch::Sender<bool>) {
     if let Err(error) = tokio::signal::ctrl_c().await {
         warn!(%error, "failed to install shutdown signal handler");
     }
+    let _ = shutdown.send(true);
 }
 
 fn init_tracing() {
@@ -285,7 +369,29 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+    use homemagic_application::BoxError;
+    use tokio::sync::Notify;
+
+    struct CountingScanner {
+        scans: AtomicUsize,
+        scanned: Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl IntegrationScanner for CountingScanner {
+        fn integration(&self) -> &'static str {
+            "fixture"
+        }
+
+        async fn scan(&self) -> Result<Vec<homemagic_domain::DiscoveryCandidate>, BoxError> {
+            self.scans.fetch_add(1, Ordering::SeqCst);
+            self.scanned.notify_waiters();
+            Ok(Vec::new())
+        }
+    }
 
     #[tokio::test]
     async fn bootstrap_should_reuse_identities_after_reopen() -> Result<()> {
@@ -302,6 +408,49 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(snapshot.installations.len(), 1);
         assert_eq!(snapshot.integrations.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn runtime_worker_should_start_immediately_and_shutdown_cleanly() -> Result<()> {
+        let scanner = Arc::new(CountingScanner {
+            scans: AtomicUsize::new(0),
+            scanned: Notify::new(),
+        });
+        let application = HomeMagicApplication::new(
+            DeviceRegistry::default(),
+            [scanner.clone() as Arc<dyn IntegrationScanner>],
+        );
+        let (_requests, receiver) = tokio::sync::mpsc::channel(4);
+        let (shutdown, shutdown_requested) = tokio::sync::watch::channel(false);
+        let worker = tokio::spawn(runtime_worker(
+            application,
+            Duration::from_secs(3_600),
+            Duration::from_secs(1),
+            FreshnessPolicy::new(10, 20)?,
+            receiver,
+            shutdown_requested,
+        ));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let scan_completed = scanner.scanned.notified();
+                if scanner.scans.load(Ordering::SeqCst) > 0 {
+                    break;
+                }
+                scan_completed.await;
+            }
+        })
+        .await
+        .context("runtime worker did not perform startup discovery")?;
+
+        shutdown
+            .send(true)
+            .map_err(|_| anyhow::anyhow!("runtime worker dropped shutdown channel"))?;
+        tokio::time::timeout(Duration::from_secs(1), worker)
+            .await
+            .context("runtime worker did not stop")??;
+
+        assert_eq!(scanner.scans.load(Ordering::SeqCst), 1);
         Ok(())
     }
 }
