@@ -1,7 +1,7 @@
 # EPIC-003: Agent-Authored Automation Engine
 
 - Milestone: M3
-- Status: Planned
+- Status: In progress
 - Depends on: EPIC-002
 - Unlocks: EPIC-005
 
@@ -173,3 +173,7 @@ requires it, and activates an immutable version.
 ## Progress log
 
 - 2026-07-11: Epic created; blocked on EPIC-002.
+- 2026-07-11: Approved the durable step-interpreter design with capability Safety
+  Profiles, desired-state reduction, no automatic missed-schedule catch-up, and
+  shared simulation/runtime semantics. Added the dependency-ordered E3 issue set;
+  E3-001 is ready.
