@@ -952,6 +952,7 @@ dependencies = [
  "homemagic-secrets",
  "homemagic-shelly",
  "homemagic-storage",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

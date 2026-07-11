@@ -1,0 +1,99 @@
+{
+  "schema": "homemagic.hardware_smoke.v1",
+  "generated_at": "2026-07-11T12:26:32.564341Z",
+  "host": {
+    "operating_system": "macos",
+    "architecture": "aarch64"
+  },
+  "integration": "shelly",
+  "discovery_seconds": 8,
+  "device_count": 43,
+  "devices": [
+    {
+      "manufacturer": "Shelly",
+      "model": "S3DM-0A101WWL",
+      "firmware": "1.7.5",
+      "capabilities": [
+        "availability.v1",
+        "diagnostics.v1",
+        "energy.v1",
+        "level.v1",
+        "on_off.v1",
+        "power.v1"
+      ],
+      "result": "state_observed",
+      "count": 8
+    },
+    {
+      "manufacturer": "Shelly",
+      "model": "S3SW-001P8EU",
+      "firmware": "1.7.5",
+      "capabilities": [
+        "availability.v1",
+        "diagnostics.v1",
+        "energy.v1",
+        "on_off.v1",
+        "power.v1"
+      ],
+      "result": "state_observed",
+      "count": 16
+    },
+    {
+      "manufacturer": "Shelly",
+      "model": "S3SW-002P16EU",
+      "firmware": "1.7.5",
+      "capabilities": [
+        "availability.v1",
+        "diagnostics.v1",
+        "energy.v1",
+        "on_off.v1",
+        "power.v1"
+      ],
+      "result": "state_observed",
+      "count": 4
+    },
+    {
+      "manufacturer": "Shelly",
+      "model": "S3SW-002P16EU",
+      "firmware": "1.7.5",
+      "capabilities": [
+        "availability.v1",
+        "diagnostics.v1",
+        "energy.v1",
+        "position.v1",
+        "power.v1"
+      ],
+      "result": "state_observed",
+      "count": 9
+    },
+    {
+      "manufacturer": "Shelly",
+      "model": "SNSW-102P16EU",
+      "firmware": "1.7.5",
+      "capabilities": [
+        "availability.v1",
+        "diagnostics.v1",
+        "energy.v1",
+        "on_off.v1",
+        "power.v1"
+      ],
+      "result": "state_observed",
+      "count": 1
+    },
+    {
+      "manufacturer": "Shelly",
+      "model": "SNSW-102P16EU",
+      "firmware": "1.7.5",
+      "capabilities": [
+        "availability.v1",
+        "diagnostics.v1",
+        "energy.v1",
+        "position.v1",
+        "power.v1"
+      ],
+      "result": "state_observed",
+      "count": 5
+    }
+  ],
+  "redaction": "device identifiers, network addresses, aliases, spaces, and vendor payloads omitted"
+}

@@ -17,6 +17,7 @@ homemagic-shelly = { path = "../homemagic-shelly" }
 homemagic-secrets = { path = "../homemagic-secrets" }
 homemagic-storage = { path = "../homemagic-storage" }
 serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

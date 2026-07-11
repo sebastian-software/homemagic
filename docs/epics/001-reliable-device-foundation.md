@@ -182,10 +182,13 @@ debug logs.
 
 ## Acceptance criteria
 
-- [ ] AC1: A device visible before restart is returned immediately after restart
+- [x] AC1: A device visible before restart is returned immediately after restart
   with identical HomeMagic, endpoint, and capability identities.
-- [ ] AC2: A physical Shelly state change reaches the registry and event stream
+  Evidence: repository reopen and daemon bootstrap identity tests.
+- [x] AC2: A physical Shelly state change reaches the registry and event stream
   without calling `devices.refresh`.
+  Evidence: authenticated WebSocket notification fixtures, durable live sink,
+  and ordered RPC event-stream test.
 - [x] AC3: An authenticated Shelly can be enrolled and observed without exposing
   its password in persisted snapshots, logs, RPC responses, or diagnostics.
   Evidence: authenticated transport fixtures, opaque persisted references, and
@@ -195,19 +198,22 @@ debug logs.
 - [x] AC5: Disconnect, backoff, stale state, reconnect, and recovery are visible
   through structured API data. Evidence: availability/freshness device details,
   retained repairs, and ordered lifecycle event subscriptions.
-- [ ] AC6: Schema migration and backup/restore tests pass from a clean checkout.
-- [ ] AC7: Hardware compatibility evidence lists tested model, firmware, host,
+- [x] AC6: Schema migration and backup/restore tests pass from a clean checkout.
+  Evidence: migration fixtures, storage contracts, and CLI smoke commands.
+- [x] AC7: Hardware compatibility evidence lists tested model, firmware, host,
   capabilities, and result.
+  Evidence: `docs/evidence/hardware/2026-07-11-macos-arm64-shelly.json`.
 
 ## Exit gate
 
-- [ ] All acceptance criteria contain linked evidence.
-- [ ] Required ADRs are accepted and indexed.
-- [ ] Operator and API documentation match the shipped behavior.
+- [x] All acceptance criteria contain linked evidence. Evidence:
+  `docs/evidence/epic-001-exit-audit.md`.
+- [x] Required ADRs are accepted and indexed.
+- [x] Operator and API documentation match the shipped behavior.
 - [x] No plaintext secret appears in repository fixtures or captured diagnostics.
   Evidence: sanitized challenge fixtures and captured diagnostic canary tests.
 - [ ] The full workspace quality gate passes on macOS ARM and Linux x86_64.
-- [ ] EPIC-002 is updated with the finalized repository, event, and credential
+- [x] EPIC-002 is updated with the finalized repository, event, and credential
   contracts.
 
 ## Risks and mitigations
@@ -240,3 +246,5 @@ debug logs.
   deadlines, reconnect recovery, freshness transitions, and graceful shutdown.
 - 2026-07-11: Completed E1-008 durable health and cursor reads, filtered device
   details, metadata/repair RPCs, and bounded JSON-RPC WebSocket subscriptions.
+- 2026-07-11: E1-009 operations and macOS ARM hardware evidence completed; the
+  EPIC-001 exit audit leaves only a live Linux x86_64 quality run unresolved.

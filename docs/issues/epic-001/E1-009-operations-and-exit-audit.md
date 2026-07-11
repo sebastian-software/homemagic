@@ -2,7 +2,7 @@
 id: E1-009
 epic: EPIC-001
 title: Ship operations, compatibility evidence, and exit audit
-status: planned
+status: in_progress
 priority: high
 depends_on: [E1-008]
 adrs: []
@@ -20,32 +20,40 @@ gate on supported platforms.
 
 ## Tasks
 
-- [ ] Document database location, migration startup, backup, and restore.
-- [ ] Document platform and headless credential setup and recovery.
-- [ ] Add a redacted hardware smoke-test command and report schema.
-- [ ] Record tested Shelly model, firmware, host, capabilities, and result.
-- [ ] Cover switch, dimmer, and cover hardware on macOS Apple Silicon.
-- [ ] Ensure Linux x86_64 CI runs format, Clippy, tests, and migrations.
-- [ ] Run a plaintext-secret scan over fixtures and captured diagnostics.
-- [ ] Link evidence to every EPIC-001 acceptance criterion and exit item.
-- [ ] Update EPIC-002 with finalized repository, event, and credential contracts.
+- [x] Document database location, migration startup, backup, and restore.
+- [x] Document platform and headless credential setup and recovery.
+- [x] Add a redacted hardware smoke-test command and report schema.
+- [x] Record tested Shelly model, firmware, host, capabilities, and result.
+- [x] Cover switch, dimmer, and cover hardware on macOS Apple Silicon.
+- [x] Ensure Linux x86_64 CI runs format, Clippy, tests, and migrations.
+- [x] Run a plaintext-secret scan over fixtures and captured diagnostics.
+- [x] Link evidence to every EPIC-001 acceptance criterion and exit item.
+- [x] Update EPIC-002 with finalized repository, event, and credential contracts.
 
 ## Acceptance criteria
 
-- [ ] A clean-checkout operator can back up and restore an installation.
-- [ ] Smoke reports are reproducible and contain no secrets.
-- [ ] Required hardware evidence is committed or linked with exact versions.
+- [x] A clean-checkout operator can back up and restore an installation.
+- [x] Smoke reports are reproducible and contain no secrets.
+- [x] Required hardware evidence is committed or linked with exact versions.
 - [ ] Supported-platform quality gates pass.
-- [ ] Every EPIC-001 checklist item is either evidenced or explicitly unresolved.
+- [x] Every EPIC-001 checklist item is either evidenced or explicitly unresolved.
 
 ## Verification
 
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
-- [ ] `cargo test --workspace --all-features --locked`
-- [ ] Documentation link and command smoke tests.
-- [ ] Requirement-by-requirement EPIC-001 completion audit.
+- [x] `cargo fmt --check`
+- [x] `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
+- [x] `cargo test --workspace --all-features --locked`
+- [x] Documentation link and command smoke tests.
+- [x] Requirement-by-requirement EPIC-001 completion audit.
 
 ## Progress log
 
 - 2026-07-11: Issue created.
+- 2026-07-11: Added validated backup/restore and stdin-only credential
+  provisioning commands plus complete operator recovery documentation.
+- 2026-07-11: Generated a redacted macOS ARM report covering switch, dimmer, and
+  cover read paths across 43 observed devices on firmware 1.7.5.
+- 2026-07-11: Added Linux x86_64 CI migration and secret-scan gates with required
+  D-Bus build packages.
+- 2026-07-11: Exit audit completed; live Linux CI remains the only unresolved
+  supported-platform gate.

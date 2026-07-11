@@ -1,5 +1,7 @@
 //! `HomeMagic` daemon and discovery command.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,14 +11,16 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
     BroadcastDomainEventSink, DeviceRegistry, FoundationWrite, HomeMagicApplication,
-    IntegrationScanner, RepositoryLiveObservationSink, SecretStore,
+    IntegrationScanner, RepositoryLiveObservationSink, SecretStore, SecretValue,
 };
 use homemagic_domain::{
-    FreshnessPolicy, Installation, InstallationId, IntegrationId, IntegrationInstance,
+    CapabilitySnapshot, FreshnessPolicy, Installation, InstallationId, IntegrationId,
+    IntegrationInstance, SecretRef,
 };
 use homemagic_secrets::{FileSecretStore, PlatformSecretStore};
 use homemagic_shelly::{ShellyScanner, ShellySessionSupervisor, ShellyWebSocketRunner};
 use homemagic_storage::SqliteRepository;
+use serde::Serialize;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -44,6 +48,49 @@ enum Command {
         /// Print aggregate counts instead of full device snapshots.
         #[arg(long)]
         summary: bool,
+    },
+    /// Produce a redacted, reproducible Shelly compatibility report.
+    HardwareSmoke {
+        /// Number of seconds to collect mDNS responses.
+        #[arg(long, default_value_t = 4)]
+        discovery_seconds: u64,
+        /// Optional JSON report destination; stdout is always written.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Create and validate a consistent online `SQLite` backup.
+    Backup {
+        /// Active `HomeMagic` database to back up.
+        #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
+        database: PathBuf,
+        /// Backup file to replace atomically after validation.
+        destination: PathBuf,
+    },
+    /// Restore, migrate, and validate a backup into an inactive database path.
+    Restore {
+        /// Backup file to restore without modifying it.
+        source: PathBuf,
+        /// Inactive database file to replace atomically.
+        destination: PathBuf,
+    },
+    /// Configure the shared Shelly password from stdin without command-line exposure.
+    CredentialSetShelly {
+        /// Durable database whose Shelly integration receives the reference.
+        #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
+        database: PathBuf,
+        /// Explicit credential backend; file mode never activates implicitly.
+        #[arg(long, value_enum, default_value_t = SecretBackend::Platform, env = "HOMEMAGIC_SECRET_STORE")]
+        secret_store: SecretBackend,
+        /// Owner-only 32-byte master key required by file mode.
+        #[arg(long, env = "HOMEMAGIC_MASTER_KEY_FILE")]
+        master_key_file: Option<PathBuf>,
+        /// Encrypted credential vault directory used only by file mode.
+        #[arg(
+            long,
+            default_value = "homemagic-secrets",
+            env = "HOMEMAGIC_SECRET_VAULT"
+        )]
+        secret_vault: PathBuf,
     },
     /// Start the `HomeMagic` JSON-RPC server.
     Serve {
@@ -111,6 +158,32 @@ async fn main() -> Result<()> {
             discovery_seconds,
             summary,
         } => scan(discovery_seconds, summary).await,
+        Command::HardwareSmoke {
+            discovery_seconds,
+            output,
+        } => hardware_smoke(discovery_seconds, output.as_deref()).await,
+        Command::Backup {
+            database,
+            destination,
+        } => backup(&database, &destination).await,
+        Command::Restore {
+            source,
+            destination,
+        } => restore(&source, &destination).await,
+        Command::CredentialSetShelly {
+            database,
+            secret_store,
+            master_key_file,
+            secret_vault,
+        } => {
+            credential_set_shelly(
+                &database,
+                secret_store,
+                master_key_file.as_deref(),
+                &secret_vault,
+            )
+            .await
+        }
         Command::Serve {
             bind,
             discovery_seconds,
@@ -138,6 +211,197 @@ async fn main() -> Result<()> {
             .await
         }
     }
+}
+
+#[derive(Serialize)]
+struct HardwareSmokeReport {
+    schema: &'static str,
+    generated_at: chrono::DateTime<chrono::Utc>,
+    host: SmokeHost,
+    integration: &'static str,
+    discovery_seconds: u64,
+    device_count: usize,
+    devices: Vec<SmokeDevice>,
+    redaction: &'static str,
+}
+
+#[derive(Serialize)]
+struct SmokeHost {
+    operating_system: &'static str,
+    architecture: &'static str,
+}
+
+#[derive(Serialize)]
+struct SmokeDevice {
+    manufacturer: String,
+    model: String,
+    firmware: Option<String>,
+    capabilities: BTreeSet<String>,
+    result: &'static str,
+    count: usize,
+}
+
+async fn hardware_smoke(discovery_seconds: u64, output: Option<&Path>) -> Result<()> {
+    let application = application(discovery_seconds)?;
+    application.refresh().await?;
+    let snapshots = application.registry().list().await;
+    let device_count = snapshots.len();
+    let mut groups = BTreeMap::new();
+    for device in snapshots {
+        let capabilities = device
+            .endpoints
+            .iter()
+            .flat_map(|endpoint| endpoint.capabilities.iter())
+            .map(|capability| capability.schema().to_owned())
+            .collect::<BTreeSet<_>>();
+        let firmware = device.endpoints.iter().find_map(|endpoint| {
+            endpoint
+                .capabilities
+                .iter()
+                .find_map(|capability| match capability {
+                    CapabilitySnapshot::Diagnostics {
+                        firmware_version, ..
+                    } => firmware_version.clone(),
+                    _ => None,
+                })
+        });
+        let result = if device.vendor_data.contains_key("shelly.authentication") {
+            "identity_observed_authentication_required"
+        } else {
+            "state_observed"
+        };
+        *groups
+            .entry((
+                device.manufacturer,
+                device.model,
+                firmware,
+                capabilities,
+                result,
+            ))
+            .or_insert(0) += 1;
+    }
+    let devices = groups
+        .into_iter()
+        .map(
+            |((manufacturer, model, firmware, capabilities, result), count)| SmokeDevice {
+                manufacturer,
+                model,
+                firmware,
+                capabilities,
+                result,
+                count,
+            },
+        )
+        .collect();
+    let report = HardwareSmokeReport {
+        schema: "homemagic.hardware_smoke.v1",
+        generated_at: chrono::Utc::now(),
+        host: SmokeHost {
+            operating_system: std::env::consts::OS,
+            architecture: std::env::consts::ARCH,
+        },
+        integration: "shelly",
+        discovery_seconds,
+        device_count,
+        devices,
+        redaction: "device identifiers, network addresses, aliases, spaces, and vendor payloads omitted",
+    };
+    let json = serde_json::to_string_pretty(&report)?;
+    if let Some(output) = output {
+        std::fs::write(output, format!("{json}\n"))
+            .with_context(|| format!("failed to write smoke report to {}", output.display()))?;
+    }
+    println!("{json}");
+    Ok(())
+}
+
+async fn backup(database: &Path, destination: &Path) -> Result<()> {
+    let repository = SqliteRepository::open(database)
+        .with_context(|| format!("failed to open database at {}", database.display()))?;
+    let report = repository
+        .backup_to(destination)
+        .await
+        .with_context(|| format!("failed to back up database to {}", destination.display()))?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+async fn restore(source: &Path, destination: &Path) -> Result<()> {
+    let report = SqliteRepository::restore_to(source, destination)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to restore backup {} to {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+async fn credential_set_shelly(
+    database: &Path,
+    backend: SecretBackend,
+    master_key_file: Option<&Path>,
+    secret_vault: &Path,
+) -> Result<()> {
+    let repository = SqliteRepository::open(database)
+        .with_context(|| format!("failed to open database at {}", database.display()))?;
+    let mut integration = bootstrap_shelly(&repository).await?;
+    let existing_reference = integration.credential_ref.clone();
+    let reference = existing_reference
+        .clone()
+        .unwrap_or_else(|| SecretRef::from_backend_id(format!("shelly-{}", integration.id)));
+    let secret_store: Arc<dyn SecretStore> = match backend {
+        SecretBackend::Platform => Arc::new(PlatformSecretStore::new("dev.homemagic.shelly")),
+        SecretBackend::File => {
+            let key_file = master_key_file.context(
+                "HOMEMAGIC_MASTER_KEY_FILE is required when HOMEMAGIC_SECRET_STORE=file",
+            )?;
+            Arc::new(
+                FileSecretStore::open(secret_vault, key_file)
+                    .await
+                    .context("failed to open encrypted secret vault")?,
+            )
+        }
+    };
+    let mut password = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut password)
+        .context("failed to read Shelly password from stdin")?;
+    while matches!(password.last(), Some(b'\n' | b'\r')) {
+        password.pop();
+    }
+    if password.is_empty() {
+        anyhow::bail!("Shelly password from stdin must not be empty");
+    }
+    secret_store
+        .put(&reference, SecretValue::new(password))
+        .await
+        .context("failed to store Shelly credential")?;
+    if existing_reference.is_none() {
+        integration.credential_ref = Some(reference.clone());
+        if let Err(error) = repository
+            .apply_foundation(FoundationWrite {
+                integrations: vec![integration],
+                ..FoundationWrite::default()
+            })
+            .await
+        {
+            let _ = secret_store.delete(&reference).await;
+            return Err(error).context("failed to attach Shelly credential reference");
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "status": "configured",
+            "integration": "shelly",
+            "backend": secret_store.backend()
+        }))?
+    );
+    Ok(())
 }
 
 async fn scan(discovery_seconds: u64, summary: bool) -> Result<()> {

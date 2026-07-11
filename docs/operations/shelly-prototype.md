@@ -1,65 +1,115 @@
-# Shelly Discovery Prototype
+# HomeMagic Device Foundation Operations
 
-## What it proves
+## Supported hosts
 
-The prototype exercises the first complete HomeMagic path:
+- macOS on Apple Silicon;
+- Linux on x86_64;
+- Rust 1.85 or newer for source builds.
 
-1. discover a local manufacturer device;
-2. read identity, configuration, and current status;
-3. separate stable identity from the device's display name;
-4. project vendor components into normalized capabilities;
-5. store current snapshots in the application registry;
-6. return them through a HomeMagic-owned RPC method.
+The host and Shelly Gen2+ devices must share an mDNS-reachable network. macOS
+may request Local Network permission. The runtime is read-only through EPIC-001.
 
-The implementation never sends a state-changing Shelly method.
+## Database and migrations
 
-## Requirements
-
-- Rust 1.85 or newer;
-- macOS Apple Silicon or Linux x86_64;
-- the host and Shelly devices on an mDNS-reachable local network;
-- unauthenticated Shelly Gen2+ devices for full status in this first version.
-
-On macOS, the process may need Local Network permission. HomeMagic first tries a
-pure-Rust mDNS implementation. If that returns no services, the macOS adapter uses
-`/usr/bin/dns-sd -Z` to read services through the system mDNSResponder and then
-continues with Rust HTTP RPC and projection. Linux uses the pure-Rust path.
-
-## One-shot scan
+The default database is `homemagic.sqlite3` relative to the process working
+directory. Production deployments should set an absolute path:
 
 ```sh
-cargo run --locked -- scan --summary
+export HOMEMAGIC_DATABASE=/var/lib/homemagic/homemagic.sqlite3
 ```
 
-The full scan contains local device metadata and current state. Treat its output
-as private household data:
+HomeMagic enables foreign keys, WAL mode, and a bounded busy timeout whenever it
+opens the database. Forward-only migrations run before the API starts. A schema
+newer than the binary or a changed historical migration checksum stops startup;
+the database is not silently rewritten.
+
+`system.health` and `GET /health` expose the schema version, integrity result,
+WAL state, and retained event cursor bounds.
+
+## Backup and restore
+
+Create a consistent online backup. The destination is validated before it is
+atomically replaced:
 
 ```sh
-cargo run --locked -- scan
+cargo run --locked -- backup \
+  --database /var/lib/homemagic/homemagic.sqlite3 \
+  /secure-backups/homemagic.sqlite3
 ```
 
-The default discovery window is four seconds. It can be changed when multicast
-responses are slow:
+Restore into an inactive path. The source remains unchanged; the copy is
+migrated, integrity-checked, and atomically installed:
 
 ```sh
-cargo run --locked -- scan --discovery-seconds 8 --summary
+cargo run --locked -- restore \
+  /secure-backups/homemagic.sqlite3 \
+  /var/lib/homemagic/homemagic-restored.sqlite3
 ```
 
-Discovery is best effort. Sleeping, offline, filtered, or slow devices may not be
-present in every bounded scan. Repeating a scan can therefore produce a different
-count without indicating identity loss.
+Stop the daemon, retain the old database, then point `HOMEMAGIC_DATABASE` at the
+restored file and verify `system.health` before removing the old copy. Never copy
+only the live SQLite main file while the daemon is running; use `backup` so WAL
+state is included consistently.
 
-## Server mode
+## Credential provisioning and recovery
+
+Shelly uses the fixed digest username `admin`; HomeMagic stores only the password
+in a secret backend. The database contains an opaque `SecretRef`, never plaintext.
+The provisioning command reads the password only from stdin.
+
+### macOS Keychain or Linux Secret Service
+
+The platform backend is the default:
+
+```sh
+read -rsp 'Shelly password: ' SHELLY_PASSWORD
+printf '%s' "$SHELLY_PASSWORD" | cargo run --locked -- credential-set-shelly \
+  --database /var/lib/homemagic/homemagic.sqlite3 \
+  --secret-store platform
+unset SHELLY_PASSWORD
+```
+
+The shell variable is not exported. A local secret manager can instead pipe its
+value directly to the command. Do not pass the password as a command-line
+argument or environment variable. On
+macOS, the item is stored in Keychain. On desktop Linux, it uses Secret Service.
+Re-run the command to rotate or repair a rejected credential.
+
+### Explicit encrypted-file mode
+
+Headless Linux without Secret Service must opt into the encrypted file vault.
+Create one owner-only 32-byte master key and keep it separate from the vault and
+database backups:
+
+```sh
+umask 077
+openssl rand -out /etc/homemagic/master.key 32
+```
+
+```sh
+read -rsp 'Shelly password: ' SHELLY_PASSWORD
+printf '%s' "$SHELLY_PASSWORD" | cargo run --locked -- credential-set-shelly \
+  --database /var/lib/homemagic/homemagic.sqlite3 \
+  --secret-store file \
+  --master-key-file /etc/homemagic/master.key \
+  --secret-vault /var/lib/homemagic/secrets
+unset SHELLY_PASSWORD
+```
+
+Start `serve` with the same backend, key, and vault options. Losing the master key
+makes the vault unrecoverable; restore the key from its separate protected backup
+or provision the Shelly password again into a new vault.
+
+## Server and RPC diagnostics
 
 ```sh
 RUST_LOG=info cargo run --locked -- serve
 ```
 
-The daemon performs one refresh before listening. It still starts if the refresh
-fails, allowing `devices.refresh` to retry. The default bind address is loopback
-only. Keep it that way until authentication and authorization are implemented.
-
-Useful calls:
+The default bind address is loopback only. Keep it that way until API
+authentication ships in EPIC-002. The daemon loads durable state before network
+discovery, then runs periodic reconciliation, freshness evaluation, managed
+WebSocket sessions, and bounded recovery.
 
 ```sh
 curl -s http://127.0.0.1:8787/health
@@ -70,41 +120,55 @@ curl -s http://127.0.0.1:8787/rpc \
 
 curl -s http://127.0.0.1:8787/rpc \
   -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"devices.refresh","params":{}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"repairs.list","params":{}}'
 ```
 
-Stop the daemon with `Ctrl-C`.
+See [the JSON-RPC contract](../api/json-rpc.md) for filters, device details,
+metadata operations, repairs, and cursor-based event subscriptions.
 
-## Current projections
+## Redacted hardware smoke test
 
-| Shelly component | HomeMagic capabilities |
-| --- | --- |
-| `switch:<id>` | on/off, power, energy |
-| `light:<id>` | on/off, level, power/energy when reported |
-| `cover:<id>` | position/motion, power, energy |
-| device | availability, diagnostics |
+The command reads device identity, configuration, and status but sends no
+state-changing RPC. It omits device/native IDs, addresses, aliases, spaces, and
+vendor payloads.
 
-Unrecognized component data remains in the namespaced `shelly.status` vendor
-payload so protocol evidence is not discarded while the common vocabulary is
-still small.
+```sh
+cargo run --locked -- hardware-smoke \
+  --discovery-seconds 8 \
+  --output docs/evidence/hardware/YYYY-MM-DD-macos-arm64-shelly.json
+```
 
-## Known limitations
+The committed 2026-07-11 macOS ARM report observed 43 devices on an `aarch64`
+host, all with firmware `1.7.5`, including:
 
-- read-only;
-- no Shelly authentication;
-- no Gen1/CoIoT support;
-- no persistent WebSocket subscription;
-- in-memory registry only;
-- no stale-device removal within a running process;
-- no API authentication or authorization;
-- no automatic periodic refresh;
-- device counts can vary with the bounded mDNS window.
+| Coverage | Observed model | Normalized evidence |
+| --- | --- | --- |
+| switch | `S3SW-001P8EU` | `on_off.v1`, power, energy |
+| dimmer | `S3DM-0A101WWL` | `on_off.v1`, `level.v1`, power, energy |
+| cover | `S3SW-002P16EU`, `SNSW-102P16EU` | `position.v1`, power, energy |
 
-## Validation
+Evidence: [redacted macOS ARM report](../evidence/hardware/2026-07-11-macos-arm64-shelly.json)
+and [report schema](hardware-smoke-report.md). This is read-path compatibility
+evidence, not physical command or safety validation.
+
+## Validation and secret scan
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
+cargo test -p homemagic-storage --test migration_fixtures --locked
+./scripts/scan-secrets.sh
 ```
 
+Linux x86_64 CI is configured to run all five gates after installing the native
+Secret Service build dependencies. Its live result is tracked separately from
+the locally verified macOS ARM report and quality gate.
+
+## Remaining limitations
+
+- no API authentication or authorization before EPIC-002;
+- no state-changing commands before EPIC-002;
+- no Shelly Gen1/CoIoT adapter;
+- no cloud relay or remote access;
+- event history is operational, not analytical time-series storage.

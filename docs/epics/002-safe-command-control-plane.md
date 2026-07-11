@@ -29,6 +29,27 @@ comfort actions.
 - read-after-write confirmation and mismatch handling;
 - dry-run support and operational diagnostics.
 
+## Finalized EPIC-001 contracts
+
+EPIC-002 builds on these accepted boundaries and must extend them without a
+parallel command bypass:
+
+- `FoundationRepository` owns atomic current-state, repair, and immutable-event
+  commits plus backend-neutral health and cursor reads;
+- durable events receive SQLite cursors before `DomainEventSink` fan-out;
+- `BroadcastDomainEventSink` is a bounded wake-up mechanism, while cursor-ordered
+  storage remains the source of truth for replay and recovery;
+- `SecretStore`, zeroizing `SecretValue`, and opaque `SecretRef` are the only
+  credential boundary; command records may contain references but never secrets;
+- `DeviceId`, `EndpointId`, and versioned `CapabilityDescriptor` address command
+  targets independently from names, aliases, spaces, or adapter-native payloads;
+- JSON-RPC application methods and future MCP tools call the same application
+  services; adapter methods are not public transport APIs.
+
+Command/audit persistence will use forward-only SQLite migrations and its own
+retention policy without weakening the 30-day/250,000-row device event contract
+from ADR-0009.
+
 ## Non-goals
 
 - automation triggers and scheduling;
@@ -157,3 +178,5 @@ comfort actions.
 ## Progress log
 
 - 2026-07-11: Epic created; blocked on EPIC-001 contracts.
+- 2026-07-11: Repository, cursor-event, credential, identity, and transport
+  contracts finalized by EPIC-001 and recorded above.
