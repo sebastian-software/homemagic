@@ -1,0 +1,16 @@
+{
+  "src": "shellyplus1-aabbccddeeff",
+  "dst": "homemagic_fixture",
+  "method": "NotifyEvent",
+  "params": {
+    "ts": 1710000002.0,
+    "events": [
+      {
+        "component": "input:0",
+        "id": 0,
+        "event": "single_push",
+        "ts": 1710000002.0
+      }
+    ]
+  }
+}

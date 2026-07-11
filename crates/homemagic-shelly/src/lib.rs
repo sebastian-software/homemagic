@@ -4,6 +4,12 @@
 //! public device information and current status through Shelly HTTP RPC.
 
 mod auth;
+mod notification;
+
+pub use notification::{
+    EventDeduplicator, NotificationError, NotificationFrame, ShellyEvent, StatusApply, StatusCache,
+    StatusNotification, parse_notification,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};

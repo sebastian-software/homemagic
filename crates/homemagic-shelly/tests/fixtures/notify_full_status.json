@@ -1,0 +1,15 @@
+{
+  "src": "shellyplus1-aabbccddeeff",
+  "dst": "homemagic_fixture",
+  "method": "NotifyFullStatus",
+  "params": {
+    "ts": 1710000000.0,
+    "switch:0": {
+      "id": 0,
+      "output": false,
+      "apower": 12.5,
+      "temperature": { "tC": 41.2 }
+    },
+    "wifi": { "status": "got ip", "rssi": -55 }
+  }
+}

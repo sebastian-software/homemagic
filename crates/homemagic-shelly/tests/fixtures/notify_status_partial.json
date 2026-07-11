@@ -1,0 +1,12 @@
+{
+  "src": "shellyplus1-aabbccddeeff",
+  "dst": "homemagic_fixture",
+  "method": "NotifyStatus",
+  "params": {
+    "ts": 1710000001.0,
+    "switch:0": {
+      "output": true,
+      "temperature": null
+    }
+  }
+}
