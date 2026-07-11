@@ -594,6 +594,26 @@ fn create_occurrence(
     transaction: &Transaction<'_>,
     occurrence: &AutomationOccurrence,
 ) -> Result<(), StorageError> {
+    let existing: Option<AutomationOccurrence> = load_optional_payload(
+        transaction,
+        "SELECT payload_json FROM automation_occurrences WHERE id = ?1",
+        &occurrence.id.to_string(),
+    )?;
+    if let Some(existing) = existing {
+        if existing.automation_id == occurrence.automation_id
+            && existing.version == occurrence.version
+            && existing.occurred_at == occurrence.occurred_at
+            && existing.window_ends_at == occurrence.window_ends_at
+            && existing.event_cursor == occurrence.event_cursor
+            && existing.correlation_id == occurrence.correlation_id
+            && existing.causation_event_id == occurrence.causation_event_id
+        {
+            return Ok(());
+        }
+        return Err(StorageError::InvalidAutomation(
+            "stable occurrence identity payload conflict",
+        ));
+    }
     insert_idempotent(
         transaction,
         "automation_occurrences",

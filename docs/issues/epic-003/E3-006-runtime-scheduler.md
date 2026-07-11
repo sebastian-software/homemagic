@@ -38,3 +38,7 @@ updated: 2026-07-11
   derivation plus bounded active-version and direct run/timer recovery queries.
   This prevents restart from inventing duplicate durable work before the step
   coordinator runs. See [Runtime Recovery Keys](../../architecture/automation-runtime-recovery.md).
+- 2026-07-11: Added active-only IANA schedule materialization, deterministic
+  occurrence recovery, permanent missed/skipped transitions, bounded run-mode
+  admission, run-intent-before-interpretation, and expired-timer readiness. An
+  SQLite-backed repeated-window test proves restart does not duplicate a run.

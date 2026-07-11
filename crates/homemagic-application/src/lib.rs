@@ -3,6 +3,7 @@
 mod authentication;
 mod automation_compiler;
 mod automation_repository;
+mod automation_scheduler;
 mod automation_simulator;
 mod command_service;
 mod memory;
@@ -34,6 +35,9 @@ pub use automation_repository::{
     ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
     AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
     AutomationSimulationEvidence, AutomationValidationEvidence, StoredAutomationVersion,
+};
+pub use automation_scheduler::{
+    AutomationScheduler, AutomationSchedulerError, AutomationSchedulerTick,
 };
 pub use automation_simulator::{
     AutomationCommandEvaluationPort, AutomationImmutableStatePort, AutomationSchedulerPort,

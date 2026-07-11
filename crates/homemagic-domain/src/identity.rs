@@ -12,6 +12,7 @@ const AUTOMATION_OCCURRENCE_NAMESPACE: Uuid =
     Uuid::from_u128(0x0797_c134_2a95_5872_9f84_ef69_0fb6_b8aa);
 const AUTOMATION_RUN_NAMESPACE: Uuid = Uuid::from_u128(0x4956_eaca_1fa9_597d_9219_77cb_d73e_eaf5);
 const AUTOMATION_TIMER_NAMESPACE: Uuid = Uuid::from_u128(0x6a52_b568_0174_5c08_9f45_b9c0_ee6d_8bc5);
+const CORRELATION_NAMESPACE: Uuid = Uuid::from_u128(0xb5b5_5d91_a4a0_5411_afb2_9ec2_d254_6032);
 const LEGACY_INSTALLATION: Uuid = Uuid::from_u128(0xc776_218d_d377_5a5e_b6a7_9384_dc1c_da37);
 
 /// Stable opaque identifier for a `HomeMagic` installation.
@@ -404,6 +405,12 @@ impl CorrelationId {
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+
+    /// Derives a deterministic correlation identity for durable work recovery.
+    #[must_use]
+    pub fn from_key(key: &str) -> Self {
+        Self(Uuid::new_v5(&CORRELATION_NAMESPACE, key.as_bytes()))
     }
 }
 

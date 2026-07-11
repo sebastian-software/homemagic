@@ -1,12 +1,13 @@
 //! `SQLite` contracts for durable automation governance and restart work.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
     AutomationActivation, AutomationCompiler, AutomationDraft, AutomationRepository,
-    AutomationRetention, AutomationSimulationEvidence, AutomationValidationEvidence, BoxError,
-    FoundationSnapshot, StoredAutomationVersion,
+    AutomationRetention, AutomationScheduler, AutomationSimulationEvidence,
+    AutomationValidationEvidence, BoxError, Clock, FoundationSnapshot, StoredAutomationVersion,
 };
 use homemagic_domain::{
     ActorId, AutomationApprovalId, AutomationApprovalRecord, AutomationApprovalRequirement,
@@ -295,6 +296,70 @@ async fn explicit_activation_should_require_approval_for_exact_hashes() -> TestR
         .await?;
     assert_eq!(active.active_version, Some(stored.document.version));
     Ok(())
+}
+
+#[tokio::test]
+async fn scheduler_should_materialize_idempotent_runs_and_never_replay_missed() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("scheduler.sqlite3"),
+    )?);
+    let stored = stored_version();
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let due = Utc
+        .with_ymd_and_hms(2026, 7, 11, 16, 0, 30)
+        .single()
+        .unwrap_or_else(|| panic!("due time"));
+    let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(due)));
+    let from = due - TimeDelta::minutes(2);
+    let through = due - TimeDelta::seconds(30);
+    assert_eq!(repository.active_automation_versions(10).await?.len(), 1);
+    let AutomationTrigger::Schedule { schedule } = &stored.document.triggers[0] else {
+        panic!("schedule fixture");
+    };
+    assert_eq!(
+        homemagic_application::AutomationSimulator::schedule_occurrences(schedule, from, through)?
+            .len(),
+        1
+    );
+
+    let first = scheduler.tick(from, through).await?;
+    let second = scheduler.tick(from, through).await?;
+    assert_eq!(first.accepted, 1);
+    assert_eq!(first.runs, 1);
+    assert_eq!(second.accepted, 0);
+    assert_eq!(second.runs, 1);
+    assert_eq!(
+        repository.recoverable_automation_work(10).await?.runs.len(),
+        1
+    );
+
+    let next_day = due + TimeDelta::days(1) + TimeDelta::minutes(2);
+    let missed_scheduler =
+        AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(next_day)));
+    let missed = missed_scheduler
+        .tick(
+            next_day - TimeDelta::minutes(4),
+            next_day - TimeDelta::minutes(2),
+        )
+        .await?;
+    assert_eq!(missed.missed_skipped, 1);
+    assert_eq!(
+        repository.recoverable_automation_work(10).await?.runs.len(),
+        1
+    );
+    Ok(())
+}
+
+struct FixedClock(chrono::DateTime<Utc>);
+
+impl Clock for FixedClock {
+    fn now(&self) -> chrono::DateTime<Utc> {
+        self.0
+    }
 }
 
 fn stored_version() -> StoredAutomationVersion {
