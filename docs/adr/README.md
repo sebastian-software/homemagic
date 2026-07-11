@@ -25,3 +25,7 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0010: Own one managed session per active device](0010-managed-device-sessions-and-notification-gaps.md)
 - [ADR-0011: Bound runtime scheduling and recovery loops](0011-bounded-runtime-scheduling-and-recovery.md)
 - [ADR-0012: Stream durable events over JSON-RPC WebSockets](0012-json-rpc-websocket-event-subscriptions.md)
+- [ADR-0013: Authenticate RPC clients as durable actors](0013-authenticate-rpc-clients-as-durable-actors.md)
+- [ADR-0014: Persist idempotent command lifecycles before dispatch](0014-persist-idempotent-command-lifecycles.md)
+- [ADR-0015: Evaluate a default-deny risk policy before dispatch](0015-evaluate-default-deny-risk-policy.md)
+- [ADR-0016: Keep JSON-RPC as the command transport](0016-keep-json-rpc-as-command-transport.md)

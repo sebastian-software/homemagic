@@ -1,7 +1,7 @@
 # EPIC-002: Safe Command Control Plane
 
 - Milestone: M2
-- Status: Planned
+- Status: In progress
 - Depends on: EPIC-001
 - Unlocks: EPIC-003 and full command support in EPIC-004
 
@@ -61,12 +61,16 @@ from ADR-0009.
 
 ## Required decisions
 
-- [ ] E2.D1: Add an ADR for API authentication and actor identity.
-- [ ] E2.D2: Add an ADR for command durability, idempotency lifetime, and outcome
+- [x] E2.D1: Add an ADR for API authentication and actor identity. Evidence:
+  [ADR-0013](../adr/0013-authenticate-rpc-clients-as-durable-actors.md).
+- [x] E2.D2: Add an ADR for command durability, idempotency lifetime, and outcome
   retention.
-- [ ] E2.D3: Add an ADR for policy evaluation and risk-class defaults.
-- [ ] E2.D4: Decide whether the stable binary transport remains JSON-RPC or gains
+  Evidence: [ADR-0014](../adr/0014-persist-idempotent-command-lifecycles.md).
+- [x] E2.D3: Add an ADR for policy evaluation and risk-class defaults. Evidence:
+  [ADR-0015](../adr/0015-evaluate-default-deny-risk-policy.md).
+- [x] E2.D4: Decide whether the stable binary transport remains JSON-RPC or gains
   a Protobuf/gRPC transport while preserving application semantics.
+  Evidence: [ADR-0016](../adr/0016-keep-json-rpc-as-command-transport.md).
 
 ## Workstream E2.1: Command domain model
 
@@ -180,3 +184,5 @@ from ADR-0009.
 - 2026-07-11: Epic created; blocked on EPIC-001 contracts.
 - 2026-07-11: Repository, cursor-event, credential, identity, and transport
   contracts finalized by EPIC-001 and recorded above.
+- 2026-07-11: Accepted command authentication, durability, policy, and transport
+  ADRs and created the dependency-ordered EPIC-002 issue set.
