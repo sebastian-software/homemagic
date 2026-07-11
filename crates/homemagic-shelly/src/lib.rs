@@ -5,11 +5,13 @@
 
 mod auth;
 mod notification;
+mod session;
 
 pub use notification::{
     EventDeduplicator, NotificationError, NotificationFrame, ShellyEvent, StatusApply, StatusCache,
     StatusNotification, parse_notification,
 };
+pub use session::{SessionRunner, ShellySessionSupervisor};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};
