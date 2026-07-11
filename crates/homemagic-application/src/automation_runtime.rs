@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    AutomationPlanFailurePolicy, AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRun,
+    AutomationCommandAttempt, AutomationCommandAttemptPhase, AutomationPlanFailurePolicy,
+    AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRetryPolicy, AutomationRun,
     AutomationRunContinuation, AutomationRunContinuationKind, AutomationRunId, AutomationRunState,
     AutomationTimer, AutomationTimerId, AutomationTimerState, AutomationTraceId,
-    AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandState, IdempotencyKey,
-    ResolvedAutomationCondition, ResolvedAutomationTarget,
+    AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandAggregate, CommandId,
+    CommandState, IdempotencyKey, ResolvedAutomationCondition, ResolvedAutomationTarget,
 };
 use thiserror::Error;
 
@@ -77,6 +78,22 @@ pub struct AutomationRuntimeCommandDependencies {
     pub repository: Arc<dyn CommandRepository>,
     /// The single authorized physical-command application boundary.
     pub service: CommandService,
+}
+
+struct CommandNode<'a> {
+    node_id: AutomationPlanNodeId,
+    targets: &'a [ResolvedAutomationTarget],
+    payload: &'a homemagic_domain::CommandPayload,
+    retry: &'a AutomationRetryPolicy,
+    on_failure: &'a AutomationPlanFailurePolicy,
+    following: Option<AutomationPlanNodeId>,
+    maximum_run_duration_ms: u64,
+}
+
+struct CommandRetryPlan {
+    target_indices: Vec<u16>,
+    command_ids: Vec<CommandId>,
+    ready_at: DateTime<Utc>,
 }
 
 /// Durable single-step automation interpreter.
@@ -286,18 +303,22 @@ impl AutomationRuntime {
             AutomationPlanNodeKind::Command {
                 targets,
                 payload,
+                retry,
                 on_failure,
                 next,
                 ..
             } => {
                 self.step_command(
                     run,
-                    node_id,
-                    targets,
-                    payload,
-                    on_failure,
-                    *next,
-                    version.plan.budget.maximum_run_duration_ms,
+                    CommandNode {
+                        node_id,
+                        targets,
+                        payload,
+                        retry,
+                        on_failure,
+                        following: *next,
+                        maximum_run_duration_ms: version.plan.budget.maximum_run_duration_ms,
+                    },
                     sequence,
                 )
                 .await
@@ -588,49 +609,77 @@ impl AutomationRuntime {
         Ok(AutomationRuntimeStep::Advanced)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "all compiled command-node contracts remain explicit at the governed boundary"
-    )]
     async fn step_command(
         &self,
         run: AutomationRun,
-        node_id: AutomationPlanNodeId,
-        targets: &[ResolvedAutomationTarget],
-        payload: &homemagic_domain::CommandPayload,
-        on_failure: &AutomationPlanFailurePolicy,
-        following: Option<AutomationPlanNodeId>,
-        maximum_run_duration_ms: u64,
+        node: CommandNode<'_>,
         sequence: u64,
     ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        if run
+            .command_attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.node_id != node.node_id)
+        {
+            return Err(AutomationRuntimeError::InvalidPlan);
+        }
+        match run.command_attempt.as_ref().map(|attempt| attempt.phase) {
+            Some(AutomationCommandAttemptPhase::Backoff) => {
+                return self.resume_command_backoff(run, &node, sequence).await;
+            }
+            Some(AutomationCommandAttemptPhase::AwaitingOutcome) => {
+                let commands = self.load_attempt_commands(&run).await?;
+                if commands.iter().any(|command| !command.state.is_terminal()) {
+                    return Ok(AutomationRuntimeStep::Waiting);
+                }
+                let attempt = run
+                    .command_attempt
+                    .as_ref()
+                    .ok_or(AutomationRuntimeError::InvalidPlan)?
+                    .clone();
+                return self
+                    .checkpoint_command_result(
+                        run,
+                        &node,
+                        sequence,
+                        attempt.attempt,
+                        attempt.target_indices,
+                        commands,
+                        false,
+                    )
+                    .await;
+            }
+            Some(AutomationCommandAttemptPhase::Dispatch) | None => {}
+        }
+        self.dispatch_command_attempt(run, &node, sequence).await
+    }
+
+    async fn dispatch_command_attempt(
+        &self,
+        run: AutomationRun,
+        node: &CommandNode<'_>,
+        sequence: u64,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let (attempt, target_indices) = match &run.command_attempt {
+            Some(state) if state.phase == AutomationCommandAttemptPhase::Dispatch => {
+                (state.attempt, state.target_indices.clone())
+            }
+            None => (
+                0,
+                (0..node.targets.len())
+                    .map(|index| {
+                        u16::try_from(index).map_err(|_| AutomationRuntimeError::InvalidPlan)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Some(_) => return Err(AutomationRuntimeError::InvalidPlan),
+        };
+        if target_indices.is_empty() {
+            return Err(AutomationRuntimeError::InvalidPlan);
+        }
         let commands = self
             .commands
             .as_ref()
             .ok_or(AutomationRuntimeError::CommandPathUnavailable)?;
-        if run.state == AutomationRunState::Waiting && run.command_ids.len() >= targets.len() {
-            let current = &run.command_ids[run.command_ids.len() - targets.len()..];
-            let mut states = Vec::with_capacity(current.len());
-            for command_id in current {
-                let command = commands
-                    .service
-                    .get(&run.actor_id, command_id)
-                    .await
-                    .map_err(AutomationRuntimeError::Command)?
-                    .ok_or(AutomationRuntimeError::InvalidPlan)?;
-                states.push(command.state);
-            }
-            return self
-                .finish_command_states(
-                    run,
-                    node_id,
-                    on_failure,
-                    following,
-                    sequence,
-                    &states,
-                    Vec::new(),
-                )
-                .await;
-        }
         let actor = commands
             .repository
             .actor_security(&run.actor_id)
@@ -638,18 +687,23 @@ impl AutomationRuntime {
             .map_err(AutomationRuntimeError::Repository)?
             .map(|security| security.actor)
             .ok_or(AutomationRuntimeError::CommandActorUnavailable)?;
-        let milliseconds = i64::try_from(maximum_run_duration_ms)
+        let milliseconds = i64::try_from(node.maximum_run_duration_ms)
             .map_err(|_| AutomationRuntimeError::DurationOverflow)?;
         let deadline = run
             .created_at
             .checked_add_signed(TimeDelta::milliseconds(milliseconds))
             .ok_or(AutomationRuntimeError::DurationOverflow)?;
-        let mut command_ids = Vec::with_capacity(targets.len());
-        let mut states = Vec::with_capacity(targets.len());
-        for (index, target) in targets.iter().enumerate() {
-            let idempotency_key =
-                IdempotencyKey::new(format!("automation:{}:{}:{index}:0", run.id, node_id.0))
-                    .map_err(|_| AutomationRuntimeError::InvalidIdempotencyKey)?;
+        let mut results = Vec::with_capacity(target_indices.len());
+        for target_index in &target_indices {
+            let target = node
+                .targets
+                .get(usize::from(*target_index))
+                .ok_or(AutomationRuntimeError::InvalidPlan)?;
+            let idempotency_key = IdempotencyKey::new(format!(
+                "automation:{}:{}:{target_index}:{attempt}",
+                run.id, node.node_id.0
+            ))
+            .map_err(|_| AutomationRuntimeError::InvalidIdempotencyKey)?;
             let command = commands
                 .service
                 .execute(
@@ -657,7 +711,7 @@ impl AutomationRuntime {
                     CommandRequest {
                         device_id: target.device_id.clone(),
                         endpoint_id: target.endpoint_id.clone(),
-                        payload: payload.clone(),
+                        payload: node.payload.clone(),
                         idempotency_key,
                         deadline,
                         expected: None,
@@ -669,53 +723,113 @@ impl AutomationRuntime {
                 )
                 .await
                 .map_err(AutomationRuntimeError::Command)?;
-            command_ids.push(command.envelope.id);
-            states.push(command.state);
+            results.push(command);
         }
-        self.finish_command_states(
-            run,
-            node_id,
-            on_failure,
-            following,
-            sequence,
-            &states,
-            command_ids,
-        )
-        .await
+        self.checkpoint_command_result(run, node, sequence, attempt, target_indices, results, true)
+            .await
+    }
+
+    async fn load_attempt_commands(
+        &self,
+        run: &AutomationRun,
+    ) -> Result<Vec<CommandAggregate>, AutomationRuntimeError> {
+        let commands = self
+            .commands
+            .as_ref()
+            .ok_or(AutomationRuntimeError::CommandPathUnavailable)?;
+        let attempt = run
+            .command_attempt
+            .as_ref()
+            .ok_or(AutomationRuntimeError::InvalidPlan)?;
+        if attempt.command_ids.len() != attempt.target_indices.len() {
+            return Err(AutomationRuntimeError::InvalidPlan);
+        }
+        let mut results = Vec::with_capacity(attempt.command_ids.len());
+        for command_id in &attempt.command_ids {
+            results.push(
+                commands
+                    .service
+                    .get(&run.actor_id, command_id)
+                    .await
+                    .map_err(AutomationRuntimeError::Command)?
+                    .ok_or(AutomationRuntimeError::InvalidPlan)?,
+            );
+        }
+        Ok(results)
     }
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "the command checkpoint records the complete compiled failure decision"
+        reason = "the atomic attempt checkpoint retains all durable result coordinates"
     )]
-    async fn finish_command_states(
+    async fn checkpoint_command_result(
         &self,
         run: AutomationRun,
-        node_id: AutomationPlanNodeId,
-        on_failure: &AutomationPlanFailurePolicy,
-        following: Option<AutomationPlanNodeId>,
+        node: &CommandNode<'_>,
         sequence: u64,
-        states: &[CommandState],
-        command_ids: Vec<homemagic_domain::CommandId>,
+        attempt: u16,
+        target_indices: Vec<u16>,
+        commands: Vec<CommandAggregate>,
+        append_command_ids: bool,
     ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
-        let confirmed = states.iter().all(|state| *state == CommandState::Confirmed);
-        let terminal_failure = states
-            .iter()
-            .any(|state| state.is_terminal() && *state != CommandState::Confirmed);
-        if !confirmed && !terminal_failure && command_ids.is_empty() {
-            return Ok(AutomationRuntimeStep::Waiting);
+        if commands.len() != target_indices.len() {
+            return Err(AutomationRuntimeError::InvalidPlan);
         }
+        let states = commands
+            .iter()
+            .map(|command| command.state)
+            .collect::<Vec<_>>();
+        let command_ids = commands
+            .iter()
+            .map(|command| command.envelope.id.clone())
+            .collect::<Vec<_>>();
         let mut next = checkpoint(&run, self.clock.now());
-        next.command_ids.extend(command_ids);
-        let outcome = if confirmed {
+        if append_command_ids {
+            next.command_ids.extend(command_ids.iter().cloned());
+        }
+        let mut create_timers = Vec::new();
+        let outcome = if states.iter().all(|state| *state == CommandState::Confirmed) {
             next.state = AutomationRunState::Running;
-            next.node_id = following;
+            next.node_id = node.following;
+            next.command_attempt = None;
             AutomationRuntimeStep::Advanced
-        } else if terminal_failure {
-            apply_failure(&mut next, on_failure, following)
-        } else {
+        } else if states.iter().any(|state| !state.is_terminal()) {
             next.state = AutomationRunState::Waiting;
+            next.command_attempt = Some(AutomationCommandAttempt {
+                node_id: node.node_id,
+                attempt,
+                target_indices,
+                command_ids,
+                phase: AutomationCommandAttemptPhase::AwaitingOutcome,
+                retry_ready_at: None,
+            });
             AutomationRuntimeStep::Waiting
+        } else if let Some(retry) = retry_plan(attempt, &target_indices, &commands, node.retry)? {
+            let timer = AutomationTimer {
+                id: AutomationTimerId::from_key(
+                    &run.id,
+                    node.node_id.0,
+                    retry.ready_at.timestamp_millis(),
+                ),
+                run_id: run.id.clone(),
+                node_id: node.node_id,
+                ready_at: retry.ready_at,
+                state: AutomationTimerState::Pending,
+            };
+            next.state = AutomationRunState::Waiting;
+            next.command_attempt = Some(AutomationCommandAttempt {
+                node_id: node.node_id,
+                attempt,
+                target_indices: retry.target_indices,
+                command_ids: retry.command_ids,
+                phase: AutomationCommandAttemptPhase::Backoff,
+                retry_ready_at: Some(retry.ready_at),
+            });
+            create_timers.push(timer);
+            AutomationRuntimeStep::Waiting
+        } else {
+            next.command_attempt = None;
+            apply_failure(&mut next, node.on_failure, node.following)
         };
         let state = states
             .iter()
@@ -726,17 +840,67 @@ impl AutomationRuntime {
         let step = trace_step(
             &next,
             sequence,
-            Some(node_id),
+            Some(node.node_id),
             AutomationTraceKind::Command,
             details([
-                ("attempt", AutomationValue::Integer(0)),
+                ("attempt", AutomationValue::Integer(i64::from(attempt))),
                 ("state", AutomationValue::String(state)),
             ]),
             self.clock.now(),
         );
-        self.commit(next, run.revision, vec![step], vec![], vec![])
+        self.commit(next, run.revision, vec![step], create_timers, vec![])
             .await?;
         Ok(outcome)
+    }
+
+    async fn resume_command_backoff(
+        &self,
+        run: AutomationRun,
+        node: &CommandNode<'_>,
+        sequence: u64,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let attempt = run
+            .command_attempt
+            .as_ref()
+            .ok_or(AutomationRuntimeError::InvalidPlan)?;
+        let ready_at = attempt
+            .retry_ready_at
+            .ok_or(AutomationRuntimeError::InvalidPlan)?;
+        let timer_id =
+            AutomationTimerId::from_key(&run.id, node.node_id.0, ready_at.timestamp_millis());
+        let Some(mut timer) = self
+            .repository
+            .automation_timer(&timer_id)
+            .await
+            .map_err(AutomationRuntimeError::Repository)?
+        else {
+            return Err(AutomationRuntimeError::InvalidPlan);
+        };
+        if timer.state != AutomationTimerState::Ready {
+            return Ok(AutomationRuntimeStep::Waiting);
+        }
+        timer.state = AutomationTimerState::Consumed;
+        let mut next = checkpoint(&run, self.clock.now());
+        let state = next
+            .command_attempt
+            .as_mut()
+            .ok_or(AutomationRuntimeError::InvalidPlan)?;
+        state.attempt = state.attempt.saturating_add(1);
+        state.command_ids.clear();
+        state.phase = AutomationCommandAttemptPhase::Dispatch;
+        state.retry_ready_at = None;
+        next.state = AutomationRunState::Running;
+        let trace = trace_step(
+            &next,
+            sequence,
+            Some(node.node_id),
+            AutomationTraceKind::Timer,
+            details([("event", AutomationValue::String("retry_ready".to_owned()))]),
+            self.clock.now(),
+        );
+        self.commit(next, run.revision, vec![trace], vec![], vec![timer])
+            .await?;
+        Ok(AutomationRuntimeStep::Advanced)
     }
 
     async fn step_delay(
@@ -830,6 +994,51 @@ impl AutomationRuntime {
             .await
             .map_err(AutomationRuntimeError::Repository)
     }
+}
+
+fn retry_plan(
+    attempt: u16,
+    target_indices: &[u16],
+    commands: &[CommandAggregate],
+    policy: &AutomationRetryPolicy,
+) -> Result<Option<CommandRetryPlan>, AutomationRuntimeError> {
+    if attempt >= policy.maximum_retries || target_indices.len() != commands.len() {
+        return Ok(None);
+    }
+    let mut retry_targets = Vec::new();
+    let mut retry_commands = Vec::new();
+    let mut latest_failure = None;
+    for (target_index, command) in target_indices.iter().copied().zip(commands) {
+        if command.state == CommandState::Confirmed {
+            continue;
+        }
+        let Some(failure) = &command.failure else {
+            return Ok(None);
+        };
+        if !policy.retryable_command_errors.contains(&failure.code) {
+            return Ok(None);
+        }
+        retry_targets.push(target_index);
+        retry_commands.push(command.envelope.id.clone());
+        latest_failure = Some(
+            latest_failure.map_or(command.updated_at, |current: DateTime<Utc>| {
+                current.max(command.updated_at)
+            }),
+        );
+    }
+    let Some(latest_failure) = latest_failure else {
+        return Ok(None);
+    };
+    let milliseconds =
+        i64::try_from(policy.backoff_ms).map_err(|_| AutomationRuntimeError::DurationOverflow)?;
+    let ready_at = latest_failure
+        .checked_add_signed(TimeDelta::milliseconds(milliseconds))
+        .ok_or(AutomationRuntimeError::DurationOverflow)?;
+    Ok(Some(CommandRetryPlan {
+        target_indices: retry_targets,
+        command_ids: retry_commands,
+        ready_at,
+    }))
 }
 
 fn checkpoint(run: &AutomationRun, now: DateTime<Utc>) -> AutomationRun {
@@ -958,4 +1167,109 @@ fn command_state_name(state: CommandState) -> String {
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_else(|| "invalid".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+    use homemagic_domain::{
+        ActorId, CapabilityDescriptor, CommandEnvelope, CommandErrorCode, CommandFailure,
+        CommandPayload, CorrelationId, EndpointId, InstallationId, IntegrationId, OnOffCommand,
+        RiskClass,
+    };
+
+    use super::*;
+
+    #[test]
+    fn retry_plan_should_select_only_retryable_failed_targets() {
+        let at = Utc
+            .with_ymd_and_hms(2026, 7, 12, 12, 0, 0)
+            .single()
+            .unwrap_or_else(|| panic!("fixture instant"));
+        let confirmed = command(CommandState::Confirmed, None, at);
+        let failed = command(
+            CommandState::Failed,
+            Some(CommandErrorCode::TransportFailure),
+            at + TimeDelta::milliseconds(5),
+        );
+
+        let retry = retry_plan(
+            0,
+            &[0, 1],
+            &[confirmed, failed.clone()],
+            &AutomationRetryPolicy {
+                maximum_retries: 1,
+                backoff_ms: 10,
+                retryable_command_errors: vec![CommandErrorCode::TransportFailure],
+            },
+        )
+        .unwrap_or_else(|error| panic!("retry plan: {error}"))
+        .unwrap_or_else(|| panic!("eligible retry"));
+
+        assert_eq!(retry.target_indices, vec![1]);
+        assert_eq!(retry.command_ids, vec![failed.envelope.id]);
+        assert_eq!(retry.ready_at, at + TimeDelta::milliseconds(15));
+    }
+
+    #[test]
+    fn retry_plan_should_stop_after_declared_attempt_bound() {
+        let at = Utc
+            .with_ymd_and_hms(2026, 7, 12, 12, 0, 0)
+            .single()
+            .unwrap_or_else(|| panic!("fixture instant"));
+        let failed = command(
+            CommandState::Failed,
+            Some(CommandErrorCode::TransportFailure),
+            at,
+        );
+
+        let retry = retry_plan(
+            1,
+            &[0],
+            &[failed],
+            &AutomationRetryPolicy {
+                maximum_retries: 1,
+                backoff_ms: 10,
+                retryable_command_errors: vec![CommandErrorCode::TransportFailure],
+            },
+        )
+        .unwrap_or_else(|error| panic!("retry plan: {error}"));
+
+        assert!(retry.is_none());
+    }
+
+    fn command(
+        state: CommandState,
+        failure: Option<CommandErrorCode>,
+        at: DateTime<Utc>,
+    ) -> CommandAggregate {
+        let installation_id = InstallationId::new();
+        let integration_id = IntegrationId::from_native(&installation_id, "runtime-test", "local");
+        CommandAggregate {
+            envelope: CommandEnvelope {
+                id: CommandId::new(),
+                actor_id: ActorId::new(),
+                device_id: homemagic_domain::DeviceId::from_integration(&integration_id, "relay"),
+                endpoint_id: EndpointId::new("switch:0"),
+                capability: CapabilityDescriptor::new("on_off", 1, RiskClass::Comfort)
+                    .unwrap_or_else(|error| panic!("descriptor: {error}")),
+                payload: CommandPayload::OnOff(OnOffCommand::Set { on: true }),
+                idempotency_key: IdempotencyKey::new("runtime-retry-test")
+                    .unwrap_or_else(|error| panic!("idempotency key: {error}")),
+                deadline: at + TimeDelta::minutes(1),
+                expected: None,
+                dry_run: false,
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                received_at: at,
+            },
+            state,
+            version: 1,
+            policy: None,
+            acknowledgement: None,
+            confirmation: None,
+            failure: failure.map(|code| CommandFailure { code, detail: None }),
+            updated_at: at,
+        }
+    }
 }

@@ -231,6 +231,7 @@ impl AutomationScheduler {
                 node_id: Some(active.version.plan.entry),
                 variables,
                 command_ids: Vec::new(),
+                command_attempt: None,
                 continuations: Vec::new(),
                 correlation_id: occurrence.correlation_id.clone(),
                 causation_event_id: occurrence.causation_event_id.clone(),

@@ -1,6 +1,6 @@
 //! End-to-end contracts for the single application command path.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,25 +10,26 @@ use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
     ActorCredential, AutomationActivation, AutomationCompiler, AutomationRepository,
     AutomationRuntime, AutomationRuntimeCommandDependencies, AutomationRuntimeStep,
-    AutomationSimulationEvidence, AutomationValidationEvidence, BoxError, BroadcastDomainEventSink,
-    CanonicalRequestHash, Clock, CommandAuditSink, CommandConfirmation, CommandConfirmationOutcome,
-    CommandCreateOutcome, CommandDispatcher, CommandLimitConfig, CommandLimits, CommandRepository,
-    CommandRequest, CommandService, CommandServiceDependencies, DomainEventCommandAuditSink,
-    FoundationRepository, FoundationWrite, StoredAutomationVersion,
+    AutomationScheduler, AutomationSimulationEvidence, AutomationValidationEvidence, BoxError,
+    BroadcastDomainEventSink, CanonicalRequestHash, Clock, CommandAuditSink, CommandConfirmation,
+    CommandConfirmationOutcome, CommandCreateOutcome, CommandDispatcher, CommandLimitConfig,
+    CommandLimits, CommandRepository, CommandRequest, CommandService, CommandServiceDependencies,
+    DomainEventCommandAuditSink, FoundationRepository, FoundationWrite, StoredAutomationVersion,
 };
 use homemagic_domain::{
     Actor, ActorGrant, AdapterAcknowledgement, AuditId, AutomationAction,
-    AutomationDeviceReference, AutomationDocument, AutomationDocumentSchema,
-    AutomationFailurePolicy, AutomationId, AutomationOccurrence, AutomationOccurrenceId,
-    AutomationOccurrenceState, AutomationProvenance, AutomationResourceBudget,
-    AutomationRetryPolicy, AutomationRun, AutomationRunId, AutomationRunMode, AutomationRunState,
-    AutomationSchedule, AutomationSelfTriggerPolicy, AutomationTargetReference, AutomationTrigger,
-    AutomationVersion, AutomationVersionState, CapabilityDescriptor, CapabilitySnapshot,
-    CommandAction, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandFailure,
-    CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceRecord, DeviceSnapshot,
-    DomainEventKind, EndpointId, EndpointSnapshot, GrantId, GrantScope, IdempotencyKey,
-    Installation, InstallationId, IntegrationId, IntegrationInstance, LifecycleTrigger,
-    ObservedConfirmation, OnOffCommand, PolicyDecision, PolicyReason, RiskClass,
+    AutomationCommandAttemptPhase, AutomationDeviceReference, AutomationDocument,
+    AutomationDocumentSchema, AutomationExecutionPlan, AutomationFailurePolicy, AutomationId,
+    AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState, AutomationProvenance,
+    AutomationResourceBudget, AutomationRetryPolicy, AutomationRun, AutomationRunId,
+    AutomationRunMode, AutomationRunState, AutomationSchedule, AutomationSelfTriggerPolicy,
+    AutomationTargetReference, AutomationTrigger, AutomationVersion, AutomationVersionState,
+    CapabilityDescriptor, CapabilitySnapshot, CommandAction, CommandAggregate, CommandAuditRecord,
+    CommandEnvelope, CommandErrorCode, CommandFailure, CommandId, CommandPayload, CommandState,
+    CorrelationId, DeviceId, DeviceRecord, DeviceSnapshot, DomainEventKind, EndpointId,
+    EndpointSnapshot, GrantId, GrantScope, IdempotencyKey, Installation, InstallationId,
+    IntegrationId, IntegrationInstance, LifecycleTrigger, ObservedConfirmation, OnOffCommand,
+    PolicyDecision, PolicyReason, RiskClass,
 };
 use homemagic_storage::SqliteRepository;
 use tempfile::TempDir;
@@ -60,6 +61,7 @@ struct RecordingDispatcher {
     payloads: Mutex<Vec<CommandPayload>>,
     clock: Arc<FixedClock>,
     advance_to: Mutex<Option<DateTime<Utc>>>,
+    failures: Mutex<VecDeque<CommandErrorCode>>,
 }
 
 #[async_trait]
@@ -80,6 +82,14 @@ impl CommandDispatcher for RecordingDispatcher {
             .take()
         {
             self.clock.set(now);
+        }
+        if let Some(code) = self
+            .failures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front()
+        {
+            return Err(CommandFailure { code, detail: None });
         }
         Ok(AdapterAcknowledgement {
             acknowledged_at: self.clock.now(),
@@ -231,6 +241,7 @@ impl Fixture {
             payloads: Mutex::new(Vec::new()),
             clock: clock.clone(),
             advance_to: Mutex::new(None),
+            failures: Mutex::new(VecDeque::new()),
         });
         let audits = Arc::new(RecordingAudits::default());
         let service = CommandService::new(
@@ -271,6 +282,14 @@ impl Fixture {
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
         }
+    }
+
+    fn fail_next_dispatch(&self, code: CommandErrorCode) {
+        self.dispatcher
+            .failures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(code);
     }
 }
 
@@ -492,13 +511,14 @@ async fn recovery_should_dispatch_only_pre_dispatch_states() -> TestResult {
     Ok(())
 }
 
-#[tokio::test]
 #[expect(
     clippy::too_many_lines,
-    reason = "one end-to-end crash window must retain all durable IDs and exact request fields"
+    reason = "the automation fixture binds exact compiled evidence to every durable boundary"
 )]
-async fn automation_restart_window_should_reuse_command_without_redispatch() -> TestResult {
-    let fixture = Fixture::new(true).await?;
+async fn automation_runtime_fixture(
+    fixture: &Fixture,
+    retry: AutomationRetryPolicy,
+) -> TestResult<(AutomationExecutionPlan, AutomationRun, AutomationRuntime)> {
     let now = fixture.clock.now();
     let mut foundation = fixture.repository.load().await?;
     let mut enrolled = foundation
@@ -544,11 +564,7 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
                 capability: "on_off.v1".to_owned(),
             },
             payload: CommandPayload::OnOff(OnOffCommand::Set { on: true }),
-            retry: AutomationRetryPolicy {
-                maximum_retries: 0,
-                backoff_ms: 0,
-                retryable_command_errors: Vec::new(),
-            },
+            retry,
             on_failure: AutomationFailurePolicy::StopRun,
         }],
         run_mode: AutomationRunMode::Single,
@@ -557,28 +573,27 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
         created_at: now,
     };
     let plan = AutomationCompiler::compile(&document, &foundation)?;
-    let stored = StoredAutomationVersion {
-        document: document.clone(),
-        state: AutomationVersionState::Simulated,
-        validation: AutomationValidationEvidence {
-            document_hash: plan.document_hash.clone(),
-            plan_hash: plan.plan_hash.clone(),
-            registry_revision: plan.registry_revision,
-            validated_at: now,
-        },
-        simulation: Some(AutomationSimulationEvidence {
-            document_hash: plan.document_hash.clone(),
-            plan_hash: plan.plan_hash.clone(),
-            registry_revision: plan.registry_revision,
-            trace_hash: plan.plan_hash.clone(),
-            succeeded: true,
-            simulated_at: now,
-        }),
-        plan: plan.clone(),
-    };
     fixture
         .repository
-        .store_automation_version(stored.clone())
+        .store_automation_version(StoredAutomationVersion {
+            document: document.clone(),
+            state: AutomationVersionState::Simulated,
+            validation: AutomationValidationEvidence {
+                document_hash: plan.document_hash.clone(),
+                plan_hash: plan.plan_hash.clone(),
+                registry_revision: plan.registry_revision,
+                validated_at: now,
+            },
+            simulation: Some(AutomationSimulationEvidence {
+                document_hash: plan.document_hash.clone(),
+                plan_hash: plan.plan_hash.clone(),
+                registry_revision: plan.registry_revision,
+                trace_hash: plan.plan_hash.clone(),
+                succeeded: true,
+                simulated_at: now,
+            }),
+            plan: plan.clone(),
+        })
         .await?;
     fixture
         .repository
@@ -607,9 +622,8 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
         .repository
         .create_automation_occurrence(occurrence.clone())
         .await?;
-    let run_id = AutomationRunId::from_occurrence(&occurrence.id);
     let run = AutomationRun {
-        id: run_id.clone(),
+        id: AutomationRunId::from_occurrence(&occurrence.id),
         automation_id: document.id,
         version: document.version,
         occurrence_id: occurrence.id,
@@ -619,6 +633,7 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
         node_id: Some(plan.entry),
         variables: BTreeMap::new(),
         command_ids: Vec::new(),
+        command_attempt: None,
         continuations: Vec::new(),
         correlation_id: occurrence.correlation_id,
         causation_event_id: None,
@@ -638,6 +653,23 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
         repository: fixture.repository.clone(),
         service: fixture.service.clone(),
     });
+    Ok((plan, run, runtime))
+}
+
+#[tokio::test]
+async fn automation_restart_window_should_reuse_command_without_redispatch() -> TestResult {
+    let fixture = Fixture::new(true).await?;
+    let (plan, run, runtime) = automation_runtime_fixture(
+        &fixture,
+        AutomationRetryPolicy {
+            maximum_retries: 0,
+            backoff_ms: 0,
+            retryable_command_errors: Vec::new(),
+        },
+    )
+    .await?;
+    let now = fixture.clock.now();
+    let run_id = run.id.clone();
     assert_eq!(
         runtime.step(&run_id).await?,
         AutomationRuntimeStep::Advanced
@@ -683,6 +715,120 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
         .unwrap_or_else(|| panic!("completed automation run"));
     assert_eq!(completed.command_ids, vec![precommitted.envelope.id]);
     assert_eq!(completed.state, AutomationRunState::Completed);
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the retry contract asserts every durable phase around one restart boundary"
+)]
+async fn automation_retry_should_persist_backoff_before_second_dispatch() -> TestResult {
+    let fixture = Fixture::new(true).await?;
+    fixture.fail_next_dispatch(CommandErrorCode::TransportFailure);
+    let (_plan, run, runtime) = automation_runtime_fixture(
+        &fixture,
+        AutomationRetryPolicy {
+            maximum_retries: 1,
+            backoff_ms: 10,
+            retryable_command_errors: vec![CommandErrorCode::TransportFailure],
+        },
+    )
+    .await?;
+    assert_eq!(
+        runtime.step(&run.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(runtime.step(&run.id).await?, AutomationRuntimeStep::Waiting);
+    assert_eq!(fixture.dispatcher.calls.load(Ordering::SeqCst), 1);
+    let backing_off = fixture
+        .repository
+        .automation_run(&run.id)
+        .await?
+        .unwrap_or_else(|| panic!("backing-off run"));
+    let attempt = backing_off
+        .command_attempt
+        .as_ref()
+        .unwrap_or_else(|| panic!("durable command attempt"));
+    assert_eq!(attempt.phase, AutomationCommandAttemptPhase::Backoff);
+    assert_eq!(attempt.attempt, 0);
+    assert_eq!(attempt.target_indices, vec![0]);
+    let ready_at = attempt
+        .retry_ready_at
+        .unwrap_or_else(|| panic!("retry ready instant"));
+
+    fixture.clock.set(ready_at + TimeDelta::milliseconds(1));
+    let scheduler = AutomationScheduler::new(fixture.repository.clone(), fixture.clock.clone());
+    assert_eq!(
+        scheduler
+            .tick(fixture.clock.now(), fixture.clock.now())
+            .await?
+            .timers_ready,
+        1
+    );
+    let recovered = AutomationRuntime::new(
+        fixture.repository.clone(),
+        fixture.repository.clone(),
+        fixture.clock.clone(),
+    )
+    .with_commands(AutomationRuntimeCommandDependencies {
+        repository: fixture.repository.clone(),
+        service: fixture.service.clone(),
+    });
+    assert_eq!(
+        recovered.step(&run.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    let dispatch_ready = fixture
+        .repository
+        .automation_run(&run.id)
+        .await?
+        .unwrap_or_else(|| panic!("dispatch-ready run"));
+    let attempt = dispatch_ready
+        .command_attempt
+        .as_ref()
+        .unwrap_or_else(|| panic!("dispatch-ready attempt"));
+    assert_eq!(attempt.phase, AutomationCommandAttemptPhase::Dispatch);
+    assert_eq!(attempt.attempt, 1);
+    assert!(attempt.command_ids.is_empty());
+
+    assert_eq!(
+        recovered.step(&run.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(fixture.dispatcher.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        recovered.step(&run.id).await?,
+        AutomationRuntimeStep::Completed
+    );
+    assert_eq!(
+        recovered.step(&run.id).await?,
+        AutomationRuntimeStep::NoWork
+    );
+    let completed = fixture
+        .repository
+        .automation_run(&run.id)
+        .await?
+        .unwrap_or_else(|| panic!("completed retry run"));
+    assert_eq!(completed.state, AutomationRunState::Completed);
+    assert_eq!(completed.command_ids.len(), 2);
+    assert!(completed.command_attempt.is_none());
+    assert_eq!(
+        fixture
+            .repository
+            .command(&completed.command_ids[0])
+            .await?
+            .map(|command| command.state),
+        Some(CommandState::Failed)
+    );
+    assert_eq!(
+        fixture
+            .repository
+            .command(&completed.command_ids[1])
+            .await?
+            .map(|command| command.state),
+        Some(CommandState::Confirmed)
+    );
     Ok(())
 }
 

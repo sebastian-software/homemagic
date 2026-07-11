@@ -5,9 +5,9 @@ title: Execute active automation plans durably
 status: planned
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022]
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # E3-006: Runtime and Scheduler
@@ -66,3 +66,9 @@ updated: 2026-07-11
   nested parallel/race groups and group-local stop-branch handling. SQLite
   evidence proves both branches of a parallel group checkpoint independently,
   resume through durable timers, remove the frame, and complete once.
+- 2026-07-12: Accepted ADR-0022 and replaced trace/last-ID retry inference with
+  an explicit persisted command-attempt state. End-to-end evidence forces a
+  transport failure, checkpoints backoff, recreates the runtime, consumes the
+  timer, dispatches attempt one exactly once, and completes. Pure tests prove
+  partial multi-target retry selects only failed targets and stops at the
+  compiled attempt bound.

@@ -104,6 +104,11 @@ creates another command. The automation then atomically checkpoints the command
 ID, command trace, and next run revision. Non-terminal command states put the
 run into waiting and are read back by durable command ID.
 
-This slice implements confirmed, waiting, and compiled terminal failure-policy
-outcomes for attempt zero. Retry/backoff remains disabled until attempt and
-backoff continuation are themselves durable.
+ADR-0022 makes retry state explicit in the run aggregate. Each attempt records
+its original target indices, durable command IDs, phase, and retry-ready
+instant. A retry timer is derived from the latest durable failed-command update
+plus compiled backoff, then committed atomically with the attempt. Timer
+consumption checkpoints the incremented dispatch-ready attempt before calling
+CommandService. Only targets with explicitly retryable terminal failure codes
+are selected; already confirmed targets are never dispatched again. The
+compiled maximum retry count is therefore independent of trace retention.

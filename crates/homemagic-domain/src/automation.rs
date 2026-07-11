@@ -1388,6 +1388,8 @@ pub struct AutomationRun {
     pub variables: BTreeMap<String, AutomationValue>,
     /// Commands submitted by this run in durable order.
     pub command_ids: Vec<CommandId>,
+    /// Current restart-safe command attempt, when a command node is active.
+    pub command_attempt: Option<AutomationCommandAttempt>,
     /// Nested group continuations required to resume branch execution.
     pub continuations: Vec<AutomationRunContinuation>,
     /// Operation correlation identity.
@@ -1398,6 +1400,35 @@ pub struct AutomationRun {
     pub created_at: DateTime<Utc>,
     /// Latest transition time.
     pub updated_at: DateTime<Utc>,
+}
+
+/// Durable phase of one command-node attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationCommandAttemptPhase {
+    /// The command service has returned non-terminal command IDs.
+    AwaitingOutcome,
+    /// A deterministic retry timer must become ready.
+    Backoff,
+    /// The selected targets are ready for the numbered attempt.
+    Dispatch,
+}
+
+/// Restart-safe state for one command-node attempt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationCommandAttempt {
+    /// Owning compiled command node.
+    pub node_id: AutomationPlanNodeId,
+    /// Zero-based attempt number.
+    pub attempt: u16,
+    /// Original resolved target indices included in this attempt.
+    pub target_indices: Vec<u16>,
+    /// Durable commands corresponding to target indices, in the same order.
+    pub command_ids: Vec<CommandId>,
+    /// Current attempt phase.
+    pub phase: AutomationCommandAttemptPhase,
+    /// Deterministic retry instant while in backoff.
+    pub retry_ready_at: Option<DateTime<Utc>>,
 }
 
 /// Kind of durable group continuation owned by one run.

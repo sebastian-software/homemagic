@@ -34,3 +34,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0019: Govern automation activation with capability Safety Profiles](0019-govern-automation-activation-with-safety-profiles.md)
 - [ADR-0020: Retain automation versions, runs, and traces independently](0020-retain-automation-evidence-independently.md)
 - [ADR-0021: Persist automation group continuations in run state](0021-persist-automation-group-continuations.md)
+- [ADR-0022: Persist automation command attempts explicitly](0022-persist-automation-command-attempts.md)
