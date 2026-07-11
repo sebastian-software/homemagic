@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use homemagic_application::{
-    AutomationActivation, AutomationDraft, AutomationIdentityState, AutomationRecovery,
-    AutomationRepository, AutomationRetention, AutomationRetentionResult, StoredAutomationVersion,
+    ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
+    AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
+    StoredAutomationVersion,
 };
 use homemagic_domain::{
     AutomationApprovalRecord, AutomationApprovalRequirement, AutomationApprovalState, AutomationId,
@@ -117,6 +118,17 @@ impl AutomationRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn active_automation_versions(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<ActiveAutomationVersion>, homemagic_application::BoxError> {
+        run_read(&self.connection, move |connection| {
+            load_active_versions(connection, limit)
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn create_automation_occurrence(
         &self,
         occurrence: AutomationOccurrence,
@@ -150,6 +162,22 @@ impl AutomationRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn automation_run(
+        &self,
+        run_id: &AutomationRunId,
+    ) -> Result<Option<AutomationRun>, homemagic_application::BoxError> {
+        let run_id = run_id.clone();
+        run_read(&self.connection, move |connection| {
+            load_optional_payload(
+                connection,
+                "SELECT payload_json FROM automation_runs WHERE id = ?1",
+                &run_id.to_string(),
+            )
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn transition_automation_run(
         &self,
         run: AutomationRun,
@@ -168,6 +196,22 @@ impl AutomationRepository for SqliteRepository {
     ) -> Result<(), homemagic_application::BoxError> {
         run_write(&self.connection, move |transaction| {
             create_timer(transaction, &timer)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn automation_timer(
+        &self,
+        timer_id: &homemagic_domain::AutomationTimerId,
+    ) -> Result<Option<AutomationTimer>, homemagic_application::BoxError> {
+        let timer_id = timer_id.clone();
+        run_read(&self.connection, move |connection| {
+            load_optional_payload(
+                connection,
+                "SELECT payload_json FROM automation_timers WHERE id = ?1",
+                &timer_id.to_string(),
+            )
         })
         .await
         .map_err(boxed)
@@ -939,6 +983,32 @@ fn load_identity(
         "SELECT payload_json FROM automation_identities WHERE id = ?1",
         &automation_id.to_string(),
     )
+}
+
+fn load_active_versions(
+    connection: &Connection,
+    limit: usize,
+) -> Result<Vec<ActiveAutomationVersion>, StorageError> {
+    let limit = signed(limit.clamp(1, MAX_QUERY_PAGE) as u64)?;
+    let mut statement = connection.prepare(
+        "SELECT i.payload_json, v.payload_json
+         FROM automation_identities i
+         JOIN automation_versions v
+           ON v.automation_id = i.id AND v.version = i.active_version
+         WHERE i.operational_state = 'active'
+         ORDER BY i.id LIMIT ?1",
+    )?;
+    let rows = statement.query_map([limit], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    rows.map(|row| {
+        let (identity, version) = row?;
+        Ok(ActiveAutomationVersion {
+            identity: decode(&identity)?,
+            version: decode(&version)?,
+        })
+    })
+    .collect()
 }
 
 fn load_version(

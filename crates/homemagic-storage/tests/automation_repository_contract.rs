@@ -172,10 +172,18 @@ async fn pending_work_trace_conflicts_and_retention_should_obey_invariants() -> 
     drop(repository);
 
     let repository = SqliteRepository::open(&path)?;
+    let active_versions = repository.active_automation_versions(10).await?;
+    assert_eq!(active_versions.len(), 1);
+    assert_eq!(active_versions[0].version, stored);
     let recovery = repository.recoverable_automation_work(10).await?;
     assert_eq!(recovery.occurrences, vec![occurrence.clone()]);
     assert_eq!(recovery.runs, vec![run.clone()]);
     assert_eq!(recovery.timers, vec![timer.clone()]);
+    assert_eq!(repository.automation_run(&run.id).await?, Some(run.clone()));
+    assert_eq!(
+        repository.automation_timer(&timer.id).await?,
+        Some(timer.clone())
+    );
     assert_eq!(
         repository.automation_trace(&run.id, None, 10).await?.len(),
         2

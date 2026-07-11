@@ -31,3 +31,10 @@ updated: 2026-07-11
 - [ ] Restart cannot duplicate a dispatched command or schedule occurrence.
 - [ ] Missed schedules never execute without an explicit new catch-up request.
 - [ ] Queue, parallelism, trace, retry, and duration bounds hold under load.
+
+## Progress
+
+- 2026-07-11: Added deterministic occurrence, run, timer, and trace identity
+  derivation plus bounded active-version and direct run/timer recovery queries.
+  This prevents restart from inventing duplicate durable work before the step
+  coordinator runs. See [Runtime Recovery Keys](../../architecture/automation-runtime-recovery.md).

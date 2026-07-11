@@ -8,6 +8,10 @@ const DEVICE_NAMESPACE: Uuid = Uuid::from_u128(0x91d0_41aa_328c_5ba1_aaf6_e116_8
 const INTEGRATION_NAMESPACE: Uuid = Uuid::from_u128(0xa75d_dbe0_0bd8_5ed4_9ff2_3af9_a4d6_eb65);
 const REPAIR_NAMESPACE: Uuid = Uuid::from_u128(0x36bf_9702_60d4_5a68_aaf7_8a85_276b_693b);
 const AUTOMATION_TRACE_NAMESPACE: Uuid = Uuid::from_u128(0x6af5_981c_1317_5fb7_aa73_7a66_7c98_7fc1);
+const AUTOMATION_OCCURRENCE_NAMESPACE: Uuid =
+    Uuid::from_u128(0x0797_c134_2a95_5872_9f84_ef69_0fb6_b8aa);
+const AUTOMATION_RUN_NAMESPACE: Uuid = Uuid::from_u128(0x4956_eaca_1fa9_597d_9219_77cb_d73e_eaf5);
+const AUTOMATION_TIMER_NAMESPACE: Uuid = Uuid::from_u128(0x6a52_b568_0174_5c08_9f45_b9c0_ee6d_8bc5);
 const LEGACY_INSTALLATION: Uuid = Uuid::from_u128(0xc776_218d_d377_5a5e_b6a7_9384_dc1c_da37);
 
 /// Stable opaque identifier for a `HomeMagic` installation.
@@ -167,10 +171,43 @@ uuid_identity!(
     AutomationOccurrenceId,
     "Stable identity for one automation trigger occurrence."
 );
+
+impl AutomationOccurrenceId {
+    /// Derives the idempotent identity of one source occurrence key.
+    #[must_use]
+    pub fn from_key(automation_id: &AutomationId, version: u64, source_key: &str) -> Self {
+        Self(Uuid::new_v5(
+            &AUTOMATION_OCCURRENCE_NAMESPACE,
+            format!("{automation_id}:{version}:{source_key}").as_bytes(),
+        ))
+    }
+}
 uuid_identity!(
     AutomationTimerId,
     "Stable identity for one durable automation timer."
 );
+
+impl AutomationRunId {
+    /// Derives one stable run identity from an accepted occurrence.
+    #[must_use]
+    pub fn from_occurrence(occurrence_id: &AutomationOccurrenceId) -> Self {
+        Self(Uuid::new_v5(
+            &AUTOMATION_RUN_NAMESPACE,
+            occurrence_id.to_string().as_bytes(),
+        ))
+    }
+}
+
+impl AutomationTimerId {
+    /// Derives one stable timer identity from its run, node, and ready instant.
+    #[must_use]
+    pub fn from_key(run_id: &AutomationRunId, node_id: u32, ready_at_millis: i64) -> Self {
+        Self(Uuid::new_v5(
+            &AUTOMATION_TIMER_NAMESPACE,
+            format!("{run_id}:{node_id}:{ready_at_millis}").as_bytes(),
+        ))
+    }
+}
 uuid_identity!(
     AutomationTraceId,
     "Stable identity for one automation trace step."
@@ -414,6 +451,25 @@ mod tests {
         assert_ne!(
             DeviceId::from_integration(&first, "aabbcc"),
             DeviceId::from_integration(&second, "aabbcc")
+        );
+    }
+
+    #[test]
+    fn automation_work_ids_should_be_stable_for_restart_keys() {
+        let automation_id = AutomationId::new();
+        let occurrence = AutomationOccurrenceId::from_key(&automation_id, 3, "event:42");
+        let repeated = AutomationOccurrenceId::from_key(&automation_id, 3, "event:42");
+        let run = AutomationRunId::from_occurrence(&occurrence);
+
+        assert_eq!(occurrence, repeated);
+        assert_eq!(run, AutomationRunId::from_occurrence(&repeated));
+        assert_eq!(
+            AutomationTimerId::from_key(&run, 7, 1_725_000_000_000),
+            AutomationTimerId::from_key(&run, 7, 1_725_000_000_000)
+        );
+        assert_ne!(
+            AutomationTimerId::from_key(&run, 7, 1_725_000_000_000),
+            AutomationTimerId::from_key(&run, 8, 1_725_000_000_000)
         );
     }
 }

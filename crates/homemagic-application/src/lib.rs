@@ -31,8 +31,8 @@ pub use authentication::{
 };
 pub use automation_compiler::{AutomationCompilationError, AutomationCompiler};
 pub use automation_repository::{
-    AutomationActivation, AutomationDraft, AutomationIdentityState, AutomationRecovery,
-    AutomationRepository, AutomationRetention, AutomationRetentionResult,
+    ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
+    AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
     AutomationSimulationEvidence, AutomationValidationEvidence, StoredAutomationVersion,
 };
 pub use automation_simulator::{

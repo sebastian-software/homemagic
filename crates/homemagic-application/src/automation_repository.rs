@@ -89,6 +89,15 @@ pub struct AutomationIdentityState {
     pub updated_at: DateTime<Utc>,
 }
 
+/// One active identity paired with its exact immutable runtime version.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ActiveAutomationVersion {
+    /// Operational identity and active pointer.
+    pub identity: AutomationIdentityState,
+    /// Exact active immutable content and evidence.
+    pub version: StoredAutomationVersion,
+}
+
 /// Atomic activation or rollback request bound to exact evidence.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AutomationActivation {
@@ -205,6 +214,12 @@ pub trait AutomationRepository: Send + Sync {
         automation_id: &AutomationId,
     ) -> Result<Option<AutomationIdentityState>, BoxError>;
 
+    /// Lists bounded active identities paired with exact immutable versions.
+    async fn active_automation_versions(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<ActiveAutomationVersion>, BoxError>;
+
     /// Inserts one occurrence idempotently by stable identity and payload.
     async fn create_automation_occurrence(
         &self,
@@ -220,6 +235,12 @@ pub trait AutomationRepository: Send + Sync {
     /// Inserts one run idempotently by stable identity and payload.
     async fn create_automation_run(&self, run: AutomationRun) -> Result<(), BoxError>;
 
+    /// Loads one durable run by stable identity.
+    async fn automation_run(
+        &self,
+        run_id: &AutomationRunId,
+    ) -> Result<Option<AutomationRun>, BoxError>;
+
     /// Replaces one run using its optimistic revision.
     async fn transition_automation_run(
         &self,
@@ -229,6 +250,12 @@ pub trait AutomationRepository: Send + Sync {
 
     /// Inserts one timer idempotently by stable identity and payload.
     async fn create_automation_timer(&self, timer: AutomationTimer) -> Result<(), BoxError>;
+
+    /// Loads one durable timer by stable identity.
+    async fn automation_timer(
+        &self,
+        timer_id: &homemagic_domain::AutomationTimerId,
+    ) -> Result<Option<AutomationTimer>, BoxError>;
 
     /// Replaces one timer while enforcing its domain state machine.
     async fn transition_automation_timer(&self, timer: AutomationTimer) -> Result<(), BoxError>;
