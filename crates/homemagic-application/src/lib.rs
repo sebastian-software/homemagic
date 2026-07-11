@@ -1,5 +1,6 @@
 //! `HomeMagic` application services and integration ports.
 
+mod authentication;
 mod memory;
 mod policy;
 mod ports;
@@ -20,6 +21,10 @@ use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
+pub use authentication::{
+    ActorAuthentication, ActorAuthenticationError, ActorManagementError, ActorToken,
+    AuthenticateActor,
+};
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use policy::{
     CommandLimitCapacities, CommandLimitConfig, CommandLimitConfigError, CommandLimits,

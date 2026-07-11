@@ -6,8 +6,16 @@ This is the RPC-first transport described by ADR-0003. Request/response methods
 use JSON-RPC 2.0 at `POST /rpc`. Durable event subscriptions use JSON-RPC 2.0
 messages over a WebSocket at `GET /rpc/ws` as defined by ADR-0012.
 
-The default listener is `127.0.0.1:8787`. The prototype has no authentication and
-must not be bound to an untrusted interface.
+The default listener is `127.0.0.1:8787`. `POST /rpc` and the `/rpc/ws`
+WebSocket handshake require `Authorization: Bearer <token>`. Bootstrap a token
+with `homemagic actor-bootstrap`; only its Argon2id hash is stored. Missing,
+malformed, unknown, disabled, and incorrect credentials all receive the same
+HTTP `401 Unauthorized` response.
+
+`GET /health` is intentionally unauthenticated and returns only process liveness
+and the package version. Repository details remain in authenticated
+`system.health`. Keep the listener on loopback unless a trusted TLS boundary and
+token-distribution policy are in place.
 
 ## Read methods
 
@@ -75,10 +83,11 @@ filters by `status` and `device_id`. `repairs.get` returns one retained record.
 
 Display metadata is mutable; HomeMagic, native-device, endpoint, and capability
 identities never change. Names and aliases are trimmed and bounded. Assigned
-space IDs must already exist. `actor` is optional causation metadata.
+space IDs must already exist. Causation always uses the authenticated actor;
+client-supplied `actor` fields are ignored and cannot spoof audit identity.
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"devices.rename","params":{"id":"DEVICE_ID","name":"Kitchen light","actor":"agent:home"}}
+{"jsonrpc":"2.0","id":1,"method":"devices.rename","params":{"id":"DEVICE_ID","name":"Kitchen light"}}
 ```
 
 ```json
@@ -91,9 +100,10 @@ space IDs must already exist. `actor` is optional causation metadata.
 
 ## Event subscriptions
 
-Open `/rpc/ws` and send exactly one `events.subscribe` request. `cursor` is the
-last event the client fully processed. Omitting it starts after the current tail;
-using `0` replays all retained history.
+Open `/rpc/ws` with the same bearer header and send exactly one
+`events.subscribe` request. `cursor` is the last event the client fully
+processed. Omitting it starts after the current tail; using `0` replays all
+retained history.
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"events.subscribe","params":{"cursor":42}}

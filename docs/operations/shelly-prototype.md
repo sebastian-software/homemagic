@@ -23,8 +23,9 @@ opens the database. Forward-only migrations run before the API starts. A schema
 newer than the binary or a changed historical migration checksum stops startup;
 the database is not silently rewritten.
 
-`system.health` and `GET /health` expose the schema version, integrity result,
-WAL state, and retained event cursor bounds.
+Authenticated `system.health` exposes the schema version, integrity result, WAL
+state, and retained event cursor bounds. Unauthenticated `GET /health` exposes
+only process liveness and package version.
 
 ## Backup and restore
 
@@ -106,19 +107,44 @@ or provision the Shelly password again into a new vault.
 RUST_LOG=info cargo run --locked -- serve
 ```
 
-The default bind address is loopback only. Keep it that way until API
-authentication ships in EPIC-002. The daemon loads durable state before network
-discovery, then runs periodic reconciliation, freshness evaluation, managed
-WebSocket sessions, and bounded recovery.
+The default bind address is loopback only. The daemon loads durable state before
+network discovery, then runs periodic reconciliation, freshness evaluation,
+managed WebSocket sessions, and bounded recovery.
+
+On a new database, let the daemon create its installation, then bootstrap the
+first actor from another terminal. The 256-bit bearer token is printed once;
+store it in a local secret manager. SQLite retains only an Argon2id hash.
 
 ```sh
+cargo run --locked -- actor-bootstrap \
+  --database /var/lib/homemagic/homemagic.sqlite3 \
+  --name local-agent
+```
+
+Rotate or disable an actor without deleting its audit identity:
+
+```sh
+cargo run --locked -- actor-rotate \
+  --database /var/lib/homemagic/homemagic.sqlite3 ACTOR_ID
+
+cargo run --locked -- actor-disable \
+  --database /var/lib/homemagic/homemagic.sqlite3 ACTOR_ID
+```
+
+Set the one-time token in a non-exported shell variable for local diagnostics:
+
+```sh
+HOMEMAGIC_TOKEN='hm1.ACTOR_ID.RANDOM_SECRET'
+
 curl -s http://127.0.0.1:8787/health
 
 curl -s http://127.0.0.1:8787/rpc \
+  -H "authorization: Bearer $HOMEMAGIC_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"devices.list","params":{}}'
 
 curl -s http://127.0.0.1:8787/rpc \
+  -H "authorization: Bearer $HOMEMAGIC_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"repairs.list","params":{}}'
 ```

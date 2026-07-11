@@ -10,11 +10,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
-    BroadcastDomainEventSink, DeviceRegistry, FoundationWrite, HomeMagicApplication,
-    IntegrationScanner, RepositoryLiveObservationSink, SecretStore, SecretValue,
+    ActorAuthentication, AuthenticateActor, BroadcastDomainEventSink, DeviceRegistry,
+    FoundationWrite, HomeMagicApplication, IntegrationScanner, RepositoryLiveObservationSink,
+    SecretStore, SecretValue,
 };
 use homemagic_domain::{
-    CapabilitySnapshot, FreshnessPolicy, Installation, InstallationId, IntegrationId,
+    ActorId, CapabilitySnapshot, FreshnessPolicy, Installation, InstallationId, IntegrationId,
     IntegrationInstance, SecretRef,
 };
 use homemagic_secrets::{FileSecretStore, PlatformSecretStore};
@@ -91,6 +92,34 @@ enum Command {
             env = "HOMEMAGIC_SECRET_VAULT"
         )]
         secret_vault: PathBuf,
+    },
+    /// Create an authenticated actor and print its bearer token exactly once.
+    ActorBootstrap {
+        /// Durable database that owns the actor.
+        #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
+        database: PathBuf,
+        /// Operator-facing actor name.
+        #[arg(long)]
+        name: String,
+        /// Required only when the database contains multiple installations.
+        #[arg(long)]
+        installation_id: Option<InstallationId>,
+    },
+    /// Rotate an actor bearer token and print the replacement exactly once.
+    ActorRotate {
+        /// Durable database that owns the actor.
+        #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
+        database: PathBuf,
+        /// Actor whose credential is replaced.
+        actor_id: ActorId,
+    },
+    /// Disable an actor without deleting its audit identity.
+    ActorDisable {
+        /// Durable database that owns the actor.
+        #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
+        database: PathBuf,
+        /// Actor that can no longer authenticate.
+        actor_id: ActorId,
     },
     /// Start the `HomeMagic` JSON-RPC server.
     Serve {
@@ -184,6 +213,13 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Command::ActorBootstrap {
+            database,
+            name,
+            installation_id,
+        } => actor_bootstrap(&database, name, installation_id).await,
+        Command::ActorRotate { database, actor_id } => actor_rotate(&database, &actor_id).await,
+        Command::ActorDisable { database, actor_id } => actor_disable(&database, &actor_id).await,
         Command::Serve {
             bind,
             discovery_seconds,
@@ -210,6 +246,67 @@ async fn main() -> Result<()> {
             })
             .await
         }
+    }
+}
+
+async fn actor_bootstrap(
+    database: &Path,
+    name: String,
+    requested_installation: Option<InstallationId>,
+) -> Result<()> {
+    let repository = Arc::new(
+        SqliteRepository::open(database)
+            .with_context(|| format!("failed to open database at {}", database.display()))?,
+    );
+    let snapshot = repository.load_foundation().await?;
+    let installation_id = select_installation(&snapshot.installations, requested_installation)?;
+    let authentication = ActorAuthentication::new(repository);
+    let (actor, token) = authentication.bootstrap(installation_id, name).await?;
+    println!("actor_id: {}", actor.id);
+    println!("token: {}", token.expose());
+    Ok(())
+}
+
+async fn actor_rotate(database: &Path, actor_id: &ActorId) -> Result<()> {
+    let repository = Arc::new(
+        SqliteRepository::open(database)
+            .with_context(|| format!("failed to open database at {}", database.display()))?,
+    );
+    let token = ActorAuthentication::new(repository)
+        .rotate(actor_id)
+        .await?;
+    println!("actor_id: {actor_id}");
+    println!("token: {}", token.expose());
+    Ok(())
+}
+
+async fn actor_disable(database: &Path, actor_id: &ActorId) -> Result<()> {
+    let repository = Arc::new(
+        SqliteRepository::open(database)
+            .with_context(|| format!("failed to open database at {}", database.display()))?,
+    );
+    ActorAuthentication::new(repository)
+        .disable(actor_id)
+        .await?;
+    println!("actor_id: {actor_id}");
+    println!("status: disabled");
+    Ok(())
+}
+
+fn select_installation(
+    installations: &[Installation],
+    requested: Option<InstallationId>,
+) -> Result<InstallationId> {
+    if let Some(requested) = requested {
+        if installations.iter().any(|value| value.id == requested) {
+            return Ok(requested);
+        }
+        anyhow::bail!("requested installation does not exist");
+    }
+    match installations {
+        [installation] => Ok(installation.id.clone()),
+        [] => anyhow::bail!("database contains no installation; run the server bootstrap first"),
+        _ => anyhow::bail!("database contains multiple installations; pass --installation-id"),
     }
 }
 
@@ -418,7 +515,7 @@ async fn scan(discovery_seconds: u64, summary: bool) -> Result<()> {
 }
 
 async fn serve(options: ServeOptions) -> Result<()> {
-    let (application, refresh_requests) = durable_application(
+    let (application, refresh_requests, authenticator) = durable_application(
         options.discovery_seconds,
         &options.database,
         options.secret_backend,
@@ -444,10 +541,13 @@ async fn serve(options: ServeOptions) -> Result<()> {
         refresh_requests,
         shutdown_requested,
     ));
-    let result = axum::serve(listener, homemagic_api::router(application.clone()))
-        .with_graceful_shutdown(shutdown_signal(shutdown))
-        .await
-        .context("HomeMagic API server failed");
+    let result = axum::serve(
+        listener,
+        homemagic_api::router(application.clone(), authenticator),
+    )
+    .with_graceful_shutdown(shutdown_signal(shutdown))
+    .await
+    .context("HomeMagic API server failed");
     worker.await.context("runtime scheduler task failed")?;
     application
         .shutdown()
@@ -465,6 +565,7 @@ async fn durable_application(
 ) -> Result<(
     HomeMagicApplication,
     tokio::sync::mpsc::Receiver<homemagic_domain::DeviceId>,
+    Arc<dyn AuthenticateActor>,
 )> {
     let repository = Arc::new(
         SqliteRepository::open(database)
@@ -525,7 +626,12 @@ async fn durable_application(
             ShellyWebSocketRunner::new(live_sink)
         };
     let sessions = Arc::new(ShellySessionSupervisor::new(Arc::new(runner)));
-    Ok((application.with_sessions(sessions), refresh_receiver))
+    let authenticator: Arc<dyn AuthenticateActor> = Arc::new(ActorAuthentication::new(repository));
+    Ok((
+        application.with_sessions(sessions),
+        refresh_receiver,
+        authenticator,
+    ))
 }
 
 async fn runtime_worker(

@@ -2,16 +2,21 @@
 
 use std::collections::BTreeSet;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::response::Response;
+use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use homemagic_application::{ApplicationError, DeviceMetadataUpdate, HomeMagicApplication};
+use homemagic_application::{
+    ApplicationError, AuthenticateActor, DeviceMetadataUpdate, HomeMagicApplication,
+};
 use homemagic_domain::{
-    AvailabilityState, DeviceId, DeviceLifecycle, EventId, FreshnessState, RepairId, RepairStatus,
-    SpaceId,
+    Actor, AvailabilityState, DeviceId, DeviceLifecycle, EventId, FreshnessState, RepairId,
+    RepairStatus, SpaceId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21,43 +26,79 @@ const JSON_RPC_VERSION: &str = "2.0";
 const EVENT_PAGE_LIMIT: usize = 128;
 const EVENT_WAKE_CAPACITY: usize = 256;
 
-/// Builds the HTTP router for the current application instance.
-pub fn router(application: HomeMagicApplication) -> Router {
+#[derive(Clone)]
+struct ApiState {
+    application: HomeMagicApplication,
+    authenticator: Arc<dyn AuthenticateActor>,
+}
+
+/// Builds the authenticated HTTP router for the current application instance.
+pub fn router(
+    application: HomeMagicApplication,
+    authenticator: Arc<dyn AuthenticateActor>,
+) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/rpc", post(rpc))
         .route("/rpc/ws", get(rpc_websocket))
         .layer(TraceLayer::new_for_http())
-        .with_state(application)
+        .with_state(ApiState {
+            application,
+            authenticator,
+        })
 }
 
-async fn health(State(application): State<HomeMagicApplication>) -> Json<Value> {
-    match application.repository_health().await {
-        Ok(repository) => Json(json!({
-            "status": "ok",
-            "version": env!("CARGO_PKG_VERSION"),
-            "repository": repository
-        })),
-        Err(_) => Json(json!({
-            "status": "degraded",
-            "version": env!("CARGO_PKG_VERSION"),
-            "repository": {"status": "unavailable"}
-        })),
-    }
+async fn health() -> Json<Value> {
+    Json(json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
 }
 
 async fn rpc(
-    State(application): State<HomeMagicApplication>,
+    State(state): State<ApiState>,
+    headers: HeaderMap,
     Json(request): Json<RpcRequest>,
-) -> Json<RpcResponse> {
-    Json(dispatch(&application, request).await)
+) -> Response {
+    let actor = match authenticate(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    Json(dispatch(&state.application, &actor, request).await).into_response()
 }
 
 async fn rpc_websocket(
     websocket: WebSocketUpgrade,
-    State(application): State<HomeMagicApplication>,
+    State(state): State<ApiState>,
+    headers: HeaderMap,
 ) -> Response {
-    websocket.on_upgrade(move |socket| event_socket(socket, application))
+    let actor = match authenticate(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    websocket.on_upgrade(move |socket| event_socket(socket, state.application, actor))
+}
+
+async fn authenticate(state: &ApiState, headers: &HeaderMap) -> Result<Actor, Response> {
+    let bearer = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty());
+    let Some(bearer) = bearer else {
+        return Err(unauthorized());
+    };
+    state
+        .authenticator
+        .authenticate_actor(bearer)
+        .await
+        .map_err(|_| unauthorized())
+}
+
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(WWW_AUTHENTICATE, "Bearer")],
+        Json(json!({"error": "unauthorized"})),
+    )
+        .into_response()
 }
 
 #[derive(Default, Deserialize)]
@@ -71,7 +112,7 @@ struct ActiveSubscription {
     cursor: u64,
 }
 
-async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication) {
+async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication, _actor: Actor) {
     let Some(mut subscription) = accept_subscription(&mut socket, &application).await else {
         return;
     };
@@ -349,21 +390,18 @@ struct DeviceListParams {
 struct RenameParams {
     id: String,
     name: String,
-    actor: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct AliasSetParams {
     id: String,
     aliases: BTreeSet<String>,
-    actor: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct SpaceSetParams {
     id: String,
     spaces: BTreeSet<String>,
-    actor: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -377,7 +415,11 @@ struct RepairGetParams {
     id: String,
 }
 
-async fn dispatch(application: &HomeMagicApplication, request: RpcRequest) -> RpcResponse {
+async fn dispatch(
+    application: &HomeMagicApplication,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
     if request.jsonrpc != JSON_RPC_VERSION {
         return RpcResponse::error(request.id, -32600, "Invalid Request", None);
     }
@@ -386,9 +428,13 @@ async fn dispatch(application: &HomeMagicApplication, request: RpcRequest) -> Rp
         "system.health" => system_health(application, request.id).await,
         "devices.list" => device_list(application, request.id, request.params).await,
         "devices.get" => device_get(application, request.id, request.params).await,
-        "devices.rename" => device_rename(application, request.id, request.params).await,
-        "devices.aliases.set" => device_aliases_set(application, request.id, request.params).await,
-        "devices.spaces.set" => device_spaces_set(application, request.id, request.params).await,
+        "devices.rename" => device_rename(application, actor, request.id, request.params).await,
+        "devices.aliases.set" => {
+            device_aliases_set(application, actor, request.id, request.params).await
+        }
+        "devices.spaces.set" => {
+            device_spaces_set(application, actor, request.id, request.params).await
+        }
         "repairs.list" => repair_list(application, request.id, request.params).await,
         "repairs.get" => repair_get(application, request.id, request.params).await,
         "devices.refresh" => match application.refresh().await {
@@ -484,6 +530,7 @@ async fn device_list(application: &HomeMagicApplication, id: Value, params: Valu
 
 async fn device_rename(
     application: &HomeMagicApplication,
+    actor: &Actor,
     id: Value,
     params: Value,
 ) -> RpcResponse {
@@ -497,7 +544,7 @@ async fn device_rename(
         &params.id,
         DeviceMetadataUpdate {
             name: Some(params.name),
-            actor: params.actor,
+            actor: Some(actor.id.to_string()),
             ..DeviceMetadataUpdate::default()
         },
     )
@@ -506,6 +553,7 @@ async fn device_rename(
 
 async fn device_aliases_set(
     application: &HomeMagicApplication,
+    actor: &Actor,
     id: Value,
     params: Value,
 ) -> RpcResponse {
@@ -519,7 +567,7 @@ async fn device_aliases_set(
         &params.id,
         DeviceMetadataUpdate {
             aliases: Some(params.aliases),
-            actor: params.actor,
+            actor: Some(actor.id.to_string()),
             ..DeviceMetadataUpdate::default()
         },
     )
@@ -528,6 +576,7 @@ async fn device_aliases_set(
 
 async fn device_spaces_set(
     application: &HomeMagicApplication,
+    actor: &Actor,
     id: Value,
     params: Value,
 ) -> RpcResponse {
@@ -550,7 +599,7 @@ async fn device_spaces_set(
         &params.id,
         DeviceMetadataUpdate {
             spaces: Some(spaces),
-            actor: params.actor,
+            actor: Some(actor.id.to_string()),
             ..DeviceMetadataUpdate::default()
         },
     )
@@ -692,18 +741,92 @@ mod tests {
     use chrono::Utc;
     use futures_util::{SinkExt, StreamExt};
     use homemagic_application::{
-        BroadcastDomainEventSink, DeviceRegistry, FoundationRepository, FoundationWrite,
-        MemoryFoundationRepository, NoopDomainEventSink,
+        ActorAuthenticationError, AuthenticateActor, BroadcastDomainEventSink, DeviceRegistry,
+        FoundationRepository, FoundationWrite, MemoryFoundationRepository, NoopDomainEventSink,
     };
     use homemagic_domain::{
-        CausationMetadata, CorrelationId, DeviceRecord, DeviceSnapshot, DomainEvent,
+        ActorId, CausationMetadata, CorrelationId, DeviceRecord, DeviceSnapshot, DomainEvent,
         DomainEventKind, EventId, InstallationId, IntegrationId,
     };
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
     use super::*;
 
     fn application() -> HomeMagicApplication {
         HomeMagicApplication::new(DeviceRegistry::default(), [])
+    }
+
+    fn actor() -> Actor {
+        Actor {
+            id: ActorId::new(),
+            installation_id: InstallationId::new(),
+            name: "API test".to_owned(),
+            enabled: true,
+            created_at: Utc::now(),
+        }
+    }
+
+    struct FixedAuthenticator(Actor);
+
+    #[async_trait::async_trait]
+    impl AuthenticateActor for FixedAuthenticator {
+        async fn authenticate_actor(
+            &self,
+            bearer: &str,
+        ) -> Result<Actor, ActorAuthenticationError> {
+            if bearer == "fixture-token" {
+                Ok(self.0.clone())
+            } else {
+                Err(ActorAuthenticationError)
+            }
+        }
+    }
+
+    async fn connect_authenticated(
+        address: std::net::SocketAddr,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
+    {
+        let url = format!("ws://{address}/rpc/ws");
+        assert!(tokio_tungstenite::connect_async(&url).await.is_err());
+        let mut request = url
+            .into_client_request()
+            .unwrap_or_else(|error| panic!("WebSocket request: {error}"));
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            "Bearer fixture-token"
+                .parse()
+                .unwrap_or_else(|error| panic!("authorization header: {error}")),
+        );
+        tokio_tungstenite::connect_async(request).await.map_or_else(
+            |error| panic!("connect API fixture: {error}"),
+            |(client, _)| client,
+        )
+    }
+
+    #[tokio::test]
+    async fn shared_transport_authentication_should_be_generic_and_actor_bound() {
+        let expected = actor();
+        let state = ApiState {
+            application: application(),
+            authenticator: Arc::new(FixedAuthenticator(expected.clone())),
+        };
+        let missing = HeaderMap::new();
+        let missing_status = match authenticate(&state, &missing).await {
+            Ok(_) => panic!("missing token should fail"),
+            Err(response) => response.status(),
+        };
+        assert_eq!(missing_status, StatusCode::UNAUTHORIZED);
+        let mut valid = HeaderMap::new();
+        valid.insert(
+            AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer fixture-token"),
+        );
+        assert_eq!(
+            authenticate(&state, &valid)
+                .await
+                .unwrap_or_else(|_| panic!("fixture token should authenticate")),
+            expected
+        );
     }
 
     async fn application_with_device() -> (HomeMagicApplication, DeviceId) {
@@ -745,8 +868,10 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_should_reject_unknown_method() {
+        let actor = actor();
         let response = dispatch(
             &application(),
+            &actor,
             RpcRequest {
                 jsonrpc: JSON_RPC_VERSION.to_owned(),
                 id: json!(1),
@@ -761,8 +886,10 @@ mod tests {
 
     #[tokio::test]
     async fn devices_list_should_return_empty_registry() {
+        let actor = actor();
         let response = dispatch(
             &application(),
+            &actor,
             RpcRequest {
                 jsonrpc: JSON_RPC_VERSION.to_owned(),
                 id: json!(1),
@@ -778,8 +905,10 @@ mod tests {
     #[tokio::test]
     async fn device_filters_should_be_deterministic_and_reject_invalid_values() {
         let (application, device_id) = application_with_device().await;
+        let actor = actor();
         let response = dispatch(
             &application,
+            &actor,
             RpcRequest {
                 jsonrpc: JSON_RPC_VERSION.to_owned(),
                 id: json!(1),
@@ -798,6 +927,7 @@ mod tests {
 
         let invalid = dispatch(
             &application,
+            &actor,
             RpcRequest {
                 jsonrpc: JSON_RPC_VERSION.to_owned(),
                 id: json!(2),
@@ -812,13 +942,19 @@ mod tests {
     #[tokio::test]
     async fn rename_should_succeed_and_missing_device_should_be_structured() {
         let (application, device_id) = application_with_device().await;
+        let actor = actor();
         let renamed = dispatch(
             &application,
+            &actor,
             RpcRequest {
                 jsonrpc: JSON_RPC_VERSION.to_owned(),
                 id: json!(1),
                 method: "devices.rename".to_owned(),
-                params: json!({"id": device_id, "name": "Desk light"}),
+                params: json!({
+                    "id": device_id,
+                    "name": "Desk light",
+                    "actor": "spoofed-client-value"
+                }),
             },
         )
         .await;
@@ -829,9 +965,18 @@ mod tests {
                 .map(|result| &result["device"]["snapshot"]["name"]),
             Some(&json!("Desk light"))
         );
+        let events = application
+            .events_after(0, 10)
+            .await
+            .unwrap_or_else(|error| panic!("read metadata event: {error}"));
+        assert_eq!(
+            events.events[0].event.causation.actor,
+            Some(actor.id.to_string())
+        );
 
         let missing = dispatch(
             &application,
+            &actor,
             RpcRequest {
                 jsonrpc: JSON_RPC_VERSION.to_owned(),
                 id: json!(2),
@@ -905,13 +1050,14 @@ mod tests {
             .local_addr()
             .unwrap_or_else(|error| panic!("API fixture address: {error}"));
         let server = tokio::spawn(async move {
-            axum::serve(listener, router(application))
-                .await
-                .unwrap_or_else(|error| panic!("serve API fixture: {error}"));
-        });
-        let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{address}/rpc/ws"))
+            axum::serve(
+                listener,
+                router(application, Arc::new(FixedAuthenticator(actor()))),
+            )
             .await
-            .unwrap_or_else(|error| panic!("connect API fixture: {error}"));
+            .unwrap_or_else(|error| panic!("serve API fixture: {error}"));
+        });
+        let mut client = connect_authenticated(address).await;
         client
             .send(tokio_tungstenite::tungstenite::Message::Text(
                 json!({

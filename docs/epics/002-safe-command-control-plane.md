@@ -86,13 +86,13 @@ from ADR-0009.
 
 ## Workstream E2.2: Policy and authorization
 
-- [ ] Authenticate local RPC clients and create durable actor identities.
+- [x] Authenticate local RPC clients and create durable actor identities.
 - [x] Authorize by action, capability, target, space, and risk class.
 - [x] Default comfort commands to allow only for authorized local actors.
 - [x] Require explicit mechanical safety policy for position commands.
 - [x] Reserve security-sensitive defaults for explicit approval.
 - [x] Make policy denial explainable without leaking secrets.
-- [ ] Apply policy identically to RPC, future MCP, automation, and internal calls.
+- [x] Apply policy identically to RPC, future MCP, automation, and internal calls.
 - [x] Add rate and concurrency limits per actor and device.
 
 ## Workstream E2.3: Durable dispatch and audit
@@ -193,3 +193,6 @@ from ADR-0009.
   recovery, independent retention, and restart-state coverage.
 - 2026-07-11: Added E2-004 deterministic risk policy and bounded actor/device
   command admission with focused policy-matrix tests.
+- 2026-07-11: Completed E2-004 one-time actor tokens, Argon2id hash-only
+  credentials, rotation/disable/grant management, authenticated HTTP and
+  WebSocket transport, minimal public liveness, and anti-spoofing canaries.

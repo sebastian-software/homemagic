@@ -44,10 +44,19 @@ Start the loopback-only JSON-RPC server:
 cargo run --locked -- serve
 ```
 
-Then list the current device registry:
+In another terminal, bootstrap an actor once and retain the printed token in a
+local secret manager:
 
 ```sh
+cargo run --locked -- actor-bootstrap --name local-agent
+```
+
+Then list the current device registry with that bearer token:
+
+```sh
+HOMEMAGIC_TOKEN='hm1.ACTOR_ID.RANDOM_SECRET'
 curl -s http://127.0.0.1:8787/rpc \
+  -H "authorization: Bearer $HOMEMAGIC_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"devices.list","params":{}}'
 ```

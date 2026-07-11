@@ -365,6 +365,46 @@ mod tests {
         assert!(PolicyEvaluator::evaluate(&input, &[exact]).allowed);
     }
 
+    #[test]
+    fn administrative_capacity_and_action_denials_should_be_explainable() {
+        let mut input = input(RiskClass::Comfort);
+        input.actor.enabled = false;
+        input.rate_capacity = CapacityState::Exhausted;
+        let mut wrong_action = grant(
+            &input,
+            GrantScope::Device {
+                device_id: input.device_id.clone(),
+            },
+            RiskClass::Comfort,
+        );
+        wrong_action.actions = BTreeSet::from([CommandAction::ReadAudit]);
+        let decision = PolicyEvaluator::evaluate(&input, &[wrong_action]);
+
+        assert!(!decision.allowed);
+        assert!(decision.reasons.contains(&PolicyReason::ActorDisabled));
+        assert!(decision.reasons.contains(&PolicyReason::RateLimitExceeded));
+        assert!(decision.reasons.contains(&PolicyReason::NoMatchingGrant));
+    }
+
+    #[test]
+    fn space_grants_should_cover_comfort_and_dry_run_should_use_identical_rules() {
+        let input = input(RiskClass::Comfort);
+        let grant = grant(
+            &input,
+            GrantScope::Space {
+                space_id: input.spaces.iter().next().cloned().unwrap_or_default(),
+            },
+            RiskClass::Comfort,
+        );
+        let live = PolicyEvaluator::evaluate(&input, std::slice::from_ref(&grant));
+        let mut dry_run = input;
+        dry_run.dry_run = true;
+        let dry = PolicyEvaluator::evaluate(&dry_run, &[grant]);
+
+        assert!(live.allowed);
+        assert_eq!(dry, live);
+    }
+
     #[tokio::test]
     async fn limits_should_bound_actor_rate_and_serialize_each_device() {
         let limits = CommandLimits::new(

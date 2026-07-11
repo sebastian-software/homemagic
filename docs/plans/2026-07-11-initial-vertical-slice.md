@@ -56,7 +56,9 @@ cargo fmt --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
 cargo run -- serve
+HOMEMAGIC_TOKEN='hm1.ACTOR_ID.RANDOM_SECRET'
 curl -s http://127.0.0.1:8787/rpc \
+  -H "authorization: Bearer $HOMEMAGIC_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"devices.list","params":{}}'
 ```

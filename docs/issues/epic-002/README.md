@@ -17,8 +17,8 @@ updated: 2026-07-11
 | [E2-001](E2-001-command-decisions.md) | Done | EPIC-001 | Accepted safety ADRs |
 | [E2-002](E2-002-command-domain.md) | Done | E2-001 | Typed command state machine |
 | [E2-003](E2-003-command-storage.md) | Done | E2-002 | Durable idempotency and audit |
-| [E2-004](E2-004-actor-policy.md) | In progress | E2-002, E2-003 | Authentication and policy |
-| [E2-005](E2-005-command-orchestrator.md) | Planned | E2-003, E2-004 | Single command path |
+| [E2-004](E2-004-actor-policy.md) | Done | E2-002, E2-003 | Authentication and policy |
+| [E2-005](E2-005-command-orchestrator.md) | Ready | E2-003, E2-004 | Single command path |
 | [E2-006](E2-006-shelly-dispatch.md) | Planned | E2-005 | Switch, dimmer, cover dispatch |
 | [E2-007](E2-007-command-rpc.md) | Planned | E2-005, E2-006 | Authenticated JSON-RPC surface |
 | [E2-008](E2-008-command-exit-audit.md) | Planned | E2-007 | Hardware, threat, exit evidence |
@@ -32,3 +32,6 @@ updated: 2026-07-11
   contracts; E2-004 is ready.
 - 2026-07-11: E2-004 policy evaluation and command admission limits completed;
   actor token bootstrap and transport authentication remain.
+- 2026-07-11: E2-004 completed with Argon2id actor lifecycle, authenticated RPC
+  and WebSocket transport, spoof-proof causation, and policy-matrix canaries;
+  E2-005 is ready.
