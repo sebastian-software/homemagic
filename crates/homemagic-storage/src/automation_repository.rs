@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use homemagic_application::{
     ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
     AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
-    StoredAutomationVersion,
+    AutomationStepWrite, StoredAutomationVersion,
 };
 use homemagic_domain::{
     AutomationApprovalRecord, AutomationApprovalRequirement, AutomationApprovalState, AutomationId,
@@ -223,6 +223,17 @@ impl AutomationRepository for SqliteRepository {
     ) -> Result<(), homemagic_application::BoxError> {
         run_write(&self.connection, move |transaction| {
             transition_timer(transaction, &timer)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn commit_automation_step(
+        &self,
+        write: AutomationStepWrite,
+    ) -> Result<(), homemagic_application::BoxError> {
+        run_write(&self.connection, move |transaction| {
+            commit_step(transaction, &write)
         })
         .await
         .map_err(boxed)
@@ -837,6 +848,34 @@ fn append_trace(
             encode(step)?
         ],
     )?;
+    Ok(())
+}
+
+fn commit_step(
+    transaction: &Transaction<'_>,
+    write: &AutomationStepWrite,
+) -> Result<(), StorageError> {
+    if write.trace.iter().any(|step| step.run_id != write.run.id)
+        || write
+            .create_timers
+            .iter()
+            .chain(&write.transition_timers)
+            .any(|timer| timer.run_id != write.run.id)
+    {
+        return Err(StorageError::InvalidAutomation(
+            "automation step contains cross-run state",
+        ));
+    }
+    transition_run(transaction, &write.run, write.expected_run_revision)?;
+    for timer in &write.create_timers {
+        create_timer(transaction, timer)?;
+    }
+    for timer in &write.transition_timers {
+        transition_timer(transaction, timer)?;
+    }
+    for step in &write.trace {
+        append_trace(transaction, step)?;
+    }
     Ok(())
 }
 

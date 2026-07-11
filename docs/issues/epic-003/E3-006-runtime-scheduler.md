@@ -42,3 +42,6 @@ updated: 2026-07-11
   occurrence recovery, permanent missed/skipped transitions, bounded run-mode
   admission, run-intent-before-interpretation, and expired-timer readiness. An
   SQLite-backed repeated-window test proves restart does not duplicate a run.
+- 2026-07-11: Added atomic `AutomationStepWrite` persistence for one optimistic
+  run revision, contiguous trace batch, and timer creates/transitions. A forced
+  trace failure proves the preceding run/timer changes roll back together.

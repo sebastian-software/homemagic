@@ -38,3 +38,12 @@ Re-running the same time window finds the advanced occurrence and deterministic
 run instead of recreating either. The SQLite-backed contract repeats a scheduler
 window, verifies one run, then advances through a later missed window and proves
 that no second run appears.
+
+## Atomic interpreter steps
+
+`AutomationStepWrite` commits one optimistic run revision together with its
+contiguous trace batch and timer creates/transitions in one SQLite transaction.
+Every trace step and timer must belong to the same run. A stale run revision,
+invalid timer edge, non-contiguous trace, or cross-run payload rolls the complete
+step back. The contract test deliberately fails trace sequencing after a valid
+run transition and proves the run revision did not advance.

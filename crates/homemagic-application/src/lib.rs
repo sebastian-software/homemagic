@@ -34,7 +34,8 @@ pub use automation_compiler::{AutomationCompilationError, AutomationCompiler};
 pub use automation_repository::{
     ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
     AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
-    AutomationSimulationEvidence, AutomationValidationEvidence, StoredAutomationVersion,
+    AutomationSimulationEvidence, AutomationStepWrite, AutomationValidationEvidence,
+    StoredAutomationVersion,
 };
 pub use automation_scheduler::{
     AutomationScheduler, AutomationSchedulerError, AutomationSchedulerTick,

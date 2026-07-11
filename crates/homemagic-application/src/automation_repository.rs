@@ -128,6 +128,21 @@ pub struct AutomationRecovery {
     pub timers: Vec<AutomationTimer>,
 }
 
+/// One atomic durable interpreter-step commit.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationStepWrite {
+    /// Replacement run aggregate after the step.
+    pub run: AutomationRun,
+    /// Optimistic run revision read before interpretation.
+    pub expected_run_revision: u64,
+    /// Contiguous immutable trace steps emitted by the step.
+    pub trace: Vec<AutomationTraceStep>,
+    /// New idempotent timers created by the step.
+    pub create_timers: Vec<AutomationTimer>,
+    /// Existing timers advanced by their explicit state machine.
+    pub transition_timers: Vec<AutomationTimer>,
+}
+
 /// Independent automation retention cutoff and query bound.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AutomationRetention {
@@ -259,6 +274,9 @@ pub trait AutomationRepository: Send + Sync {
 
     /// Replaces one timer while enforcing its domain state machine.
     async fn transition_automation_timer(&self, timer: AutomationTimer) -> Result<(), BoxError>;
+
+    /// Atomically commits one run revision, trace batch, and timer mutations.
+    async fn commit_automation_step(&self, write: AutomationStepWrite) -> Result<(), BoxError>;
 
     /// Appends one immutable contiguous run-local trace step.
     async fn append_automation_trace(&self, step: AutomationTraceStep) -> Result<(), BoxError>;

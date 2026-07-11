@@ -6,7 +6,7 @@ use std::sync::Arc;
 use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
     AutomationActivation, AutomationCompiler, AutomationDraft, AutomationRepository,
-    AutomationRetention, AutomationScheduler, AutomationSimulationEvidence,
+    AutomationRetention, AutomationScheduler, AutomationSimulationEvidence, AutomationStepWrite,
     AutomationValidationEvidence, BoxError, Clock, FoundationSnapshot, StoredAutomationVersion,
 };
 use homemagic_domain::{
@@ -351,6 +351,62 @@ async fn scheduler_should_materialize_idempotent_runs_and_never_replay_missed() 
         repository.recoverable_automation_work(10).await?.runs.len(),
         1
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn interpreter_step_should_commit_run_trace_and_timer_atomically() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = SqliteRepository::open(directory.path().join("step.sqlite3"))?;
+    let stored = stored_version();
+    repository.store_automation_version(stored.clone()).await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let occurrence = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(occurrence.clone())
+        .await?;
+    let pending = run(&stored, &occurrence, now);
+    repository.create_automation_run(pending.clone()).await?;
+    let mut running = pending.clone();
+    running.state = AutomationRunState::Running;
+    running.revision = 1;
+    let timer = AutomationTimer {
+        id: AutomationTimerId::from_key(&running.id, 0, now.timestamp_millis() + 10),
+        run_id: running.id.clone(),
+        node_id: AutomationPlanNodeId(0),
+        ready_at: now + TimeDelta::milliseconds(10),
+        state: AutomationTimerState::Pending,
+    };
+    repository
+        .commit_automation_step(AutomationStepWrite {
+            run: running.clone(),
+            expected_run_revision: 0,
+            trace: vec![trace(&running, 0, now)],
+            create_timers: vec![timer.clone()],
+            transition_timers: Vec::new(),
+        })
+        .await?;
+    assert_eq!(
+        repository.automation_run(&running.id).await?,
+        Some(running.clone())
+    );
+    assert_eq!(repository.automation_timer(&timer.id).await?, Some(timer));
+
+    let mut completed = running.clone();
+    completed.state = AutomationRunState::Completed;
+    completed.revision = 2;
+    completed.updated_at += TimeDelta::milliseconds(1);
+    let failed = repository
+        .commit_automation_step(AutomationStepWrite {
+            run: completed,
+            expected_run_revision: 1,
+            trace: vec![trace(&running, 2, now)],
+            create_timers: Vec::new(),
+            transition_timers: Vec::new(),
+        })
+        .await;
+    assert!(failed.is_err());
+    assert_eq!(repository.automation_run(&running.id).await?, Some(running));
     Ok(())
 }
 
