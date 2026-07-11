@@ -28,7 +28,7 @@ pub use authentication::{
 };
 pub use command_service::{
     CommandRequest, CommandService, CommandServiceDependencies, CommandServiceError,
-    NoopCommandAuditSink,
+    DomainEventCommandAuditSink, NoopCommandAuditSink,
 };
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use policy::{

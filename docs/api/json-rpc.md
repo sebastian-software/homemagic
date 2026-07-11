@@ -98,6 +98,83 @@ client-supplied `actor` fields are ignored and cannot spoof audit identity.
 {"jsonrpc":"2.0","id":3,"method":"devices.spaces.set","params":{"id":"DEVICE_ID","spaces":["SPACE_ID"]}}
 ```
 
+## Governed command methods
+
+All command methods derive ownership from the authenticated bearer token. There
+is no actor field in the request. Common capability payloads are accepted; raw
+Shelly method names and vendor JSON are not.
+
+`commands.validate` runs the complete durable validation and policy path but
+never crosses the physical dispatch boundary. `commands.execute` uses the same
+path and dispatches only after the received, validated, and allowed facts commit.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "commands.validate",
+  "params": {
+    "device_id": "DEVICE_ID",
+    "endpoint_id": "switch:0",
+    "payload": {"capability": "on_off", "command": {"action": "set", "on": true}},
+    "idempotency_key": "kitchen-on-2026-07-11T20:00Z",
+    "deadline": "2026-07-11T20:00:15Z"
+  }
+}
+```
+
+Use a fresh idempotency key for a new intent. Reusing the same actor/key with the
+same canonical request returns the original command; using it with a different
+target, payload, deadline, precondition, or dry-run mode returns `-32023`.
+Deadlines are absolute UTC timestamps and are checked around awaited adapter
+work. A timeout is a durable command outcome, not permission to retry physical
+dispatch.
+
+`commands.get` and `commands.cancel` reveal only commands owned by the current
+actor. Cancellation is limited to work that has not crossed the dispatch
+boundary. `commands.list` accepts bounded `limit`, `state`, `device_id`, and
+`correlation_id` filters. `commands.audit` accepts `id`, optional
+`after_sequence`, and bounded `limit`; sequences are command-local durable
+cursors.
+
+```json
+{"jsonrpc":"2.0","id":11,"method":"commands.get","params":{"id":"COMMAND_ID"}}
+```
+
+```json
+{"jsonrpc":"2.0","id":12,"method":"commands.list","params":{"state":"confirmed","limit":50}}
+```
+
+```json
+{"jsonrpc":"2.0","id":13,"method":"commands.audit","params":{"id":"COMMAND_ID","after_sequence":2,"limit":50}}
+```
+
+```json
+{"jsonrpc":"2.0","id":14,"method":"commands.cancel","params":{"id":"COMMAND_ID"}}
+```
+
+For a device-query-to-command flow without copying internal IDs, use the
+dependency-free helper from a clean checkout. It validates by default and reads
+the bearer token only from the environment:
+
+```bash
+export HOMEMAGIC_TOKEN='token printed once by actor-bootstrap'
+python3 scripts/rpc-command.py 'Kitchen light' --action on
+```
+
+Only add `--execute` after reviewing the validated command:
+
+```bash
+python3 scripts/rpc-command.py 'Kitchen light' --action on --execute \
+  --idempotency-key 'kitchen-on-2026-07-11T20:00Z'
+```
+
+There is no generic rollback operation: a confirmed physical action is a fact.
+Rollback means issuing a new governed compensating command with a new
+idempotency key. For moving covers, use `position.v1` with `{"action":"stop"}`
+as the software emergency stop, while preserving access to the physical stop or
+power-isolation path. Never depend on network RPC as the only emergency control.
+
 ## Event subscriptions
 
 Open `/rpc/ws` with the same bearer header and send exactly one
@@ -142,6 +219,10 @@ must rebuild from the read APIs.
 | `-32010` | Event cursor expired |
 | `-32011` | Event subscriptions unavailable in this runtime |
 | `-32012` | A second subscription was attempted on one WebSocket |
+| `-32020` | Command service unavailable in this runtime |
+| `-32021` | Command not found or not owned by the actor |
+| `-32022` | Command already crossed the cancellable boundary |
+| `-32023` | Idempotency key conflicts with another canonical request |
 
 ## Durable device shape
 

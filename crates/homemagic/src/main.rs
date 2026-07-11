@@ -10,16 +10,19 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
-    ActorAuthentication, AuthenticateActor, BroadcastDomainEventSink, DeviceRegistry,
-    FoundationWrite, HomeMagicApplication, IntegrationScanner, RepositoryLiveObservationSink,
-    SecretStore, SecretValue,
+    ActorAuthentication, AuthenticateActor, BroadcastDomainEventSink, CommandLimitConfig,
+    CommandLimits, CommandService, CommandServiceDependencies, DeviceRegistry,
+    DomainEventCommandAuditSink, FoundationWrite, HomeMagicApplication, IntegrationScanner,
+    RepositoryLiveObservationSink, SecretStore, SecretValue, SystemClock,
 };
 use homemagic_domain::{
     ActorId, CapabilitySnapshot, FreshnessPolicy, Installation, InstallationId, IntegrationId,
     IntegrationInstance, SecretRef,
 };
 use homemagic_secrets::{FileSecretStore, PlatformSecretStore};
-use homemagic_shelly::{ShellyScanner, ShellySessionSupervisor, ShellyWebSocketRunner};
+use homemagic_shelly::{
+    ShellyCommandAdapter, ShellyScanner, ShellySessionSupervisor, ShellyWebSocketRunner,
+};
 use homemagic_storage::SqliteRepository;
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -515,18 +518,23 @@ async fn scan(discovery_seconds: u64, summary: bool) -> Result<()> {
 }
 
 async fn serve(options: ServeOptions) -> Result<()> {
-    let (application, refresh_requests, authenticator) = durable_application(
+    let freshness_policy =
+        FreshnessPolicy::new(options.stale_after_seconds, options.offline_after_seconds)
+            .context("invalid freshness thresholds")?;
+    let (application, refresh_requests, authenticator, commands) = durable_application(
         options.discovery_seconds,
         &options.database,
         options.secret_backend,
         options.master_key_file.as_deref(),
         &options.secret_vault,
+        freshness_policy,
     )
     .await?;
-    let freshness_policy =
-        FreshnessPolicy::new(options.stale_after_seconds, options.offline_after_seconds)
-            .context("invalid freshness thresholds")?;
     let application = application.with_freshness_policy(freshness_policy);
+    commands
+        .recover(chrono::Utc::now())
+        .await
+        .context("failed to recover durable commands")?;
     let listener = TcpListener::bind(options.bind)
         .await
         .with_context(|| format!("failed to bind HomeMagic API to {}", options.bind))?;
@@ -543,7 +551,7 @@ async fn serve(options: ServeOptions) -> Result<()> {
     ));
     let result = axum::serve(
         listener,
-        homemagic_api::router(application.clone(), authenticator),
+        homemagic_api::router_with_commands(application.clone(), authenticator, commands),
     )
     .with_graceful_shutdown(shutdown_signal(shutdown))
     .await
@@ -562,10 +570,12 @@ async fn durable_application(
     secret_backend: SecretBackend,
     master_key_file: Option<&Path>,
     secret_vault: &Path,
+    freshness_policy: FreshnessPolicy,
 ) -> Result<(
     HomeMagicApplication,
     tokio::sync::mpsc::Receiver<homemagic_domain::DeviceId>,
     Arc<dyn AuthenticateActor>,
+    CommandService,
 )> {
     let repository = Arc::new(
         SqliteRepository::open(database)
@@ -619,18 +629,42 @@ async fn durable_application(
             .with_refresh_requests(refresh_requests)
             .with_registry(application.registry().clone()),
     );
-    let runner =
-        if let (Some(reference), Some(secret_store)) = (integration.credential_ref, secret_store) {
-            ShellyWebSocketRunner::with_authentication(live_sink, secret_store, reference)
-        } else {
-            ShellyWebSocketRunner::new(live_sink)
-        };
+    let runner = if let (Some(reference), Some(secret_store)) =
+        (integration.credential_ref.clone(), secret_store.clone())
+    {
+        ShellyWebSocketRunner::with_authentication(live_sink, secret_store, reference)
+    } else {
+        ShellyWebSocketRunner::new(live_sink)
+    };
     let sessions = Arc::new(ShellySessionSupervisor::new(Arc::new(runner)));
-    let authenticator: Arc<dyn AuthenticateActor> = Arc::new(ActorAuthentication::new(repository));
+    let authenticator: Arc<dyn AuthenticateActor> =
+        Arc::new(ActorAuthentication::new(repository.clone()));
+    let shelly_commands = Arc::new(
+        ShellyCommandAdapter::new(repository.clone(), secret_store)
+            .context("failed to create Shelly command adapter")?,
+    );
+    let command_events = Arc::new(DomainEventCommandAuditSink::new(
+        repository.clone(),
+        repository.clone(),
+        event_sink,
+    ));
+    let commands = CommandService::new(
+        CommandServiceDependencies {
+            foundation: repository.clone(),
+            commands: repository,
+            dispatcher: shelly_commands.clone(),
+            confirmation: shelly_commands,
+            audits: command_events,
+            clock: Arc::new(SystemClock),
+        },
+        CommandLimits::new(CommandLimitConfig::default()),
+        freshness_policy,
+    );
     Ok((
         application.with_sessions(sessions),
         refresh_receiver,
         authenticator,
+        commands,
     ))
 }
 

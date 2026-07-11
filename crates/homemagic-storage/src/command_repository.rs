@@ -72,6 +72,19 @@ impl CommandRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn actor_commands(
+        &self,
+        actor_id: &ActorId,
+        limit: usize,
+    ) -> Result<Vec<CommandAggregate>, BoxError> {
+        let actor_id = actor_id.clone();
+        run_read(&self.connection, move |connection| {
+            load_actor_commands(connection, &actor_id, limit)
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn transition_command(
         &self,
         command: CommandAggregate,
@@ -368,6 +381,30 @@ fn load_command(
         .optional()?
         .map(|payload| decode(&payload))
         .transpose()
+}
+
+fn load_actor_commands(
+    connection: &Connection,
+    actor_id: &ActorId,
+    limit: usize,
+) -> Result<Vec<CommandAggregate>, StorageError> {
+    let limit = limit.clamp(1, MAX_QUERY_PAGE);
+    let mut statement = connection.prepare(
+        "SELECT payload_json FROM commands
+         WHERE actor_id = ?1
+         ORDER BY received_at DESC, id DESC
+         LIMIT ?2",
+    )?;
+    let payloads = statement
+        .query_map(
+            params![actor_id.to_string(), to_i64(limit as u64)?],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    payloads
+        .into_iter()
+        .map(|payload| decode(&payload))
+        .collect()
 }
 
 fn transition_command(

@@ -12,11 +12,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use homemagic_application::{
-    ApplicationError, AuthenticateActor, DeviceMetadataUpdate, HomeMagicApplication,
+    ApplicationError, AuthenticateActor, CommandRequest, CommandService, CommandServiceError,
+    DeviceMetadataUpdate, HomeMagicApplication,
 };
 use homemagic_domain::{
-    Actor, AvailabilityState, DeviceId, DeviceLifecycle, EventId, FreshnessState, RepairId,
-    RepairStatus, SpaceId,
+    Actor, AvailabilityState, CommandId, CommandPayload, CommandState, CorrelationId, DeviceId,
+    DeviceLifecycle, EndpointId, EventId, ExpectedObservation, FreshnessState, IdempotencyKey,
+    RepairId, RepairStatus, SpaceId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -30,6 +32,7 @@ const EVENT_WAKE_CAPACITY: usize = 256;
 struct ApiState {
     application: HomeMagicApplication,
     authenticator: Arc<dyn AuthenticateActor>,
+    commands: Option<CommandService>,
 }
 
 /// Builds the authenticated HTTP router for the current application instance.
@@ -45,6 +48,25 @@ pub fn router(
         .with_state(ApiState {
             application,
             authenticator,
+            commands: None,
+        })
+}
+
+/// Builds the authenticated router with the governed command control plane.
+pub fn router_with_commands(
+    application: HomeMagicApplication,
+    authenticator: Arc<dyn AuthenticateActor>,
+    commands: CommandService,
+) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/rpc", post(rpc))
+        .route("/rpc/ws", get(rpc_websocket))
+        .layer(TraceLayer::new_for_http())
+        .with_state(ApiState {
+            application,
+            authenticator,
+            commands: Some(commands),
         })
 }
 
@@ -61,7 +83,8 @@ async fn rpc(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    Json(dispatch(&state.application, &actor, request).await).into_response()
+    Json(dispatch_with_commands(&state.application, state.commands.as_ref(), &actor, request).await)
+        .into_response()
 }
 
 async fn rpc_websocket(
@@ -415,8 +438,59 @@ struct RepairGetParams {
     id: String,
 }
 
+#[derive(Deserialize)]
+struct CommandExecuteParams {
+    device_id: DeviceId,
+    endpoint_id: EndpointId,
+    payload: CommandPayload,
+    idempotency_key: IdempotencyKey,
+    deadline: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    expected: Option<ExpectedObservation>,
+    #[serde(default)]
+    correlation_id: Option<CorrelationId>,
+    #[serde(default)]
+    causation_event_id: Option<EventId>,
+}
+
+#[derive(Deserialize)]
+struct CommandIdParams {
+    id: CommandId,
+}
+
+#[derive(Default, Deserialize)]
+struct CommandListParams {
+    #[serde(default = "default_command_limit")]
+    limit: usize,
+    state: Option<CommandState>,
+    device_id: Option<DeviceId>,
+    correlation_id: Option<CorrelationId>,
+}
+
+#[derive(Deserialize)]
+struct CommandAuditParams {
+    id: CommandId,
+    after_sequence: Option<u64>,
+    #[serde(default = "default_command_limit")]
+    limit: usize,
+}
+
+const fn default_command_limit() -> usize {
+    50
+}
+
+#[cfg(test)]
 async fn dispatch(
     application: &HomeMagicApplication,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    dispatch_with_commands(application, None, actor, request).await
+}
+
+async fn dispatch_with_commands(
+    application: &HomeMagicApplication,
+    commands: Option<&CommandService>,
     actor: &Actor,
     request: RpcRequest,
 ) -> RpcResponse {
@@ -437,6 +511,16 @@ async fn dispatch(
         }
         "repairs.list" => repair_list(application, request.id, request.params).await,
         "repairs.get" => repair_get(application, request.id, request.params).await,
+        "commands.validate" => {
+            command_execute(commands, actor, request.id, request.params, true).await
+        }
+        "commands.execute" => {
+            command_execute(commands, actor, request.id, request.params, false).await
+        }
+        "commands.get" => command_get(commands, actor, request.id, request.params).await,
+        "commands.cancel" => command_cancel(commands, actor, request.id, request.params).await,
+        "commands.list" => command_list(commands, actor, request.id, request.params).await,
+        "commands.audit" => command_audit(commands, actor, request.id, request.params).await,
         "devices.refresh" => match application.refresh().await {
             Ok(integrations) => {
                 let devices = application.registry().list().await;
@@ -453,6 +537,179 @@ async fn dispatch(
             ),
         },
         _ => RpcResponse::error(request.id, -32601, "Method not found", None),
+    }
+}
+
+fn require_commands<'a>(
+    commands: Option<&'a CommandService>,
+    id: &Value,
+) -> Result<&'a CommandService, Box<RpcResponse>> {
+    commands.ok_or_else(|| {
+        Box::new(RpcResponse::error(
+            id.clone(),
+            -32020,
+            "Command service unavailable",
+            None,
+        ))
+    })
+}
+
+async fn command_execute(
+    commands: Option<&CommandService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+    dry_run: bool,
+) -> RpcResponse {
+    let commands = match require_commands(commands, &id) {
+        Ok(commands) => commands,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<CommandExecuteParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    let now = chrono::Utc::now();
+    let request = CommandRequest {
+        device_id: params.device_id,
+        endpoint_id: params.endpoint_id,
+        payload: params.payload,
+        idempotency_key: params.idempotency_key,
+        deadline: params.deadline,
+        expected: params.expected,
+        dry_run,
+        correlation_id: params.correlation_id.unwrap_or_else(CorrelationId::new),
+        causation_event_id: params.causation_event_id,
+    };
+    match commands.execute(actor, request, now).await {
+        Ok(command) => RpcResponse::success(id, json!({"command": command})),
+        Err(error) => command_error(id, error),
+    }
+}
+
+async fn command_get(
+    commands: Option<&CommandService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let commands = match require_commands(commands, &id) {
+        Ok(commands) => commands,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<CommandIdParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match commands.get(&actor.id, &params.id).await {
+        Ok(Some(command)) => RpcResponse::success(id, json!({"command": command})),
+        Ok(None) => RpcResponse::error(id, -32021, "Command not found", None),
+        Err(error) => command_error(id, error),
+    }
+}
+
+async fn command_cancel(
+    commands: Option<&CommandService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let commands = match require_commands(commands, &id) {
+        Ok(commands) => commands,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<CommandIdParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match commands
+        .cancel(&actor.id, &params.id, chrono::Utc::now())
+        .await
+    {
+        Ok(command) => RpcResponse::success(id, json!({"command": command})),
+        Err(error) => command_error(id, error),
+    }
+}
+
+async fn command_list(
+    commands: Option<&CommandService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let commands = match require_commands(commands, &id) {
+        Ok(commands) => commands,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<CommandListParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match commands.list(&actor.id, params.limit).await {
+        Ok(commands) => {
+            let commands = commands
+                .into_iter()
+                .filter(|command| params.state.is_none_or(|state| command.state == state))
+                .filter(|command| {
+                    params
+                        .device_id
+                        .as_ref()
+                        .is_none_or(|device| command.envelope.device_id == *device)
+                })
+                .filter(|command| {
+                    params
+                        .correlation_id
+                        .as_ref()
+                        .is_none_or(|correlation| command.envelope.correlation_id == *correlation)
+                })
+                .collect::<Vec<_>>();
+            RpcResponse::success(id, json!({"commands": commands}))
+        }
+        Err(error) => command_error(id, error),
+    }
+}
+
+async fn command_audit(
+    commands: Option<&CommandService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let commands = match require_commands(commands, &id) {
+        Ok(commands) => commands,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<CommandAuditParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match commands
+        .audit(&actor.id, &params.id, params.after_sequence, params.limit)
+        .await
+    {
+        Ok(audit) => RpcResponse::success(id, json!({"audit": audit})),
+        Err(error) => command_error(id, error),
+    }
+}
+
+fn command_error(id: Value, error: CommandServiceError) -> RpcResponse {
+    match error {
+        CommandServiceError::DeviceNotFound => {
+            RpcResponse::error(id, -32004, "Device not found", None)
+        }
+        CommandServiceError::CommandNotFound | CommandServiceError::ActorMismatch => {
+            RpcResponse::error(id, -32021, "Command not found", None)
+        }
+        CommandServiceError::NotCancellable => {
+            RpcResponse::error(id, -32022, "Command is not cancellable", None)
+        }
+        CommandServiceError::IdempotencyConflict(command_id) => RpcResponse::error(
+            id,
+            -32023,
+            "Idempotency key conflict",
+            Some(json!({"command_id": command_id})),
+        ),
+        _ => RpcResponse::error(id, -32000, "Command operation failed", None),
     }
 }
 
@@ -735,19 +992,25 @@ fn application_error(id: Value, error: ApplicationError) -> RpcResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
     use chrono::Utc;
     use futures_util::{SinkExt, StreamExt};
     use homemagic_application::{
-        ActorAuthenticationError, AuthenticateActor, BroadcastDomainEventSink, DeviceRegistry,
-        FoundationRepository, FoundationWrite, MemoryFoundationRepository, NoopDomainEventSink,
+        ActorAuthenticationError, AuthenticateActor, BroadcastDomainEventSink, CommandDispatcher,
+        CommandLimitConfig, CommandLimits, CommandRepository, CommandServiceDependencies,
+        DeviceRegistry, FoundationRepository, FoundationWrite, MemoryFoundationRepository,
+        NoopCommandAuditSink, NoopDomainEventSink, SystemClock,
     };
     use homemagic_domain::{
-        ActorId, CausationMetadata, CorrelationId, DeviceRecord, DeviceSnapshot, DomainEvent,
-        DomainEventKind, EventId, InstallationId, IntegrationId,
+        ActorGrant, ActorId, AdapterAcknowledgement, CapabilitySnapshot, CausationMetadata,
+        CommandAction, CommandAggregate, CommandEnvelope, CommandFailure, CorrelationId,
+        DeviceRecord, DeviceSnapshot, DomainEvent, DomainEventKind, EndpointSnapshot, EventId,
+        GrantId, GrantScope, Installation, InstallationId, IntegrationId, IntegrationInstance,
+        NetworkLocation, OnOffCommand, RiskClass,
     };
+    use homemagic_storage::SqliteRepository;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
     use super::*;
@@ -767,6 +1030,158 @@ mod tests {
     }
 
     struct FixedAuthenticator(Actor);
+
+    struct FixtureDispatcher;
+
+    #[async_trait::async_trait]
+    impl CommandDispatcher for FixtureDispatcher {
+        async fn dispatch(
+            &self,
+            _command: &CommandEnvelope,
+        ) -> Result<AdapterAcknowledgement, CommandFailure> {
+            panic!("validation RPC must never dispatch")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl homemagic_application::CommandConfirmation for FixtureDispatcher {
+        async fn confirm(
+            &self,
+            _command: &CommandAggregate,
+        ) -> Result<
+            homemagic_application::CommandConfirmationOutcome,
+            homemagic_application::BoxError,
+        > {
+            panic!("validation RPC must never confirm")
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the RPC integration fixture assembles every real application boundary"
+    )]
+    async fn command_fixture() -> (
+        tempfile::TempDir,
+        HomeMagicApplication,
+        CommandService,
+        Actor,
+        DeviceId,
+        EndpointId,
+    ) {
+        let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+        let repository = Arc::new(
+            SqliteRepository::open(directory.path().join("api.sqlite3"))
+                .unwrap_or_else(|error| panic!("repository: {error}")),
+        );
+        let now = Utc::now();
+        let installation_id = InstallationId::new();
+        let integration_id = IntegrationId::from_native(&installation_id, "test", "local");
+        let device_id = DeviceId::from_integration(&integration_id, "relay");
+        let endpoint_id = EndpointId::new("switch:0");
+        let mut device = DeviceRecord::candidate(
+            installation_id.clone(),
+            integration_id.clone(),
+            DeviceSnapshot {
+                id: device_id.clone(),
+                native_id: "relay".to_owned(),
+                integration: "test".to_owned(),
+                name: "Relay".to_owned(),
+                manufacturer: "Test".to_owned(),
+                model: "Fixture".to_owned(),
+                network: vec![NetworkLocation {
+                    host: "127.0.0.1".to_owned(),
+                    port: 80,
+                }],
+                endpoints: vec![EndpointSnapshot {
+                    id: endpoint_id.clone(),
+                    name: None,
+                    capabilities: vec![CapabilitySnapshot::OnOff {
+                        on: false,
+                        risk: RiskClass::Comfort,
+                    }],
+                }],
+                observed_at: now,
+                vendor_data: BTreeMap::new(),
+            },
+            now,
+        );
+        device
+            .timestamps
+            .record_success(now)
+            .unwrap_or_else(|error| panic!("device success: {error}"));
+        repository
+            .apply(FoundationWrite {
+                installations: vec![Installation {
+                    id: installation_id.clone(),
+                    name: "Home".to_owned(),
+                    created_at: now,
+                }],
+                integrations: vec![IntegrationInstance {
+                    id: integration_id,
+                    installation_id: installation_id.clone(),
+                    adapter: "test".to_owned(),
+                    instance_key: "local".to_owned(),
+                    name: "Test".to_owned(),
+                    credential_ref: None,
+                }],
+                devices: vec![device],
+                ..FoundationWrite::default()
+            })
+            .await
+            .unwrap_or_else(|error| panic!("seed foundation: {error}"));
+        let actor = Actor {
+            id: ActorId::new(),
+            installation_id,
+            name: "Agent".to_owned(),
+            enabled: true,
+            created_at: now,
+        };
+        repository
+            .store_actor(actor.clone(), None)
+            .await
+            .unwrap_or_else(|error| panic!("seed actor: {error}"));
+        repository
+            .replace_actor_grants(
+                &actor.id,
+                vec![ActorGrant {
+                    id: GrantId::new(),
+                    actor_id: actor.id.clone(),
+                    actions: BTreeSet::from([CommandAction::Execute]),
+                    scope: GrantScope::Device {
+                        device_id: device_id.clone(),
+                    },
+                    maximum_risk: RiskClass::Comfort,
+                    enabled: true,
+                }],
+            )
+            .await
+            .unwrap_or_else(|error| panic!("seed grant: {error}"));
+        let adapter = Arc::new(FixtureDispatcher);
+        let service = CommandService::new(
+            CommandServiceDependencies {
+                foundation: repository.clone(),
+                commands: repository.clone(),
+                dispatcher: adapter.clone(),
+                confirmation: adapter,
+                audits: Arc::new(NoopCommandAuditSink),
+                clock: Arc::new(SystemClock),
+            },
+            CommandLimits::new(CommandLimitConfig::default()),
+            homemagic_domain::FreshnessPolicy::default(),
+        );
+        let application =
+            HomeMagicApplication::from_repository(repository, Arc::new(NoopDomainEventSink), [])
+                .await
+                .unwrap_or_else(|error| panic!("application: {error}"));
+        (
+            directory,
+            application,
+            service,
+            actor,
+            device_id,
+            endpoint_id,
+        )
+    }
 
     #[async_trait::async_trait]
     impl AuthenticateActor for FixedAuthenticator {
@@ -809,6 +1224,7 @@ mod tests {
         let state = ApiState {
             application: application(),
             authenticator: Arc::new(FixedAuthenticator(expected.clone())),
+            commands: None,
         };
         let missing = HeaderMap::new();
         let missing_status = match authenticate(&state, &missing).await {
@@ -826,6 +1242,163 @@ mod tests {
                 .await
                 .unwrap_or_else(|_| panic!("fixture token should authenticate")),
             expected
+        );
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one scenario proves parity, queries, errors, and actor isolation end to end"
+    )]
+    async fn command_rpc_should_share_internal_path_and_enforce_actor_ownership() {
+        let (_directory, application, commands, actor, device_id, endpoint_id) =
+            command_fixture().await;
+        let deadline = Utc::now() + chrono::TimeDelta::seconds(30);
+        let key = IdempotencyKey::new("rpc-parity")
+            .unwrap_or_else(|error| panic!("idempotency key: {error}"));
+        let internal = commands
+            .execute(
+                &actor,
+                CommandRequest {
+                    device_id: device_id.clone(),
+                    endpoint_id: endpoint_id.clone(),
+                    payload: CommandPayload::OnOff(OnOffCommand::Set { on: true }),
+                    idempotency_key: key.clone(),
+                    deadline,
+                    expected: None,
+                    dry_run: true,
+                    correlation_id: CorrelationId::new(),
+                    causation_event_id: None,
+                },
+                Utc::now(),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("internal validation: {error}"));
+        let response = dispatch_with_commands(
+            &application,
+            Some(&commands),
+            &actor,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(1),
+                method: "commands.validate".to_owned(),
+                params: json!({
+                    "device_id": device_id,
+                    "endpoint_id": endpoint_id,
+                    "payload": {"capability": "on_off", "command": {"action": "set", "on": true}},
+                    "idempotency_key": key,
+                    "deadline": deadline
+                }),
+            },
+        )
+        .await;
+        let rpc_command: CommandAggregate = serde_json::from_value(
+            response
+                .result
+                .and_then(|value| value.get("command").cloned())
+                .unwrap_or_else(|| panic!("command result missing")),
+        )
+        .unwrap_or_else(|error| panic!("decode RPC command: {error}"));
+
+        assert_eq!(rpc_command.envelope.id, internal.envelope.id);
+        assert_eq!(rpc_command.envelope.actor_id, actor.id);
+        assert_eq!(rpc_command.state, CommandState::Validated);
+
+        let listed = dispatch_with_commands(
+            &application,
+            Some(&commands),
+            &actor,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(3),
+                method: "commands.list".to_owned(),
+                params: json!({"state": "validated", "limit": 10}),
+            },
+        )
+        .await;
+        assert_eq!(
+            listed
+                .result
+                .and_then(|value| value.get("commands").and_then(Value::as_array).cloned())
+                .map_or(0, |commands| commands.len()),
+            1
+        );
+
+        let audit = dispatch_with_commands(
+            &application,
+            Some(&commands),
+            &actor,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(4),
+                method: "commands.audit".to_owned(),
+                params: json!({"id": internal.envelope.id, "after_sequence": 0, "limit": 10}),
+            },
+        )
+        .await;
+        assert_eq!(
+            audit
+                .result
+                .and_then(|value| value.get("audit").and_then(Value::as_array).cloned())
+                .and_then(|audit| audit.first().cloned())
+                .and_then(|audit| audit.get("to").cloned()),
+            Some(json!("validated"))
+        );
+
+        let conflict = dispatch_with_commands(
+            &application,
+            Some(&commands),
+            &actor,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(5),
+                method: "commands.validate".to_owned(),
+                params: json!({
+                    "device_id": device_id,
+                    "endpoint_id": endpoint_id,
+                    "payload": {"capability": "on_off", "command": {"action": "set", "on": false}},
+                    "idempotency_key": key,
+                    "deadline": deadline
+                }),
+            },
+        )
+        .await;
+        assert_eq!(conflict.error.map(|error| error.code), Some(-32023));
+
+        let terminal_cancel = dispatch_with_commands(
+            &application,
+            Some(&commands),
+            &actor,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(6),
+                method: "commands.cancel".to_owned(),
+                params: json!({"id": internal.envelope.id}),
+            },
+        )
+        .await;
+        assert_eq!(terminal_cancel.error.map(|error| error.code), Some(-32022));
+
+        let outsider = Actor {
+            id: ActorId::new(),
+            ..actor.clone()
+        };
+        let hidden = dispatch_with_commands(
+            &application,
+            Some(&commands),
+            &outsider,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(2),
+                method: "commands.get".to_owned(),
+                params: json!({"id": internal.envelope.id}),
+            },
+        )
+        .await;
+        assert_eq!(
+            hidden.error.map(|error| error.code),
+            Some(-32021),
+            "cross-actor lookup must be indistinguishable from absence"
         );
     }
 

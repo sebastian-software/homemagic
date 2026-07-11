@@ -121,15 +121,15 @@ from ADR-0009.
 
 ## Workstream E2.5: RPC and operator surface
 
-- [ ] Add `commands.validate`.
-- [ ] Add `commands.execute`.
-- [ ] Add `commands.get`.
-- [ ] Add `commands.cancel` for cancellable pending work.
-- [ ] Add command/audit query filters by actor, target, status, and correlation.
-- [ ] Support dry-run validation without dispatch.
-- [ ] Provide CLI examples that do not require constructing internal IDs manually
+- [x] Add `commands.validate`.
+- [x] Add `commands.execute`.
+- [x] Add `commands.get`.
+- [x] Add `commands.cancel` for cancellable pending work.
+- [x] Add command/audit query filters by actor, target, status, and correlation.
+- [x] Support dry-run validation without dispatch.
+- [x] Provide CLI examples that do not require constructing internal IDs manually
   after selecting a device by query.
-- [ ] Document safe rollback and emergency stop behavior.
+- [x] Document safe rollback and emergency stop behavior.
 
 ## Test and verification checklist
 
@@ -158,7 +158,7 @@ from ADR-0009.
   adapter dispatch.
 - [x] AC6: Command and audit history survives restart and contains a complete
   causation chain.
-- [ ] AC7: RPC, CLI, and internal application calls exercise the same validation,
+- [x] AC7: RPC, CLI, and internal application calls exercise the same validation,
   authorization, and dispatch path.
 
 ## Exit gate
@@ -205,3 +205,6 @@ from ADR-0009.
   authentication, push-first confirmation with one bounded read fallback,
   explicit toggle targets, and fixtures proving transport failures cannot cause
   an automatic second physical dispatch.
+- 2026-07-11: Completed E2-007 authenticated command and audit RPCs over the
+  single application path, bounded actor-owned queries, durable transition
+  events, startup recovery, safe error mapping, and query-to-command examples.

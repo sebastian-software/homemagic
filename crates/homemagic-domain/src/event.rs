@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AvailabilityState, CapabilityDescriptor, CorrelationId, DeviceId, DeviceLifecycle, EndpointId,
-    EventId, LifecycleTrigger, RepairId,
+    AvailabilityState, CapabilityDescriptor, CommandId, CommandState, CorrelationId, DeviceId,
+    DeviceLifecycle, EndpointId, EventId, LifecycleTrigger, RepairId,
 };
 
 /// Causal metadata shared across commands, observations, and events.
@@ -79,5 +79,16 @@ pub enum DomainEventKind {
     MetadataChanged {
         /// Stable field names changed by this operation.
         fields: Vec<String>,
+    },
+    /// A governed command lifecycle transition became durable.
+    CommandTransitioned {
+        /// Stable command identity.
+        command_id: CommandId,
+        /// Previous durable state; absent for initial receipt.
+        from: Option<CommandState>,
+        /// Newly durable state.
+        to: CommandState,
+        /// Command-local monotonic sequence.
+        sequence: u64,
     },
 }

@@ -232,6 +232,13 @@ pub trait CommandRepository: Send + Sync {
     /// Loads one current command aggregate.
     async fn command(&self, command_id: &CommandId) -> Result<Option<CommandAggregate>, BoxError>;
 
+    /// Loads a bounded newest-first page owned by one actor.
+    async fn actor_commands(
+        &self,
+        actor_id: &ActorId,
+        limit: usize,
+    ) -> Result<Vec<CommandAggregate>, BoxError>;
+
     /// Atomically replaces the current aggregate and appends its audit transition.
     async fn transition_command(
         &self,

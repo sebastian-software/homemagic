@@ -8,18 +8,19 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
-    ActorCredential, BoxError, CanonicalRequestHash, Clock, CommandAuditSink, CommandConfirmation,
-    CommandConfirmationOutcome, CommandCreateOutcome, CommandDispatcher, CommandLimitConfig,
-    CommandLimits, CommandRepository, CommandRequest, CommandService, CommandServiceDependencies,
-    FoundationRepository, FoundationWrite,
+    ActorCredential, BoxError, BroadcastDomainEventSink, CanonicalRequestHash, Clock,
+    CommandAuditSink, CommandConfirmation, CommandConfirmationOutcome, CommandCreateOutcome,
+    CommandDispatcher, CommandLimitConfig, CommandLimits, CommandRepository, CommandRequest,
+    CommandService, CommandServiceDependencies, DomainEventCommandAuditSink, FoundationRepository,
+    FoundationWrite,
 };
 use homemagic_domain::{
     Actor, ActorGrant, AdapterAcknowledgement, AuditId, CapabilityDescriptor, CapabilitySnapshot,
     CommandAction, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandFailure,
     CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceRecord, DeviceSnapshot,
-    EndpointId, EndpointSnapshot, GrantId, GrantScope, IdempotencyKey, Installation,
-    InstallationId, IntegrationId, IntegrationInstance, ObservedConfirmation, OnOffCommand,
-    PolicyDecision, PolicyReason, RiskClass,
+    DomainEventKind, EndpointId, EndpointSnapshot, GrantId, GrantScope, IdempotencyKey,
+    Installation, InstallationId, IntegrationId, IntegrationInstance, ObservedConfirmation,
+    OnOffCommand, PolicyDecision, PolicyReason, RiskClass,
 };
 use homemagic_storage::SqliteRepository;
 use tempfile::TempDir;
@@ -331,6 +332,48 @@ async fn execute_should_commit_each_fact_and_retry_without_redispatch() -> TestR
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len(),
         5
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn committed_audit_should_project_to_durable_typed_event() -> TestResult {
+    let fixture = Fixture::new(true).await?;
+    let command = fixture
+        .service
+        .execute(
+            &fixture.actor,
+            fixture.request("event", true),
+            fixture.clock.now(),
+        )
+        .await?;
+    let audit = fixture
+        .repository
+        .command_audit(&command.envelope.id, Some(0), 1)
+        .await?
+        .pop()
+        .ok_or("validated audit missing")?;
+    let sink = DomainEventCommandAuditSink::new(
+        fixture.repository.clone(),
+        fixture.repository.clone(),
+        Arc::new(BroadcastDomainEventSink::new(8)),
+    );
+    sink.publish(&audit).await?;
+    let page = fixture.repository.events_after(0, 10).await?;
+
+    assert_eq!(page.events.len(), 1);
+    assert!(matches!(
+        &page.events[0].event.kind,
+        DomainEventKind::CommandTransitioned {
+            command_id,
+            to: CommandState::Validated,
+            sequence: 1,
+            ..
+        } if command_id == &command.envelope.id
+    ));
+    assert_eq!(
+        page.events[0].event.causation.actor.as_deref(),
+        Some(fixture.actor.id.to_string().as_str())
     );
     Ok(())
 }

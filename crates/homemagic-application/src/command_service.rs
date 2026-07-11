@@ -5,9 +5,9 @@ use chrono::{DateTime, Utc};
 use homemagic_domain::{
     Actor, ActorId, AuditId, CapabilityDescriptor, CapabilitySnapshot, CommandAggregate,
     CommandAuditRecord, CommandEnvelope, CommandErrorCode, CommandFailure, CommandId,
-    CommandPayload, CommandState, ConstraintState, CorrelationId, DeviceId, EndpointId, EventId,
-    ExpectedObservation, FreshnessPolicy, FreshnessState, IdempotencyKey, OnOffCommand,
-    PolicyInput, PositionCommand, RiskClass,
+    CommandPayload, CommandState, ConstraintState, CorrelationId, DeviceId, DomainEvent,
+    DomainEventKind, EndpointId, EventId, ExpectedObservation, FreshnessPolicy, FreshnessState,
+    IdempotencyKey, OnOffCommand, PolicyInput, PositionCommand, RiskClass,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -16,10 +16,12 @@ use thiserror::Error;
 use crate::{
     BoxError, CanonicalRequestHash, Clock, CommandAuditSink, CommandConfirmation,
     CommandConfirmationOutcome, CommandCreateOutcome, CommandDispatcher, CommandLimits,
-    CommandRepository, FoundationRepository, PolicyEvaluator,
+    CommandRepository, DomainEventSink, FoundationRepository, FoundationWrite, PolicyEvaluator,
 };
 
 const RECOVERY_PAGE: usize = 256;
+const MAX_COMMAND_QUERY_PAGE: usize = 256;
+const MAX_AUDIT_QUERY_PAGE: usize = 256;
 
 /// Transport-neutral request for one common-capability command.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -232,6 +234,47 @@ impl CommandService {
         }
     }
 
+    /// Lists a bounded newest-first page owned by the authenticated actor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a durable repository failure.
+    pub async fn list(
+        &self,
+        actor_id: &ActorId,
+        limit: usize,
+    ) -> Result<Vec<CommandAggregate>, CommandServiceError> {
+        self.commands
+            .actor_commands(actor_id, limit.clamp(1, MAX_COMMAND_QUERY_PAGE))
+            .await
+            .map_err(CommandServiceError::Repository)
+    }
+
+    /// Loads a bounded command-local audit page after verifying ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns lookup, ownership, or durable repository failures.
+    pub async fn audit(
+        &self,
+        actor_id: &ActorId,
+        command_id: &CommandId,
+        after_sequence: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<CommandAuditRecord>, CommandServiceError> {
+        self.get(actor_id, command_id)
+            .await?
+            .ok_or(CommandServiceError::CommandNotFound)?;
+        self.commands
+            .command_audit(
+                command_id,
+                after_sequence,
+                limit.clamp(1, MAX_AUDIT_QUERY_PAGE),
+            )
+            .await
+            .map_err(CommandServiceError::Repository)
+    }
+
     /// Cancels eligible pre-dispatch work as a durable terminal transition.
     ///
     /// # Errors
@@ -247,10 +290,12 @@ impl CommandService {
             .get(actor_id, command_id)
             .await?
             .ok_or(CommandServiceError::CommandNotFound)?;
-        if !matches!(
-            command.state,
-            CommandState::Received | CommandState::Validated
-        ) {
+        if command.is_terminal()
+            || !matches!(
+                command.state,
+                CommandState::Received | CommandState::Validated
+            )
+        {
             return Err(CommandServiceError::NotCancellable);
         }
         self.transition(&mut command, CommandState::Cancelled, now)
@@ -706,5 +751,64 @@ pub struct NoopCommandAuditSink;
 impl CommandAuditSink for NoopCommandAuditSink {
     async fn publish(&self, _audit: &CommandAuditRecord) -> Result<(), BoxError> {
         Ok(())
+    }
+}
+
+/// Projects committed command transitions into the durable domain-event channel.
+pub struct DomainEventCommandAuditSink {
+    commands: Arc<dyn CommandRepository>,
+    foundation: Arc<dyn FoundationRepository>,
+    events: Arc<dyn DomainEventSink>,
+}
+
+impl DomainEventCommandAuditSink {
+    /// Creates a durable command-event projector.
+    #[must_use]
+    pub fn new(
+        commands: Arc<dyn CommandRepository>,
+        foundation: Arc<dyn FoundationRepository>,
+        events: Arc<dyn DomainEventSink>,
+    ) -> Self {
+        Self {
+            commands,
+            foundation,
+            events,
+        }
+    }
+}
+
+#[async_trait]
+impl CommandAuditSink for DomainEventCommandAuditSink {
+    async fn publish(&self, audit: &CommandAuditRecord) -> Result<(), BoxError> {
+        let command =
+            self.commands
+                .command(&audit.command_id)
+                .await?
+                .ok_or_else(|| -> BoxError {
+                    "committed command missing during event projection".into()
+                })?;
+        let event = DomainEvent {
+            id: EventId::new(),
+            device_id: command.envelope.device_id,
+            occurred_at: audit.occurred_at,
+            causation: homemagic_domain::CausationMetadata {
+                correlation_id: audit.correlation_id.clone(),
+                causation_event_id: audit.causation_event_id.clone(),
+                actor: Some(audit.actor_id.to_string()),
+            },
+            kind: DomainEventKind::CommandTransitioned {
+                command_id: audit.command_id.clone(),
+                from: audit.from,
+                to: audit.to,
+                sequence: audit.sequence,
+            },
+        };
+        self.foundation
+            .apply(FoundationWrite {
+                events: vec![event.clone()],
+                ..FoundationWrite::default()
+            })
+            .await?;
+        self.events.publish(&[event]).await
     }
 }
