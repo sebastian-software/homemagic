@@ -356,6 +356,21 @@ impl HomeMagicApplication {
         self.repairs.read().await.values().cloned().collect()
     }
 
+    /// Returns one retained repair record by stable identity.
+    pub async fn repair(&self, id: &RepairId) -> Option<RepairRecord> {
+        self.repairs.read().await.get(id).cloned()
+    }
+
+    /// Calculates device freshness with the runtime's configured thresholds.
+    #[must_use]
+    pub fn device_freshness(
+        &self,
+        device: &DeviceRecord,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> FreshnessState {
+        device.freshness_at(self.freshness_policy, now)
+    }
+
     /// Returns secret-safe repository and event-cursor health.
     ///
     /// # Errors

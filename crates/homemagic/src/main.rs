@@ -162,6 +162,10 @@ async fn serve(options: ServeOptions) -> Result<()> {
         &options.secret_vault,
     )
     .await?;
+    let freshness_policy =
+        FreshnessPolicy::new(options.stale_after_seconds, options.offline_after_seconds)
+            .context("invalid freshness thresholds")?;
+    let application = application.with_freshness_policy(freshness_policy);
     let listener = TcpListener::bind(options.bind)
         .await
         .with_context(|| format!("failed to bind HomeMagic API to {}", options.bind))?;
@@ -172,8 +176,7 @@ async fn serve(options: ServeOptions) -> Result<()> {
         worker_application,
         Duration::from_secs(options.discovery_interval_seconds.max(1)),
         Duration::from_secs(options.refresh_deadline_seconds.max(1)),
-        FreshnessPolicy::new(options.stale_after_seconds, options.offline_after_seconds)
-            .context("invalid freshness thresholds")?,
+        freshness_policy,
         refresh_requests,
         shutdown_requested,
     ));

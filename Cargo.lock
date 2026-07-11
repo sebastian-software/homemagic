@@ -961,6 +961,7 @@ name = "homemagic-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "homemagic-application",
  "homemagic-domain",
  "serde",
