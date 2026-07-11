@@ -1,5 +1,6 @@
 //! `SQLite` persistence adapter for the `HomeMagic` device foundation.
 
+mod backup;
 mod migrations;
 mod repository;
 
@@ -12,6 +13,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
+pub use backup::BackupReport;
 pub use repository::SqliteRepository;
 
 use migrations::{CURRENT_SCHEMA_VERSION, migrate};
@@ -25,6 +27,9 @@ pub enum StorageError {
     /// Persisted JSON did not match its versioned domain contract.
     #[error("persisted domain payload is invalid: {0}")]
     Json(#[from] serde_json::Error),
+    /// Filesystem operation failed.
+    #[error("storage filesystem operation failed: {0}")]
+    Io(#[from] std::io::Error),
     /// Database mutex was poisoned by a prior panic.
     #[error("database connection lock is poisoned")]
     ConnectionPoisoned,
@@ -51,6 +56,23 @@ pub enum StorageError {
         /// Invalid cursor value.
         value: i64,
     },
+    /// Backup or restore destination has no usable file name.
+    #[error("backup or restore destination must name a database file")]
+    InvalidDestination,
+    /// Database failed integrity validation.
+    #[error("database integrity validation failed")]
+    InvalidIntegrity,
+    /// Backup schema was not the expected current version.
+    #[error("backup schema {found} does not match current schema {expected}")]
+    BackupSchemaMismatch {
+        /// Schema found in the backup.
+        found: u32,
+        /// Schema expected by this binary.
+        expected: u32,
+    },
+    /// A supposedly string-backed enum serialized to another JSON type.
+    #[error("persisted enum contract did not serialize as a string")]
+    InvalidEnumEncoding,
 }
 
 type SharedConnection = Arc<Mutex<Connection>>;
@@ -70,6 +92,13 @@ fn encode<T: Serialize>(value: &T) -> Result<String, StorageError> {
 
 fn decode<T: DeserializeOwned>(value: &str) -> Result<T, StorageError> {
     serde_json::from_str(value).map_err(StorageError::from)
+}
+
+fn enum_name<T: Serialize>(value: &T) -> Result<String, StorageError> {
+    match serde_json::to_value(value)? {
+        serde_json::Value::String(value) => Ok(value),
+        _ => Err(StorageError::InvalidEnumEncoding),
+    }
 }
 
 /// Database health exposed to application diagnostics.

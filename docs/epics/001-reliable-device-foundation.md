@@ -57,16 +57,23 @@ debug logs.
 
 ## Workstream E1.1: Persistence foundation
 
-- [ ] Create a `homemagic-storage` crate behind application repository traits.
-- [ ] Configure SQLite WAL mode, foreign keys, busy timeout, and explicit
-  migrations.
-- [ ] Persist installations, integrations, devices, endpoints, aliases, spaces,
-  capability descriptors, and latest observations.
-- [ ] Keep adapter-native identifiers unique within their integration namespace.
-- [ ] Persist schema and capability versions independently from display metadata.
-- [ ] Add transactional upsert and reconciliation operations.
-- [ ] Add a migration test that upgrades every historical schema fixture.
-- [ ] Add backup/restore validation for the current schema.
+- [x] Create a `homemagic-storage` crate behind application repository traits.
+  Evidence: `crates/homemagic-storage` and `FoundationRepository`.
+- [x] Configure SQLite WAL mode, foreign keys, busy timeout, and explicit
+  migrations. Evidence: `open_connection` and migration tests.
+- [x] Persist installations, integrations, devices, endpoints, aliases, spaces,
+  capability descriptors, and latest observations. Evidence:
+  `complete_projection.rs`.
+- [x] Keep adapter-native identifiers unique within their integration namespace.
+  Evidence: schema constraint and native-identity collision test.
+- [x] Persist schema and capability versions independently from display metadata.
+  Evidence: migration ledger and normalized `capabilities` table.
+- [x] Add transactional upsert and reconciliation operations. Evidence:
+  `FoundationRepository::apply` and rollback tests.
+- [x] Add a migration test that upgrades every historical schema fixture.
+  Evidence: `migration_fixtures.rs`.
+- [x] Add backup/restore validation for the current schema. Evidence:
+  `backup_restore.rs`.
 - [ ] Expose database health and migration version through `system.health`.
 
 ## Workstream E1.2: Device and observation lifecycle
@@ -123,8 +130,10 @@ debug logs.
 
 - [x] Unit tests cover lifecycle transitions and freshness calculations. Evidence:
   `cargo test -p homemagic-domain --all-features --locked`.
-- [ ] Repository contract tests run against an isolated temporary database.
-- [ ] Migration tests start from every committed schema fixture.
+- [x] Repository contract tests run against an isolated temporary database.
+  Evidence: `crates/homemagic-storage/tests`.
+- [x] Migration tests start from every committed schema fixture. Evidence:
+  `migration_fixtures.rs`.
 - [ ] Recorded Shelly fixtures cover full status, partial notifications, events,
   authentication challenges, malformed frames, and firmware variations.
 - [ ] Reconnect tests use deterministic time and verify backoff bounds.
@@ -178,3 +187,5 @@ debug logs.
   retention decisions in ADR-0007 through ADR-0009.
 - 2026-07-11: Completed E1-002 domain lifecycle contracts and application ports;
   full workspace format, Clippy, tests, and doctests pass.
+- 2026-07-11: Completed E1-003 SQLite storage, schema migrations, repository
+  contracts, backup/restore, and health diagnostics.

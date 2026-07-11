@@ -2,7 +2,7 @@
 id: E1-004
 epic: EPIC-001
 title: Load durable state and reconcile discovery candidates
-status: planned
+status: ready
 priority: critical
 depends_on: [E1-003]
 adrs: [ADR-0006]

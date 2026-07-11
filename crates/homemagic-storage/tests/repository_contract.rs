@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use homemagic_application::{BoxError, FoundationRepository, FoundationWrite};
 use homemagic_domain::{
-    DeviceId, DeviceRecord, DeviceSnapshot, Installation, InstallationId, IntegrationId,
-    IntegrationInstance, Space, SpaceId,
+    CapabilitySnapshot, DeviceId, DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot,
+    Installation, InstallationId, IntegrationId, IntegrationInstance, RiskClass, Space, SpaceId,
 };
 use homemagic_storage::SqliteRepository;
 use tempfile::TempDir;
@@ -57,7 +57,14 @@ fn fixture() -> Result<Fixture, BoxError> {
             manufacturer: "Test".to_owned(),
             model: "Fixture".to_owned(),
             network: Vec::new(),
-            endpoints: Vec::new(),
+            endpoints: vec![EndpointSnapshot {
+                id: EndpointId::new("switch:0"),
+                name: Some("Output".to_owned()),
+                capabilities: vec![CapabilitySnapshot::OnOff {
+                    on: true,
+                    risk: RiskClass::Comfort,
+                }],
+            }],
             observed_at: now,
             vendor_data: BTreeMap::new(),
         },
@@ -102,7 +109,7 @@ async fn repository_should_preserve_stable_device_id_across_reopen() -> Result<(
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("homemagic.sqlite3");
     let fixture = fixture()?;
-    let expected = fixture.device.snapshot.id.clone();
+    let expected = fixture.device.clone();
     let repository = SqliteRepository::open(&path)?;
     repository
         .apply(FoundationWrite {
@@ -118,7 +125,7 @@ async fn repository_should_preserve_stable_device_id_across_reopen() -> Result<(
     let reopened = SqliteRepository::open(&path)?;
     let loaded = reopened.load().await?;
 
-    assert_eq!(loaded.devices[0].snapshot.id, expected);
+    assert_eq!(loaded.devices, vec![expected]);
     Ok(())
 }
 

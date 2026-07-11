@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, MutexGuard};
 
 use async_trait::async_trait;
@@ -9,13 +9,15 @@ use homemagic_domain::{
 use rusqlite::{Connection, Transaction, params};
 
 use crate::{
-    SharedConnection, StorageError, StorageHealth, decode, encode, health, open_connection,
+    SharedConnection, StorageError, StorageHealth, decode, encode, enum_name, health,
+    open_connection,
 };
 
 /// `SQLite` implementation of the device-foundation repository port.
 #[derive(Clone)]
 pub struct SqliteRepository {
     connection: SharedConnection,
+    database_path: Arc<PathBuf>,
 }
 
 impl SqliteRepository {
@@ -26,9 +28,17 @@ impl SqliteRepository {
     /// Returns a typed storage error for unsupported schemas, failed migrations,
     /// invalid checksums, or `SQLite` failures.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        let database_path = path.as_ref().to_path_buf();
+        let connection = open_connection(&database_path)?;
+        let database_path = std::fs::canonicalize(database_path)?;
         Ok(Self {
-            connection: Arc::new(std::sync::Mutex::new(open_connection(path.as_ref())?)),
+            connection: Arc::new(std::sync::Mutex::new(connection)),
+            database_path: Arc::new(database_path),
         })
+    }
+
+    pub(crate) fn database_path(&self) -> Arc<PathBuf> {
+        Arc::clone(&self.database_path)
     }
 
     /// Returns migration, integrity, and WAL health.
@@ -189,7 +199,7 @@ fn apply(connection: &mut Connection, write: &FoundationWrite) -> Result<(), Sto
             params![
                 repair.id.to_string(),
                 repair.device_id.as_ref().map(ToString::to_string),
-                encode(&repair.status)?,
+                enum_name(&repair.status)?,
                 repair.created_at,
                 repair.closed_at,
                 encode(repair)?,
@@ -268,8 +278,8 @@ fn upsert_device(transaction: &Transaction<'_>, device: &DeviceRecord) -> Result
             device.installation_id.to_string(),
             device.integration_id.to_string(),
             device.snapshot.native_id,
-            encode(&device.lifecycle)?,
-            encode(&device.availability.state)?,
+            enum_name(&device.lifecycle)?,
+            enum_name(&device.availability.state)?,
             device.timestamps.first_seen,
             device.timestamps.last_seen,
             device.timestamps.last_success,
@@ -339,7 +349,7 @@ fn insert_capability(
             endpoint_id,
             descriptor.name,
             descriptor.version,
-            encode(&descriptor.risk)?,
+            enum_name(&descriptor.risk)?,
             encode(descriptor)?,
             snapshot.map(encode).transpose()?,
         ],

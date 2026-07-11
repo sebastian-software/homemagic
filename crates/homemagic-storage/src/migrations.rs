@@ -20,6 +20,9 @@ const MIGRATIONS: &[Migration] = &[Migration {
 pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
+    let found = schema_version(connection)?;
+    reject_newer(found)?;
+
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -29,17 +32,45 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         );",
     )?;
 
-    let found: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    verify_applied(connection)?;
+    for migration in MIGRATIONS.iter().filter(|item| item.version > found) {
+        apply(connection, migration)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_compatible(connection: &Connection) -> Result<u32, StorageError> {
+    let found = schema_version(connection)?;
+    reject_newer(found)?;
+    if found > 0 {
+        verify_applied(connection)?;
+    }
+    Ok(found)
+}
+
+pub(crate) fn validate_current(connection: &Connection) -> Result<u32, StorageError> {
+    let found = validate_compatible(connection)?;
+    if found != CURRENT_SCHEMA_VERSION {
+        return Err(StorageError::BackupSchemaMismatch {
+            found,
+            expected: CURRENT_SCHEMA_VERSION,
+        });
+    }
+    Ok(found)
+}
+
+fn schema_version(connection: &Connection) -> Result<u32, StorageError> {
+    connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(StorageError::from)
+}
+
+fn reject_newer(found: u32) -> Result<(), StorageError> {
     if found > CURRENT_SCHEMA_VERSION {
         return Err(StorageError::UnsupportedSchema {
             found,
             supported: CURRENT_SCHEMA_VERSION,
         });
-    }
-
-    verify_applied(connection)?;
-    for migration in MIGRATIONS.iter().filter(|item| item.version > found) {
-        apply(connection, migration)?;
     }
     Ok(())
 }

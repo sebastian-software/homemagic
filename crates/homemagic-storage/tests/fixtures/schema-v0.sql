@@ -1,0 +1,1 @@
+-- Schema version 0 intentionally contains no HomeMagic tables.
