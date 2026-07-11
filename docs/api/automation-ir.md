@@ -4,6 +4,8 @@
 
 - Authored document schema: [`automation.document.v1`](schemas/automation-document.v1.schema.json)
 - Comprehensive authored example: [`automation-document-v1.json`](examples/automation-document-v1.json)
+- Normalized plan schema: [`automation.plan.v1`](schemas/automation-plan.v1.schema.json)
+- Resolved plan example: [`automation-plan-v1.json`](examples/automation-plan-v1.json)
 - Architecture: [Agent-Authored Automation Engine](../superpowers/specs/2026-07-11-agent-authored-automation-engine-design.md)
 - Compatibility decision: [ADR-0017](../adr/0017-version-automation-documents-and-plans.md)
 
@@ -42,5 +44,7 @@ states.
 
 The normalized `automation.plan.v1` contract is emitted only by the compiler and
 contains resolved stable targets, deterministic node order, Safety Profiles,
-approval requirement, reduction segments, and enforced budgets. Its schema and
-examples will be published with E3-003 when the compiler is implemented.
+approval requirement, reduction segments, and enforced budgets. It also carries
+resolved triggers, the run-level guard, typed variable declarations, run mode,
+and self-trigger policy so simulation and runtime never reopen authored aliases
+or spaces.

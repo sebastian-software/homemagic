@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homemagic.dev/schemas/automation-plan.v1.schema.json",
+  "title": "HomeMagic Normalized Automation Plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "automation_id", "automation_version", "document_hash", "plan_hash", "registry_revision", "variables", "triggers", "condition", "run_mode", "self_trigger", "entry", "nodes", "safety_profiles", "safety_requirements", "approval", "budget"],
+  "properties": {
+    "schema": {"const": "automation.plan.v1"},
+    "automation_id": {"$ref": "#/$defs/uuid"},
+    "automation_version": {"type": "integer", "minimum": 1},
+    "document_hash": {"$ref": "#/$defs/hash"},
+    "plan_hash": {"$ref": "#/$defs/hash"},
+    "registry_revision": {"type": "integer", "minimum": 0},
+    "variables": {"type": "object"},
+    "triggers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/trigger"}},
+    "condition": {"type": ["object", "null"]},
+    "run_mode": {"type": "object", "required": ["mode"]},
+    "self_trigger": {"enum": ["suppress_same_version", "suppress_same_correlation", "allow"]},
+    "entry": {"$ref": "#/$defs/nodeId"},
+    "nodes": {"type": "array", "minItems": 2, "maxItems": 2048, "items": {"$ref": "#/$defs/node"}},
+    "safety_profiles": {"type": "array", "uniqueItems": true, "items": {"enum": ["comfort", "comfort_motion", "access_control", "flow_control", "security"]}},
+    "safety_requirements": {"type": "array", "uniqueItems": true, "items": {"enum": ["fresh_state", "calibration", "stop_support", "position", "presence", "explicit_approval"]}},
+    "approval": {"enum": ["activation_grant", "explicit_user_approval"]},
+    "budget": {"$ref": "#/$defs/budget"}
+  },
+  "$defs": {
+    "uuid": {"type": "string", "format": "uuid"},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nodeId": {"type": "integer", "minimum": 0, "maximum": 2047},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id", "endpoint_id", "capability"],
+      "properties": {
+        "device_id": {"$ref": "#/$defs/uuid"},
+        "endpoint_id": {"type": "string", "minLength": 1},
+        "capability": {"type": "string", "pattern": "^[a-z][a-z0-9_]*\\.v[1-9][0-9]*$"}
+      }
+    },
+    "targets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/target"}},
+    "trigger": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "targets", "field"], "properties": {"type": {"const": "observation_changed"}, "targets": {"$ref": "#/$defs/targets"}, "field": {"type": ["string", "null"]}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "targets", "event"], "properties": {"type": {"const": "device_event"}, "targets": {"$ref": "#/$defs/targets"}, "event": {"type": "string", "minLength": 1}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "schedule"], "properties": {"type": {"const": "schedule"}, "schedule": {"type": "object"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "targets", "states"], "properties": {"type": {"const": "command_outcome"}, "targets": {"type": ["array", "null"]}, "states": {"type": "array", "minItems": 1}}}
+      ]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "order", "kind"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nodeId"},
+        "order": {"type": "integer", "minimum": 0},
+        "kind": {"$ref": "#/$defs/nodeKind"}
+      }
+    },
+    "nodeKind": {
+      "oneOf": [
+        {"type": "object", "required": ["type", "targets", "payload", "reduction_segment", "retry", "on_failure", "next"], "properties": {"type": {"const": "command"}, "targets": {"$ref": "#/$defs/targets"}, "payload": {"type": "object"}, "reduction_segment": {"type": "integer", "minimum": 0}, "retry": {"type": "object"}, "on_failure": {"type": "object"}, "next": {"type": ["integer", "null"]}}, "additionalProperties": false},
+        {"type": "object", "required": ["type", "duration_ms", "next"], "properties": {"type": {"const": "delay"}, "duration_ms": {"type": "integer", "minimum": 1}, "next": {"type": ["integer", "null"]}}, "additionalProperties": false},
+        {"type": "object", "required": ["type", "condition", "timeout_ms", "on_timeout", "next"], "properties": {"type": {"const": "wait"}, "condition": {"type": "object"}, "timeout_ms": {"type": "integer", "minimum": 1}, "on_timeout": {"type": "object"}, "next": {"type": ["integer", "null"]}}, "additionalProperties": false},
+        {"type": "object", "required": ["type", "name", "value", "next"], "properties": {"type": {"const": "set_variable"}, "name": {"type": "string"}, "value": {"type": "object"}, "next": {"type": ["integer", "null"]}}, "additionalProperties": false},
+        {"type": "object", "required": ["type", "condition", "then_node", "else_node", "join"], "properties": {"type": {"const": "branch"}, "condition": {"type": "object"}, "then_node": {"type": ["integer", "null"]}, "else_node": {"type": ["integer", "null"]}, "join": {"type": ["integer", "null"]}}, "additionalProperties": false},
+        {"type": "object", "required": ["type", "branches", "maximum_parallel", "join"], "properties": {"type": {"enum": ["parallel", "race"]}, "branches": {"type": "array", "items": {"$ref": "#/$defs/nodeId"}}, "maximum_parallel": {"type": "integer", "minimum": 1}, "join": {"type": ["integer", "null"]}}, "additionalProperties": false},
+        {"type": "object", "required": ["type", "next"], "properties": {"type": {"const": "join"}, "next": {"type": ["integer", "null"]}}, "additionalProperties": false},
+        {"type": "object", "required": ["type"], "properties": {"type": {"const": "complete"}}, "additionalProperties": false}
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_nodes", "maximum_nesting_depth", "maximum_parallel_width", "maximum_queue_length", "maximum_trace_steps", "maximum_run_duration_ms"],
+      "properties": {
+        "maximum_nodes": {"type": "integer", "minimum": 1, "maximum": 2048},
+        "maximum_nesting_depth": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maximum_parallel_width": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maximum_queue_length": {"type": "integer", "minimum": 1, "maximum": 1024},
+        "maximum_trace_steps": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "maximum_run_duration_ms": {"type": "integer", "minimum": 1, "maximum": 31536000000}
+      }
+    }
+  }
+}

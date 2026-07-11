@@ -188,6 +188,11 @@ fn automation_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Erro
         document_hash: document_hash.clone(),
         plan_hash: plan_hash.clone(),
         registry_revision: AutomationRegistryRevision(7),
+        variables: document.variables.clone(),
+        triggers: Vec::new(),
+        condition: None,
+        run_mode: document.run_mode,
+        self_trigger: document.self_trigger,
         entry: node_id,
         nodes: vec![AutomationPlanNode {
             id: node_id,

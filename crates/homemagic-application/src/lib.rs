@@ -1,6 +1,7 @@
 //! `HomeMagic` application services and integration ports.
 
 mod authentication;
+mod automation_compiler;
 mod command_service;
 mod memory;
 mod policy;
@@ -26,6 +27,7 @@ pub use authentication::{
     ActorAuthentication, ActorAuthenticationError, ActorManagementError, ActorToken,
     AuthenticateActor,
 };
+pub use automation_compiler::{AutomationCompilationError, AutomationCompiler};
 pub use command_service::{
     CommandRequest, CommandService, CommandServiceDependencies, CommandServiceError,
     DomainEventCommandAuditSink, NoopCommandAuditSink,

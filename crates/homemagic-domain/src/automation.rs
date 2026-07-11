@@ -442,6 +442,23 @@ pub enum AutomationFailurePolicy {
     },
 }
 
+/// Normalized failure handling containing only compiled plan references.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum AutomationPlanFailurePolicy {
+    /// Terminate the complete run.
+    StopRun,
+    /// Terminate only the current parallel branch.
+    StopBranch,
+    /// Record the failure and continue.
+    Continue,
+    /// Execute the compiled bounded fallback graph.
+    Fallback {
+        /// Entry node for the fallback actions.
+        entry: Option<AutomationPlanNodeId>,
+    },
+}
+
 /// Declarative bounded automation action tree.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -726,6 +743,112 @@ pub struct ResolvedAutomationTarget {
     pub capability: String,
 }
 
+/// Pure normalized expression containing only stable resolved targets.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum ResolvedAutomationExpression {
+    /// Embedded scalar literal.
+    Literal {
+        /// Literal value.
+        value: AutomationValue,
+    },
+    /// Named validated automation variable.
+    Variable {
+        /// Variable name.
+        name: String,
+    },
+    /// Current normalized observation field on stable targets.
+    Observation {
+        /// Resolved targets in stable order.
+        targets: Vec<ResolvedAutomationTarget>,
+        /// Schema-defined field name.
+        field: String,
+    },
+}
+
+/// Pure normalized condition tree containing no authored references.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResolvedAutomationCondition {
+    /// Boolean literal.
+    Literal {
+        /// Condition value.
+        value: bool,
+    },
+    /// Typed scalar comparison.
+    Compare {
+        /// Left operand.
+        left: ResolvedAutomationExpression,
+        /// Comparison operator.
+        operator: AutomationComparison,
+        /// Right operand.
+        right: ResolvedAutomationExpression,
+    },
+    /// All child conditions must be true.
+    All {
+        /// Bounded child conditions.
+        conditions: Vec<Self>,
+    },
+    /// At least one child condition must be true.
+    Any {
+        /// Bounded child conditions.
+        conditions: Vec<Self>,
+    },
+    /// Inverts one child condition.
+    Not {
+        /// Child condition.
+        condition: Box<Self>,
+    },
+    /// UTC-local-time window in an explicit IANA timezone.
+    TimeWindow {
+        /// IANA timezone name.
+        timezone: String,
+        /// Inclusive local `HH:MM:SS` start.
+        start: String,
+        /// Exclusive local `HH:MM:SS` end.
+        end: String,
+    },
+    /// Condition must remain true for the declared duration.
+    StateDuration {
+        /// Condition being timed.
+        condition: Box<Self>,
+        /// Required continuous duration.
+        duration_ms: u64,
+    },
+}
+
+/// Trigger normalized to stable device and endpoint identities.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResolvedAutomationTrigger {
+    /// Normalized observation field changed.
+    ObservationChanged {
+        /// Stable targets in deterministic order.
+        targets: Vec<ResolvedAutomationTarget>,
+        /// Optional validated field filter.
+        field: Option<String>,
+    },
+    /// Normalized transient device event occurred.
+    DeviceEvent {
+        /// Stable targets in deterministic order.
+        targets: Vec<ResolvedAutomationTarget>,
+        /// Stable normalized event name.
+        event: String,
+    },
+    /// Calendar schedule occurrence.
+    Schedule {
+        /// Validated schedule contract.
+        schedule: AutomationSchedule,
+    },
+    /// A governed command reached one of the selected outcomes.
+    CommandOutcome {
+        /// Optional stable target filter.
+        targets: Option<Vec<ResolvedAutomationTarget>>,
+        /// Accepted durable command outcomes.
+        states: BTreeSet<CommandState>,
+    },
+}
+
 /// Deterministic normalized plan node.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AutomationPlanNode {
@@ -752,7 +875,7 @@ pub enum AutomationPlanNodeKind {
         /// Retry contract.
         retry: AutomationRetryPolicy,
         /// Failure contract.
-        on_failure: AutomationFailurePolicy,
+        on_failure: AutomationPlanFailurePolicy,
         /// Following node.
         next: Option<AutomationPlanNodeId>,
     },
@@ -766,11 +889,11 @@ pub enum AutomationPlanNodeKind {
     /// Wait for a compiled condition.
     Wait {
         /// Validated condition retained for deterministic evaluation.
-        condition: AutomationCondition,
+        condition: ResolvedAutomationCondition,
         /// Timeout duration.
         timeout_ms: u64,
         /// Timeout behavior.
-        on_timeout: AutomationFailurePolicy,
+        on_timeout: AutomationPlanFailurePolicy,
         /// Following node.
         next: Option<AutomationPlanNodeId>,
     },
@@ -779,14 +902,14 @@ pub enum AutomationPlanNodeKind {
         /// Variable name.
         name: String,
         /// Validated expression.
-        value: AutomationExpression,
+        value: ResolvedAutomationExpression,
         /// Following node.
         next: Option<AutomationPlanNodeId>,
     },
     /// Select one deterministic branch.
     Branch {
         /// Validated branch condition.
-        condition: AutomationCondition,
+        condition: ResolvedAutomationCondition,
         /// Entry node when true.
         then_node: Option<AutomationPlanNodeId>,
         /// Entry node when false.
@@ -836,6 +959,16 @@ pub struct AutomationExecutionPlan {
     pub plan_hash: AutomationContentHash,
     /// Registry revision used for resolution.
     pub registry_revision: AutomationRegistryRevision,
+    /// Validated typed variable declarations.
+    pub variables: BTreeMap<String, AutomationVariableDefinition>,
+    /// Resolved trigger contracts.
+    pub triggers: Vec<ResolvedAutomationTrigger>,
+    /// Optional resolved run-level guard.
+    pub condition: Option<ResolvedAutomationCondition>,
+    /// Trigger concurrency behavior.
+    pub run_mode: AutomationRunMode,
+    /// Feedback-loop suppression behavior.
+    pub self_trigger: AutomationSelfTriggerPolicy,
     /// Entry node.
     pub entry: AutomationPlanNodeId,
     /// Nodes in deterministic order.
@@ -1437,6 +1570,26 @@ mod tests {
         .unwrap_or_else(|error| panic!("published fixture: {error}"));
 
         assert!(jsonschema::is_valid(&schema, &fixture));
+    }
+
+    #[test]
+    fn published_plan_v1_fixture_should_round_trip_and_satisfy_schema() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/api/schemas/automation-plan.v1.schema.json"
+        ))
+        .unwrap_or_else(|error| panic!("published plan schema: {error}"));
+        let fixture_text = include_str!("../../../docs/api/examples/automation-plan-v1.json");
+        let fixture: serde_json::Value = serde_json::from_str(fixture_text)
+            .unwrap_or_else(|error| panic!("published plan fixture: {error}"));
+        let plan: AutomationExecutionPlan = serde_json::from_str(fixture_text)
+            .unwrap_or_else(|error| panic!("typed plan fixture: {error}"));
+
+        assert!(jsonschema::is_valid(&schema, &fixture));
+        assert_eq!(plan.schema, AutomationPlanSchema::V1);
+        assert!(plan.nodes.iter().all(|node| match &node.kind {
+            AutomationPlanNodeKind::Command { targets, .. } => !targets.is_empty(),
+            _ => true,
+        }));
     }
 
     #[test]

@@ -1,0 +1,59 @@
+{
+  "schema": "automation.plan.v1",
+  "automation_id": "018f7f88-82f8-4d0a-8d85-1de2ca4cb001",
+  "automation_version": 1,
+  "document_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "plan_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "registry_revision": 17,
+  "variables": {},
+  "triggers": [
+    {
+      "type": "observation_changed",
+      "targets": [
+        {
+          "device_id": "018f7f88-82f8-4d0a-8d85-1de2ca4cb003",
+          "endpoint_id": "light:0",
+          "capability": "on_off.v1"
+        }
+      ],
+      "field": "on"
+    }
+  ],
+  "condition": null,
+  "run_mode": {"mode": "single"},
+  "self_trigger": "suppress_same_version",
+  "entry": 1,
+  "nodes": [
+    {"id": 0, "order": 0, "kind": {"type": "complete"}},
+    {
+      "id": 1,
+      "order": 1,
+      "kind": {
+        "type": "command",
+        "targets": [
+          {
+            "device_id": "018f7f88-82f8-4d0a-8d85-1de2ca4cb003",
+            "endpoint_id": "light:0",
+            "capability": "on_off.v1"
+          }
+        ],
+        "payload": {"capability": "on_off", "command": {"action": "set", "on": true}},
+        "reduction_segment": 0,
+        "retry": {"maximum_retries": 0, "backoff_ms": 0, "retryable_command_errors": []},
+        "on_failure": {"mode": "stop_run"},
+        "next": 0
+      }
+    }
+  ],
+  "safety_profiles": ["comfort"],
+  "safety_requirements": [],
+  "approval": "activation_grant",
+  "budget": {
+    "maximum_nodes": 512,
+    "maximum_nesting_depth": 16,
+    "maximum_parallel_width": 8,
+    "maximum_queue_length": 128,
+    "maximum_trace_steps": 10000,
+    "maximum_run_duration_ms": 604800000
+  }
+}
