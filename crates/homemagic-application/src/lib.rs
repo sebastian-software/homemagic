@@ -1,5 +1,7 @@
 //! `HomeMagic` application services and integration ports.
 
+mod ports;
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::sync::Arc;
@@ -9,6 +11,11 @@ use homemagic_domain::{DeviceId, DeviceSnapshot};
 use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::RwLock;
+
+pub use ports::{
+    Clock, DomainEventSink, FoundationRepository, FoundationSnapshot, FoundationWrite,
+    IntegrationSessionPort, SystemClock,
+};
 
 /// Error erased at the integration boundary.
 pub type BoxError = Box<dyn Error + Send + Sync + 'static>;

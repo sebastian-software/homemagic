@@ -2,7 +2,7 @@
 id: E1-005
 epic: EPIC-001
 title: Add secret-safe Shelly digest authentication
-status: planned
+status: ready
 priority: high
 depends_on: [E1-001, E1-002]
 adrs: []

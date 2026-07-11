@@ -2,7 +2,7 @@
 id: E1-003
 epic: EPIC-001
 title: Implement SQLite storage and repository contracts
-status: planned
+status: ready
 priority: critical
 depends_on: [E1-001, E1-002]
 adrs: []

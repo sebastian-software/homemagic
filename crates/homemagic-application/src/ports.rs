@@ -1,0 +1,122 @@
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use homemagic_domain::{CapabilityObservation, DeviceId, DeviceRecord, DomainEvent, RepairRecord};
+
+use crate::BoxError;
+
+/// Complete durable device-foundation projection loaded at startup.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FoundationSnapshot {
+    /// Durable devices and mutable metadata.
+    pub devices: Vec<DeviceRecord>,
+    /// Latest capability observations.
+    pub observations: Vec<CapabilityObservation>,
+    /// Open and retained repair records.
+    pub repairs: Vec<RepairRecord>,
+    /// Highest retained event cursor, when events exist.
+    pub event_cursor: Option<u64>,
+}
+
+/// One atomic repository mutation.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FoundationWrite {
+    /// Device aggregates to insert or replace.
+    pub devices: Vec<DeviceRecord>,
+    /// Current observations to merge by capability target.
+    pub observations: Vec<CapabilityObservation>,
+    /// Immutable events to append.
+    pub events: Vec<DomainEvent>,
+    /// Repair records to insert or replace.
+    pub repairs: Vec<RepairRecord>,
+}
+
+/// Durable repository port owned by the application layer.
+#[async_trait]
+pub trait FoundationRepository: Send + Sync {
+    /// Loads the current projection before network reconciliation starts.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage-specific error without exposing secret values.
+    async fn load(&self) -> Result<FoundationSnapshot, BoxError>;
+
+    /// Applies devices, observations, events, and repairs atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage-specific error and leaves no partial write.
+    async fn apply(&self, write: FoundationWrite) -> Result<(), BoxError>;
+}
+
+/// Fan-out port for committed immutable domain events.
+#[async_trait]
+pub trait DomainEventSink: Send + Sync {
+    /// Publishes events after their repository transaction commits.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sink-specific delivery error.
+    async fn publish(&self, events: &[DomainEvent]) -> Result<(), BoxError>;
+}
+
+/// Time source injected into scheduling and freshness calculations.
+pub trait Clock: Send + Sync {
+    /// Returns the current UTC time.
+    fn now(&self) -> DateTime<Utc>;
+}
+
+/// Wall-clock implementation used by the runtime.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> DateTime<Utc> {
+        Utc::now()
+    }
+}
+
+/// Integration-session lifecycle port used by application orchestration.
+#[async_trait]
+pub trait IntegrationSessionPort: Send + Sync {
+    /// Starts or refreshes the single managed session for a device.
+    ///
+    /// # Errors
+    ///
+    /// Returns an adapter-specific error when the session cannot start.
+    async fn start(&self, device: &DeviceRecord) -> Result<(), BoxError>;
+
+    /// Stops the managed session for a device, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an adapter-specific shutdown error.
+    async fn stop(&self, device_id: &DeviceId) -> Result<(), BoxError>;
+
+    /// Stops all sessions during process shutdown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an adapter-specific shutdown error after attempting cleanup.
+    async fn shutdown(&self) -> Result<(), BoxError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FixedClock(DateTime<Utc>);
+
+    impl Clock for FixedClock {
+        fn now(&self) -> DateTime<Utc> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn clock_port_should_allow_deterministic_time() {
+        let expected = Utc::now();
+        let clock = FixedClock(expected);
+
+        assert_eq!(clock.now(), expected);
+    }
+}

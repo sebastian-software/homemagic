@@ -72,11 +72,13 @@ debug logs.
 ## Workstream E1.2: Device and observation lifecycle
 
 - [ ] Replace in-memory-only startup with load-then-reconcile behavior.
-- [ ] Model discovery candidate, enrolled, online, degraded, offline, stale, and
-  removed lifecycle states.
-- [ ] Add `first_seen`, `last_seen`, `last_success`, and freshness timestamps.
+- [x] Model discovery candidate, enrolled, online, degraded, offline, stale, and
+  removed lifecycle states. Evidence: `crates/homemagic-domain/src/lifecycle.rs`.
+- [x] Add `first_seen`, `last_seen`, `last_success`, and freshness timestamps.
+  Evidence: `DeviceTimestamps`, `ObservedValue`, and `FreshnessPolicy`.
 - [ ] Preserve a known device when a bounded discovery window misses it.
-- [ ] Mark observations stale without rewriting them as an assumed current state.
+- [x] Mark observations stale without rewriting them as an assumed current state.
+  Evidence: freshness is calculated separately from field-level `ObservedValue`.
 - [ ] Detect native identity collisions and surface a repair record.
 - [ ] Define explicit removal and rediscovery behavior.
 - [ ] Publish typed lifecycle and observation events with causation metadata.
@@ -119,7 +121,8 @@ debug logs.
 
 ## Test and verification checklist
 
-- [ ] Unit tests cover lifecycle transitions and freshness calculations.
+- [x] Unit tests cover lifecycle transitions and freshness calculations. Evidence:
+  `cargo test -p homemagic-domain --all-features --locked`.
 - [ ] Repository contract tests run against an isolated temporary database.
 - [ ] Migration tests start from every committed schema fixture.
 - [ ] Recorded Shelly fixtures cover full status, partial notifications, events,
@@ -173,3 +176,5 @@ debug logs.
   repository-tracked issues. Evidence: `docs/issues/epic-001/README.md`.
 - 2026-07-11: Completed E1-001 and accepted persistence, secret-storage, and
   retention decisions in ADR-0007 through ADR-0009.
+- 2026-07-11: Completed E1-002 domain lifecycle contracts and application ports;
+  full workspace format, Clippy, tests, and doctests pass.
