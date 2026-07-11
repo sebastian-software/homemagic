@@ -21,7 +21,7 @@ updated: 2026-07-11
 | [E2-005](E2-005-command-orchestrator.md) | Done | E2-003, E2-004 | Single command path |
 | [E2-006](E2-006-shelly-dispatch.md) | Done | E2-005 | Switch, dimmer, cover dispatch |
 | [E2-007](E2-007-command-rpc.md) | Done | E2-005, E2-006 | Authenticated JSON-RPC surface |
-| [E2-008](E2-008-command-exit-audit.md) | Ready | E2-007 | Hardware, threat, exit evidence |
+| [E2-008](E2-008-command-exit-audit.md) | In progress | E2-007 | Hardware, threat, exit evidence |
 
 ## Progress log
 
@@ -47,3 +47,5 @@ updated: 2026-07-11
 - 2026-07-11: E2-007 completed with authenticated command/query RPCs, durable
   transition events, daemon recovery wiring, bounded actor-owned history, and a
   safe query-to-command helper; E2-008 is ready.
+- 2026-07-11: E2-008 automated safety, threat, recovery, grant, and redacted
+  hardware-harness evidence completed; supervised physical reports remain.

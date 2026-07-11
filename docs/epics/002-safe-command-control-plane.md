@@ -134,7 +134,7 @@ from ADR-0009.
 ## Test and verification checklist
 
 - [ ] Property tests cover idempotency and state-machine invariants.
-- [ ] Policy matrix tests cover actors, targets, risk classes, and default denial.
+- [x] Policy matrix tests cover actors, targets, risk classes, and default denial.
 - [x] Adapter fixtures cover success, timeout, reconnect, protection errors, and
   inconsistent observations.
 - [x] Process-restart test covers commands left in every non-terminal state.
@@ -142,7 +142,7 @@ from ADR-0009.
 - [ ] Hardware tests cover switch on/off, dimmer level, cover open/close/stop, and
   calibrated positioning.
 - [ ] Hardware tests restore every device to its original state.
-- [ ] A physical emergency-stop path is documented for moving devices.
+- [x] A physical emergency-stop path is documented for moving devices.
 
 ## Acceptance criteria
 
@@ -163,12 +163,12 @@ from ADR-0009.
 
 ## Exit gate
 
-- [ ] All acceptance criteria contain linked evidence.
-- [ ] Required ADRs are accepted and indexed.
-- [ ] No adapter exposes a public raw-command bypass.
+- [x] All acceptance criteria contain linked evidence.
+- [x] Required ADRs are accepted and indexed.
+- [x] No adapter exposes a public raw-command bypass.
 - [ ] Hardware tests include safe cleanup and produce a redacted report.
-- [ ] Threat model and operator documentation cover the shipped control surface.
-- [ ] EPIC-003 and EPIC-004 reference the finalized command and policy contracts.
+- [x] Threat model and operator documentation cover the shipped control surface.
+- [x] EPIC-003 and EPIC-004 reference the finalized command and policy contracts.
 
 ## Risks and mitigations
 
@@ -208,3 +208,6 @@ from ADR-0009.
 - 2026-07-11: Completed E2-007 authenticated command and audit RPCs over the
   single application path, bounded actor-owned queries, durable transition
   events, startup recovery, safe error mapping, and query-to-command examples.
+- 2026-07-11: Added E2-008 threat/recovery documentation, operator grant flow,
+  cleanup-first redacted hardware harness, cross-epic finalized contracts, and
+  linked exit audit. Physical command reports remain pending supervised execution.

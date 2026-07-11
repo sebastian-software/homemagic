@@ -39,6 +39,22 @@ requires it, and activates an immutable version.
 - unbounded loops or recursion;
 - direct integration-adapter access from automation actions.
 
+## Finalized EPIC-002 contracts
+
+- Every automation action submits a typed `CommandRequest` to the single
+  `CommandService`; the engine cannot access an integration adapter.
+- The authenticated automation actor, explicit grants, aggregate risk, current
+  constraints, rate limit, and device concurrency participate in the same
+  default-deny policy used by RPC.
+- A run supplies stable idempotency, correlation, and causation identities and
+  persists its own intent before submitting a command.
+- Command acknowledgement and observation-confirmed outcome are separate; a run
+  must not treat adapter acceptance as physical success.
+- Restart recovery may inspect durable command/audit state but cannot blindly
+  resubmit work that crossed the dispatched boundary.
+- Simulation uses `commands.validate` semantics and has no real dispatcher by
+  construction.
+
 ## Required decisions
 
 - [ ] E3.D1: Finalize the automation IR and compatibility/versioning rules in an

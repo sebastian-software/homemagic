@@ -39,6 +39,22 @@ fabric without learning Matter cluster internals.
 - full Thread commissioning unless the feasibility ADR explicitly accepts it;
 - vendor-specific clusters without fixtures and a namespaced extension contract.
 
+## Finalized EPIC-002 contracts
+
+- Matter exposes only normalized capability commands to callers; raw cluster
+  writes are private adapter implementation details.
+- The Matter adapter implements `CommandDispatcher` and `CommandConfirmation`;
+  all validation, actor policy, idempotency, deadlines, audit, and recovery stay
+  in the shared `CommandService`.
+- Interaction Model acknowledgement is not physical confirmation. Subscribed or
+  bounded-read attributes provide the observed outcome.
+- Window Covering commands retain mechanical risk, fresh descriptor/feature
+  constraints, explicit grants, stop behavior, and physical safety guidance.
+- Door Lock commands remain security-risk and require exact capability grants
+  plus a dedicated policy and threat-model review before enablement.
+- Matter credentials and fabric secrets use `SecretStore` and never enter command
+  envelopes, audit records, events, or diagnostics.
+
 ## Required decisions
 
 - [ ] E4.D1: Benchmark credible Rust-native controller libraries against required

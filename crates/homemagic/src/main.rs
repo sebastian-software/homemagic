@@ -11,13 +11,13 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
     ActorAuthentication, AuthenticateActor, BroadcastDomainEventSink, CommandLimitConfig,
-    CommandLimits, CommandService, CommandServiceDependencies, DeviceRegistry,
+    CommandLimits, CommandRepository, CommandService, CommandServiceDependencies, DeviceRegistry,
     DomainEventCommandAuditSink, FoundationWrite, HomeMagicApplication, IntegrationScanner,
     RepositoryLiveObservationSink, SecretStore, SecretValue, SystemClock,
 };
 use homemagic_domain::{
-    ActorId, CapabilitySnapshot, FreshnessPolicy, Installation, InstallationId, IntegrationId,
-    IntegrationInstance, SecretRef,
+    ActorGrant, ActorId, CapabilitySnapshot, CommandAction, FreshnessPolicy, GrantId, GrantScope,
+    Installation, InstallationId, IntegrationId, IntegrationInstance, RiskClass, SecretRef,
 };
 use homemagic_secrets::{FileSecretStore, PlatformSecretStore};
 use homemagic_shelly::{
@@ -40,6 +40,21 @@ struct Cli {
 enum SecretBackend {
     Platform,
     File,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum GrantRisk {
+    Comfort,
+    Mechanical,
+}
+
+impl From<GrantRisk> for RiskClass {
+    fn from(value: GrantRisk) -> Self {
+        match value {
+            GrantRisk::Comfort => Self::Comfort,
+            GrantRisk::Mechanical => Self::Mechanical,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -123,6 +138,20 @@ enum Command {
         database: PathBuf,
         /// Actor that can no longer authenticate.
         actor_id: ActorId,
+    },
+    /// Add one installation-bound device execute grant to an actor.
+    ActorGrantDeviceExecute {
+        /// Durable database that owns the actor and device.
+        #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
+        database: PathBuf,
+        /// Actor receiving the grant.
+        actor_id: ActorId,
+        /// Unique substring of device name, alias, or native ID.
+        #[arg(long)]
+        device_query: String,
+        /// Maximum allowed risk; security grants require a narrower future command.
+        #[arg(long, value_enum, default_value_t = GrantRisk::Comfort)]
+        maximum_risk: GrantRisk,
     },
     /// Start the `HomeMagic` JSON-RPC server.
     Serve {
@@ -223,6 +252,12 @@ async fn main() -> Result<()> {
         } => actor_bootstrap(&database, name, installation_id).await,
         Command::ActorRotate { database, actor_id } => actor_rotate(&database, &actor_id).await,
         Command::ActorDisable { database, actor_id } => actor_disable(&database, &actor_id).await,
+        Command::ActorGrantDeviceExecute {
+            database,
+            actor_id,
+            device_query,
+            maximum_risk,
+        } => actor_grant_device_execute(&database, &actor_id, &device_query, maximum_risk).await,
         Command::Serve {
             bind,
             discovery_seconds,
@@ -293,6 +328,78 @@ async fn actor_disable(database: &Path, actor_id: &ActorId) -> Result<()> {
         .await?;
     println!("actor_id: {actor_id}");
     println!("status: disabled");
+    Ok(())
+}
+
+async fn actor_grant_device_execute(
+    database: &Path,
+    actor_id: &ActorId,
+    device_query: &str,
+    maximum_risk: GrantRisk,
+) -> Result<()> {
+    let repository = Arc::new(
+        SqliteRepository::open(database)
+            .with_context(|| format!("failed to open database at {}", database.display()))?,
+    );
+    let mut security = repository
+        .actor_security(actor_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?
+        .context("actor does not exist")?;
+    let needle = device_query.trim().to_lowercase();
+    if needle.is_empty() {
+        anyhow::bail!("device query must not be empty");
+    }
+    let snapshot = repository.load_foundation().await?;
+    let matches = snapshot
+        .devices
+        .iter()
+        .filter(|device| device.installation_id == security.actor.installation_id)
+        .filter(|device| {
+            device.snapshot.name.to_lowercase().contains(&needle)
+                || device.snapshot.native_id.to_lowercase().contains(&needle)
+                || device
+                    .aliases
+                    .iter()
+                    .any(|alias| alias.to_lowercase().contains(&needle))
+        })
+        .collect::<Vec<_>>();
+    let [device] = matches.as_slice() else {
+        anyhow::bail!(
+            "device query must match exactly one device in the actor installation; matched {}",
+            matches.len()
+        );
+    };
+    let risk = RiskClass::from(maximum_risk);
+    security.grants.retain(|grant| {
+        !matches!(
+            &grant.scope,
+            GrantScope::Device { device_id } if device_id == &device.snapshot.id
+        ) || !grant.actions.contains(&CommandAction::Execute)
+    });
+    security.grants.push(ActorGrant {
+        id: GrantId::new(),
+        actor_id: actor_id.clone(),
+        actions: BTreeSet::from([CommandAction::Execute]),
+        scope: GrantScope::Device {
+            device_id: device.snapshot.id.clone(),
+        },
+        maximum_risk: risk,
+        enabled: true,
+    });
+    repository
+        .replace_actor_grants(actor_id, security.grants)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "status": "granted",
+            "actor_id": actor_id,
+            "device_name": device.snapshot.name,
+            "maximum_risk": risk
+        }))?
+    );
     Ok(())
 }
 
@@ -815,6 +922,59 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(snapshot.installations.len(), 1);
         assert_eq!(snapshot.integrations.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn device_grant_should_resolve_query_within_actor_installation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("grant.sqlite3");
+        let repository = Arc::new(SqliteRepository::open(&path)?);
+        let integration = bootstrap_shelly(&repository).await?;
+        let now = chrono::Utc::now();
+        let device_id = homemagic_domain::DeviceId::from_integration(&integration.id, "relay");
+        repository
+            .apply_foundation(FoundationWrite {
+                devices: vec![homemagic_domain::DeviceRecord::candidate(
+                    integration.installation_id.clone(),
+                    integration.id,
+                    homemagic_domain::DeviceSnapshot {
+                        id: device_id.clone(),
+                        native_id: "native-relay".to_owned(),
+                        integration: "shelly".to_owned(),
+                        name: "Kitchen Relay".to_owned(),
+                        manufacturer: "Shelly".to_owned(),
+                        model: "Fixture".to_owned(),
+                        network: Vec::new(),
+                        endpoints: Vec::new(),
+                        observed_at: now,
+                        vendor_data: BTreeMap::new(),
+                    },
+                    now,
+                )],
+                ..FoundationWrite::default()
+            })
+            .await?;
+        let (actor, _) = ActorAuthentication::new(repository.clone())
+            .bootstrap(integration.installation_id, "Operator")
+            .await?;
+        drop(repository);
+
+        actor_grant_device_execute(&path, &actor.id, "kitchen", GrantRisk::Mechanical).await?;
+
+        let reopened = SqliteRepository::open(path)?;
+        let security = reopened
+            .actor_security(&actor.id)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .context("actor security missing")?;
+        assert!(security.grants.iter().any(|grant| {
+            grant.maximum_risk == RiskClass::Mechanical
+                && matches!(
+                    &grant.scope,
+                    GrantScope::Device { device_id: granted } if granted == &device_id
+                )
+        }));
         Ok(())
     }
 
