@@ -67,6 +67,26 @@ progress; terminal runs remain immutable. Delay creation stores the waiting run,
 trace, and deterministic timer atomically. After restart, the scheduler readies
 the timer and the executor consumes it atomically with the next run revision.
 
-Command, wait-condition, parallel, and race nodes are not yet enabled by this
-slice. They remain explicit errors until their intent, continuation, and
-failure-policy state is represented durably.
+Wait-condition, parallel, and race nodes are not yet enabled by this slice. They
+remain explicit errors until their timer or continuation state is represented
+durably.
+
+## Governed command crash window
+
+Command nodes can be enabled only by attaching CommandService and its durable
+actor projection. The runtime has no dispatcher dependency and submits every
+physical target through that service. Its actor-scoped idempotency key is
+derived from run ID, node ID, target order, and attempt. Its deadline is derived
+from the durable run creation time and compiled run-duration budget, so retrying
+after restart recreates the same canonical request.
+
+CommandService stores the command before dispatch. If the process stops after
+dispatch but before the automation run records the returned command ID, the
+same runtime step receives ExistingEquivalent; it neither dispatches again nor
+creates another command. The automation then atomically checkpoints the command
+ID, command trace, and next run revision. Non-terminal command states put the
+run into waiting and are read back by durable command ID.
+
+This slice implements confirmed, waiting, and compiled terminal failure-policy
+outcomes for attempt zero. Retry/backoff remains disabled until attempt and
+backoff continuation are themselves durable.

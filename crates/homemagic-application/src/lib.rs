@@ -43,7 +43,10 @@ pub use automation_repository::{
     AutomationSimulationEvidence, AutomationStepWrite, AutomationValidationEvidence,
     StoredAutomationVersion,
 };
-pub use automation_runtime::{AutomationRuntime, AutomationRuntimeError, AutomationRuntimeStep};
+pub use automation_runtime::{
+    AutomationRuntime, AutomationRuntimeCommandDependencies, AutomationRuntimeError,
+    AutomationRuntimeStep,
+};
 pub use automation_scheduler::{
     AutomationScheduler, AutomationSchedulerError, AutomationSchedulerTick,
 };

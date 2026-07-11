@@ -8,19 +8,27 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
-    ActorCredential, BoxError, BroadcastDomainEventSink, CanonicalRequestHash, Clock,
-    CommandAuditSink, CommandConfirmation, CommandConfirmationOutcome, CommandCreateOutcome,
-    CommandDispatcher, CommandLimitConfig, CommandLimits, CommandRepository, CommandRequest,
-    CommandService, CommandServiceDependencies, DomainEventCommandAuditSink, FoundationRepository,
-    FoundationWrite,
+    ActorCredential, AutomationActivation, AutomationCompiler, AutomationRepository,
+    AutomationRuntime, AutomationRuntimeCommandDependencies, AutomationRuntimeStep,
+    AutomationSimulationEvidence, AutomationValidationEvidence, BoxError, BroadcastDomainEventSink,
+    CanonicalRequestHash, Clock, CommandAuditSink, CommandConfirmation, CommandConfirmationOutcome,
+    CommandCreateOutcome, CommandDispatcher, CommandLimitConfig, CommandLimits, CommandRepository,
+    CommandRequest, CommandService, CommandServiceDependencies, DomainEventCommandAuditSink,
+    FoundationRepository, FoundationWrite, StoredAutomationVersion,
 };
 use homemagic_domain::{
-    Actor, ActorGrant, AdapterAcknowledgement, AuditId, CapabilityDescriptor, CapabilitySnapshot,
+    Actor, ActorGrant, AdapterAcknowledgement, AuditId, AutomationAction,
+    AutomationDeviceReference, AutomationDocument, AutomationDocumentSchema,
+    AutomationFailurePolicy, AutomationId, AutomationOccurrence, AutomationOccurrenceId,
+    AutomationOccurrenceState, AutomationProvenance, AutomationResourceBudget,
+    AutomationRetryPolicy, AutomationRun, AutomationRunId, AutomationRunMode, AutomationRunState,
+    AutomationSchedule, AutomationSelfTriggerPolicy, AutomationTargetReference, AutomationTrigger,
+    AutomationVersion, AutomationVersionState, CapabilityDescriptor, CapabilitySnapshot,
     CommandAction, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandFailure,
     CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceRecord, DeviceSnapshot,
     DomainEventKind, EndpointId, EndpointSnapshot, GrantId, GrantScope, IdempotencyKey,
-    Installation, InstallationId, IntegrationId, IntegrationInstance, ObservedConfirmation,
-    OnOffCommand, PolicyDecision, PolicyReason, RiskClass,
+    Installation, InstallationId, IntegrationId, IntegrationInstance, LifecycleTrigger,
+    ObservedConfirmation, OnOffCommand, PolicyDecision, PolicyReason, RiskClass,
 };
 use homemagic_storage::SqliteRepository;
 use tempfile::TempDir;
@@ -481,6 +489,199 @@ async fn recovery_should_dispatch_only_pre_dispatch_states() -> TestResult {
             Some(CommandState::Confirmed)
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one end-to-end crash window must retain all durable IDs and exact request fields"
+)]
+async fn automation_restart_window_should_reuse_command_without_redispatch() -> TestResult {
+    let fixture = Fixture::new(true).await?;
+    let now = fixture.clock.now();
+    let mut foundation = fixture.repository.load().await?;
+    let mut enrolled = foundation
+        .devices
+        .first()
+        .cloned()
+        .unwrap_or_else(|| panic!("fixture device"));
+    enrolled.transition(LifecycleTrigger::Enroll)?;
+    fixture
+        .repository
+        .apply(FoundationWrite {
+            devices: vec![enrolled],
+            ..FoundationWrite::default()
+        })
+        .await?;
+    foundation = fixture.repository.load().await?;
+    let document = AutomationDocument {
+        schema: AutomationDocumentSchema::V1,
+        id: AutomationId::new(),
+        version: AutomationVersion::new(1)?,
+        name: "Governed command".to_owned(),
+        provenance: AutomationProvenance {
+            author_id: fixture.actor.id.clone(),
+            agent_id: Some("runtime-test".to_owned()),
+            source_request: "Turn on the relay".to_owned(),
+            rationale: "Exercise idempotent runtime dispatch".to_owned(),
+        },
+        variables: BTreeMap::new(),
+        triggers: vec![AutomationTrigger::Schedule {
+            schedule: AutomationSchedule {
+                cron: "0 18 * * *".to_owned(),
+                timezone: "Europe/Berlin".to_owned(),
+                occurrence_window_ms: 60_000,
+            },
+        }],
+        condition: None,
+        actions: vec![AutomationAction::Command {
+            target: AutomationTargetReference {
+                device: AutomationDeviceReference::Device {
+                    device_id: fixture.device_id.clone(),
+                },
+                endpoint_id: Some(fixture.endpoint_id.clone()),
+                capability: "on_off.v1".to_owned(),
+            },
+            payload: CommandPayload::OnOff(OnOffCommand::Set { on: true }),
+            retry: AutomationRetryPolicy {
+                maximum_retries: 0,
+                backoff_ms: 0,
+                retryable_command_errors: Vec::new(),
+            },
+            on_failure: AutomationFailurePolicy::StopRun,
+        }],
+        run_mode: AutomationRunMode::Single,
+        self_trigger: AutomationSelfTriggerPolicy::SuppressSameVersion,
+        budget: AutomationResourceBudget::default(),
+        created_at: now,
+    };
+    let plan = AutomationCompiler::compile(&document, &foundation)?;
+    let stored = StoredAutomationVersion {
+        document: document.clone(),
+        state: AutomationVersionState::Simulated,
+        validation: AutomationValidationEvidence {
+            document_hash: plan.document_hash.clone(),
+            plan_hash: plan.plan_hash.clone(),
+            registry_revision: plan.registry_revision,
+            validated_at: now,
+        },
+        simulation: Some(AutomationSimulationEvidence {
+            document_hash: plan.document_hash.clone(),
+            plan_hash: plan.plan_hash.clone(),
+            registry_revision: plan.registry_revision,
+            trace_hash: plan.plan_hash.clone(),
+            succeeded: true,
+            simulated_at: now,
+        }),
+        plan: plan.clone(),
+    };
+    fixture
+        .repository
+        .store_automation_version(stored.clone())
+        .await?;
+    fixture
+        .repository
+        .activate_automation(AutomationActivation {
+            automation_id: document.id.clone(),
+            version: document.version,
+            expected_revision: 0,
+            document_hash: plan.document_hash.clone(),
+            plan_hash: plan.plan_hash.clone(),
+            registry_revision: plan.registry_revision,
+            activated_at: now,
+        })
+        .await?;
+    let occurrence = AutomationOccurrence {
+        id: AutomationOccurrenceId::new(),
+        automation_id: document.id.clone(),
+        version: document.version,
+        occurred_at: now,
+        window_ends_at: now + TimeDelta::minutes(1),
+        state: AutomationOccurrenceState::Accepted,
+        event_cursor: Some(1),
+        correlation_id: CorrelationId::new(),
+        causation_event_id: None,
+    };
+    fixture
+        .repository
+        .create_automation_occurrence(occurrence.clone())
+        .await?;
+    let run_id = AutomationRunId::from_occurrence(&occurrence.id);
+    let run = AutomationRun {
+        id: run_id.clone(),
+        automation_id: document.id,
+        version: document.version,
+        occurrence_id: occurrence.id,
+        actor_id: fixture.actor.id.clone(),
+        state: AutomationRunState::Pending,
+        revision: 0,
+        node_id: Some(plan.entry),
+        variables: BTreeMap::new(),
+        command_ids: Vec::new(),
+        correlation_id: occurrence.correlation_id,
+        causation_event_id: None,
+        created_at: now,
+        updated_at: now,
+    };
+    fixture
+        .repository
+        .create_automation_run(run.clone())
+        .await?;
+    let runtime = AutomationRuntime::new(
+        fixture.repository.clone(),
+        fixture.repository.clone(),
+        fixture.clock.clone(),
+    )
+    .with_commands(AutomationRuntimeCommandDependencies {
+        repository: fixture.repository.clone(),
+        service: fixture.service.clone(),
+    });
+    assert_eq!(
+        runtime.step(&run_id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+
+    let precommitted = fixture
+        .service
+        .execute(
+            &fixture.actor,
+            CommandRequest {
+                device_id: fixture.device_id.clone(),
+                endpoint_id: fixture.endpoint_id.clone(),
+                payload: CommandPayload::OnOff(OnOffCommand::Set { on: true }),
+                idempotency_key: IdempotencyKey::new(format!(
+                    "automation:{}:{}:0:0",
+                    run_id, plan.entry.0
+                ))?,
+                deadline: now
+                    + TimeDelta::milliseconds(i64::try_from(plan.budget.maximum_run_duration_ms)?),
+                expected: None,
+                dry_run: false,
+                correlation_id: run.correlation_id,
+                causation_event_id: None,
+            },
+            now,
+        )
+        .await?;
+    assert_eq!(fixture.dispatcher.calls.load(Ordering::SeqCst), 1);
+
+    assert_eq!(
+        runtime.step(&run_id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(fixture.dispatcher.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        runtime.step(&run_id).await?,
+        AutomationRuntimeStep::Completed
+    );
+    let completed = fixture
+        .repository
+        .automation_run(&run_id)
+        .await?
+        .unwrap_or_else(|| panic!("completed automation run"));
+    assert_eq!(completed.command_ids, vec![precommitted.envelope.id]);
+    assert_eq!(completed.state, AutomationRunState::Completed);
     Ok(())
 }
 

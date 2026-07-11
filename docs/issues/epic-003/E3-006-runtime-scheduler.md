@@ -53,3 +53,8 @@ updated: 2026-07-11
   acceptance, variables, branches, joins, completion, and durable delays.
   SQLite evidence closes and reopens the repository between timer creation and
   consumption, then proves one terminal run with a contiguous four-step trace.
+- 2026-07-11: Routed command nodes exclusively through CommandService with
+  deterministic run/node/target/attempt idempotency and a durable deadline.
+  The end-to-end crash-window test pre-dispatches the exact command without an
+  automation checkpoint, then proves runtime recovery records the same command
+  ID while the physical dispatcher remains at one call.

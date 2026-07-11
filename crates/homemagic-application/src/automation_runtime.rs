@@ -5,17 +5,18 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRun, AutomationRunId,
-    AutomationRunState, AutomationTimer, AutomationTimerId, AutomationTimerState,
-    AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationValue,
-    ResolvedAutomationCondition, ResolvedAutomationTarget,
+    AutomationPlanFailurePolicy, AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRun,
+    AutomationRunId, AutomationRunState, AutomationTimer, AutomationTimerId, AutomationTimerState,
+    AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandState,
+    IdempotencyKey, ResolvedAutomationCondition, ResolvedAutomationTarget,
 };
 use thiserror::Error;
 
 use crate::{
     AutomationEvaluationContext, AutomationEvaluationError, AutomationRepository,
-    AutomationStepWrite, BoxError, Clock, FoundationRepository, FoundationSnapshot,
-    evaluate_automation_condition, evaluate_automation_expression,
+    AutomationStepWrite, BoxError, Clock, CommandRepository, CommandRequest, CommandService,
+    CommandServiceError, FoundationRepository, FoundationSnapshot, evaluate_automation_condition,
+    evaluate_automation_expression,
 };
 
 const RECOVERY_PAGE: usize = 1_000;
@@ -54,6 +55,27 @@ pub enum AutomationRuntimeError {
     /// The compiler-owned trace or duration budget was exhausted.
     #[error("automation runtime budget was exhausted")]
     BudgetExceeded,
+    /// Runtime command dependencies were not configured.
+    #[error("automation runtime command path is unavailable")]
+    CommandPathUnavailable,
+    /// Actor security state required by the command service was unavailable.
+    #[error("automation runtime command actor is unavailable")]
+    CommandActorUnavailable,
+    /// The governed command path failed.
+    #[error("automation runtime command service failed")]
+    Command(#[source] CommandServiceError),
+    /// A deterministic internal command idempotency key was invalid.
+    #[error("automation runtime command idempotency key is invalid")]
+    InvalidIdempotencyKey,
+}
+
+/// Governed dependencies required only by command plan nodes.
+#[derive(Clone)]
+pub struct AutomationRuntimeCommandDependencies {
+    /// Durable actor and command projection used for ownership lookups.
+    pub repository: Arc<dyn CommandRepository>,
+    /// The single authorized physical-command application boundary.
+    pub service: CommandService,
 }
 
 /// Durable single-step automation interpreter.
@@ -62,6 +84,7 @@ pub struct AutomationRuntime {
     repository: Arc<dyn AutomationRepository>,
     foundation: Arc<dyn FoundationRepository>,
     clock: Arc<dyn Clock>,
+    commands: Option<AutomationRuntimeCommandDependencies>,
 }
 
 impl AutomationRuntime {
@@ -76,7 +99,15 @@ impl AutomationRuntime {
             repository,
             foundation,
             clock,
+            commands: None,
         }
+    }
+
+    /// Attaches the exclusive governed path used by command nodes.
+    #[must_use]
+    pub fn with_commands(mut self, commands: AutomationRuntimeCommandDependencies) -> Self {
+        self.commands = Some(commands);
+        self
     }
 
     /// Interprets at most one durable lifecycle or plan-node step.
@@ -255,11 +286,196 @@ impl AutomationRuntime {
                     .await?;
                 Ok(AutomationRuntimeStep::Advanced)
             }
-            AutomationPlanNodeKind::Command { .. }
-            | AutomationPlanNodeKind::Wait { .. }
+            AutomationPlanNodeKind::Command {
+                targets,
+                payload,
+                on_failure,
+                next,
+                ..
+            } => {
+                self.step_command(
+                    run,
+                    node_id,
+                    targets,
+                    payload,
+                    on_failure,
+                    *next,
+                    version.plan.budget.maximum_run_duration_ms,
+                    sequence,
+                )
+                .await
+            }
+            AutomationPlanNodeKind::Wait { .. }
             | AutomationPlanNodeKind::Parallel { .. }
             | AutomationPlanNodeKind::Race { .. } => Err(AutomationRuntimeError::InvalidPlan),
         }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "all compiled command-node contracts remain explicit at the governed boundary"
+    )]
+    async fn step_command(
+        &self,
+        run: AutomationRun,
+        node_id: AutomationPlanNodeId,
+        targets: &[ResolvedAutomationTarget],
+        payload: &homemagic_domain::CommandPayload,
+        on_failure: &AutomationPlanFailurePolicy,
+        following: Option<AutomationPlanNodeId>,
+        maximum_run_duration_ms: u64,
+        sequence: u64,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let commands = self
+            .commands
+            .as_ref()
+            .ok_or(AutomationRuntimeError::CommandPathUnavailable)?;
+        if run.state == AutomationRunState::Waiting && run.command_ids.len() >= targets.len() {
+            let current = &run.command_ids[run.command_ids.len() - targets.len()..];
+            let mut states = Vec::with_capacity(current.len());
+            for command_id in current {
+                let command = commands
+                    .service
+                    .get(&run.actor_id, command_id)
+                    .await
+                    .map_err(AutomationRuntimeError::Command)?
+                    .ok_or(AutomationRuntimeError::InvalidPlan)?;
+                states.push(command.state);
+            }
+            return self
+                .finish_command_states(
+                    run,
+                    node_id,
+                    on_failure,
+                    following,
+                    sequence,
+                    &states,
+                    Vec::new(),
+                )
+                .await;
+        }
+        let actor = commands
+            .repository
+            .actor_security(&run.actor_id)
+            .await
+            .map_err(AutomationRuntimeError::Repository)?
+            .map(|security| security.actor)
+            .ok_or(AutomationRuntimeError::CommandActorUnavailable)?;
+        let milliseconds = i64::try_from(maximum_run_duration_ms)
+            .map_err(|_| AutomationRuntimeError::DurationOverflow)?;
+        let deadline = run
+            .created_at
+            .checked_add_signed(TimeDelta::milliseconds(milliseconds))
+            .ok_or(AutomationRuntimeError::DurationOverflow)?;
+        let mut command_ids = Vec::with_capacity(targets.len());
+        let mut states = Vec::with_capacity(targets.len());
+        for (index, target) in targets.iter().enumerate() {
+            let idempotency_key =
+                IdempotencyKey::new(format!("automation:{}:{}:{index}:0", run.id, node_id.0))
+                    .map_err(|_| AutomationRuntimeError::InvalidIdempotencyKey)?;
+            let command = commands
+                .service
+                .execute(
+                    &actor,
+                    CommandRequest {
+                        device_id: target.device_id.clone(),
+                        endpoint_id: target.endpoint_id.clone(),
+                        payload: payload.clone(),
+                        idempotency_key,
+                        deadline,
+                        expected: None,
+                        dry_run: false,
+                        correlation_id: run.correlation_id.clone(),
+                        causation_event_id: run.causation_event_id.clone(),
+                    },
+                    self.clock.now(),
+                )
+                .await
+                .map_err(AutomationRuntimeError::Command)?;
+            command_ids.push(command.envelope.id);
+            states.push(command.state);
+        }
+        self.finish_command_states(
+            run,
+            node_id,
+            on_failure,
+            following,
+            sequence,
+            &states,
+            command_ids,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the command checkpoint records the complete compiled failure decision"
+    )]
+    async fn finish_command_states(
+        &self,
+        run: AutomationRun,
+        node_id: AutomationPlanNodeId,
+        on_failure: &AutomationPlanFailurePolicy,
+        following: Option<AutomationPlanNodeId>,
+        sequence: u64,
+        states: &[CommandState],
+        command_ids: Vec<homemagic_domain::CommandId>,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let confirmed = states.iter().all(|state| *state == CommandState::Confirmed);
+        let terminal_failure = states
+            .iter()
+            .any(|state| state.is_terminal() && *state != CommandState::Confirmed);
+        if !confirmed && !terminal_failure && command_ids.is_empty() {
+            return Ok(AutomationRuntimeStep::Waiting);
+        }
+        let mut next = checkpoint(&run, self.clock.now());
+        next.command_ids.extend(command_ids);
+        let outcome = if confirmed {
+            next.state = AutomationRunState::Running;
+            next.node_id = following;
+            AutomationRuntimeStep::Advanced
+        } else if terminal_failure {
+            match on_failure {
+                AutomationPlanFailurePolicy::Continue => {
+                    next.state = AutomationRunState::Running;
+                    next.node_id = following;
+                    AutomationRuntimeStep::Advanced
+                }
+                AutomationPlanFailurePolicy::Fallback { entry } => {
+                    next.state = AutomationRunState::Running;
+                    next.node_id = (*entry).or(following);
+                    AutomationRuntimeStep::Advanced
+                }
+                AutomationPlanFailurePolicy::StopRun | AutomationPlanFailurePolicy::StopBranch => {
+                    next.state = AutomationRunState::Failed;
+                    next.node_id = None;
+                    AutomationRuntimeStep::Completed
+                }
+            }
+        } else {
+            next.state = AutomationRunState::Waiting;
+            AutomationRuntimeStep::Waiting
+        };
+        let state = states
+            .iter()
+            .copied()
+            .map(command_state_name)
+            .collect::<Vec<_>>()
+            .join(",");
+        let step = trace_step(
+            &next,
+            sequence,
+            Some(node_id),
+            AutomationTraceKind::Command,
+            details([
+                ("attempt", AutomationValue::Integer(0)),
+                ("state", AutomationValue::String(state)),
+            ]),
+            self.clock.now(),
+        );
+        self.commit(next, run.revision, vec![step], vec![], vec![])
+            .await?;
+        Ok(outcome)
     }
 
     async fn step_delay(
@@ -440,4 +656,11 @@ fn json_value(value: &serde_json::Value) -> Option<AutomationValue> {
         serde_json::Value::String(value) => Some(AutomationValue::String(value.clone())),
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => None,
     }
+}
+
+fn command_state_name(state: CommandState) -> String {
+    serde_json::to_value(state)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "invalid".to_owned())
 }
