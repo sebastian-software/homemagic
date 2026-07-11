@@ -1,6 +1,7 @@
 //! `HomeMagic` application services and integration ports.
 
 mod memory;
+mod policy;
 mod ports;
 mod reconciliation;
 mod registry;
@@ -20,6 +21,10 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
+pub use policy::{
+    CommandLimitCapacities, CommandLimitConfig, CommandLimitConfigError, CommandLimits,
+    CommandPermit, PolicyEvaluator,
+};
 pub use ports::{
     ActorCredential, ActorSecurity, CanonicalRequestHash, CanonicalRequestHashError, Clock,
     CommandCreateOutcome, CommandRepository, CommandRetention, CommandRetentionResult, CursorEvent,

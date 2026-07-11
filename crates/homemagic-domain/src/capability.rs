@@ -59,6 +59,23 @@ impl CapabilityDescriptor {
     }
 }
 
+impl RiskClass {
+    /// Returns whether a grant at `self` covers the requested risk class.
+    #[must_use]
+    pub const fn permits(self, requested: Self) -> bool {
+        self.rank() >= requested.rank()
+    }
+
+    const fn rank(self) -> u8 {
+        match self {
+            Self::Observe => 0,
+            Self::Comfort => 1,
+            Self::Mechanical => 2,
+            Self::Security => 3,
+        }
+    }
+}
+
 /// Invalid capability descriptor.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
