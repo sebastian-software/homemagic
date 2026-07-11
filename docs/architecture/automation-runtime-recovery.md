@@ -67,9 +67,21 @@ progress; terminal runs remain immutable. Delay creation stores the waiting run,
 trace, and deterministic timer atomically. After restart, the scheduler readies
 the timer and the executor consumes it atomically with the next run revision.
 
-Wait-condition, parallel, and race nodes are not yet enabled by this slice. They
-remain explicit errors until their timer or continuation state is represented
-durably.
+Parallel and race nodes are not yet enabled by this slice. They remain explicit
+errors until their continuation state is represented durably.
+
+## Durable condition waits
+
+A wait node evaluates against one freshly loaded immutable foundation snapshot.
+If false, its timeout timer and waiting run revision are committed together.
+Each relevant durable event may schedule another bounded runtime step: a now
+true condition atomically cancels the timer and advances, while a still-false
+condition leaves the run untouched. Once the scheduler marks the timer ready,
+the executor consumes it in the same transaction that applies the compiled
+timeout failure policy. Workers never sleep or hold mutable device state.
+
+Nested continuous state-duration conditions still require their own durable
+stability timer and are rejected explicitly rather than approximated.
 
 ## Governed command crash window
 

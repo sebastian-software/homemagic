@@ -58,3 +58,7 @@ updated: 2026-07-11
   The end-to-end crash-window test pre-dispatches the exact command without an
   automation checkpoint, then proves runtime recovery records the same command
   ID while the physical dispatcher remains at one call.
+- 2026-07-11: Added non-blocking durable wait nodes. False conditions create an
+  atomic timeout timer, subsequent event-driven steps can cancel it on success,
+  and ready timers are consumed with the compiled failure policy. SQLite
+  evidence proves a false wait times out, continues, and completes exactly once.

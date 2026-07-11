@@ -305,10 +305,153 @@ impl AutomationRuntime {
                 )
                 .await
             }
-            AutomationPlanNodeKind::Wait { .. }
-            | AutomationPlanNodeKind::Parallel { .. }
-            | AutomationPlanNodeKind::Race { .. } => Err(AutomationRuntimeError::InvalidPlan),
+            AutomationPlanNodeKind::Wait {
+                condition,
+                timeout_ms,
+                on_timeout,
+                next,
+            } => {
+                self.step_wait(
+                    run,
+                    node_id,
+                    condition,
+                    *timeout_ms,
+                    on_timeout,
+                    *next,
+                    sequence,
+                )
+                .await
+            }
+            AutomationPlanNodeKind::Parallel { .. } | AutomationPlanNodeKind::Race { .. } => {
+                Err(AutomationRuntimeError::InvalidPlan)
+            }
         }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the durable wait step keeps its complete compiled timeout contract explicit"
+    )]
+    async fn step_wait(
+        &self,
+        run: AutomationRun,
+        node_id: AutomationPlanNodeId,
+        condition: &ResolvedAutomationCondition,
+        timeout_ms: u64,
+        on_timeout: &AutomationPlanFailurePolicy,
+        following: Option<AutomationPlanNodeId>,
+        sequence: u64,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let snapshot = self
+            .foundation
+            .load()
+            .await
+            .map_err(AutomationRuntimeError::Foundation)?;
+        let mut context = RuntimeEvaluationContext {
+            now: self.clock.now(),
+            snapshot: &snapshot,
+        };
+        let satisfied = evaluate_automation_condition(condition, &run.variables, &mut context)
+            .map_err(AutomationRuntimeError::Evaluation)?;
+        if run.state == AutomationRunState::Running {
+            if satisfied {
+                return self
+                    .complete_wait(run, node_id, following, sequence, None)
+                    .await;
+            }
+            let milliseconds =
+                i64::try_from(timeout_ms).map_err(|_| AutomationRuntimeError::DurationOverflow)?;
+            let ready_at = self
+                .clock
+                .now()
+                .checked_add_signed(TimeDelta::milliseconds(milliseconds))
+                .ok_or(AutomationRuntimeError::DurationOverflow)?;
+            let timer = AutomationTimer {
+                id: AutomationTimerId::from_key(&run.id, node_id.0, ready_at.timestamp_millis()),
+                run_id: run.id.clone(),
+                node_id,
+                ready_at,
+                state: AutomationTimerState::Pending,
+            };
+            let mut next = checkpoint(&run, self.clock.now());
+            next.state = AutomationRunState::Waiting;
+            let trace = trace_step(
+                &next,
+                sequence,
+                Some(node_id),
+                AutomationTraceKind::Condition,
+                details([("result", AutomationValue::Boolean(false))]),
+                self.clock.now(),
+            );
+            self.commit(next, run.revision, vec![trace], vec![timer], vec![])
+                .await?;
+            return Ok(AutomationRuntimeStep::Waiting);
+        }
+        let recovery = self
+            .repository
+            .recoverable_automation_work(RECOVERY_PAGE)
+            .await
+            .map_err(AutomationRuntimeError::Repository)?;
+        let Some(mut timer) = recovery
+            .timers
+            .into_iter()
+            .find(|timer| timer.run_id == run.id && timer.node_id == node_id)
+        else {
+            return Err(AutomationRuntimeError::InvalidPlan);
+        };
+        if satisfied {
+            timer.state = AutomationTimerState::Cancelled;
+            return self
+                .complete_wait(run, node_id, following, sequence, Some(timer))
+                .await;
+        }
+        if timer.state != AutomationTimerState::Ready {
+            return Ok(AutomationRuntimeStep::Waiting);
+        }
+        timer.state = AutomationTimerState::Consumed;
+        let mut next = checkpoint(&run, self.clock.now());
+        let outcome = apply_failure(&mut next, on_timeout, following);
+        let trace = trace_step(
+            &next,
+            sequence,
+            Some(node_id),
+            AutomationTraceKind::Timer,
+            details([("event", AutomationValue::String("wait_timeout".to_owned()))]),
+            self.clock.now(),
+        );
+        self.commit(next, run.revision, vec![trace], vec![], vec![timer])
+            .await?;
+        Ok(outcome)
+    }
+
+    async fn complete_wait(
+        &self,
+        run: AutomationRun,
+        node_id: AutomationPlanNodeId,
+        following: Option<AutomationPlanNodeId>,
+        sequence: u64,
+        timer: Option<AutomationTimer>,
+    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
+        let mut next = checkpoint(&run, self.clock.now());
+        next.state = AutomationRunState::Running;
+        next.node_id = following;
+        let trace = trace_step(
+            &next,
+            sequence,
+            Some(node_id),
+            AutomationTraceKind::Condition,
+            details([("result", AutomationValue::Boolean(true))]),
+            self.clock.now(),
+        );
+        self.commit(
+            next,
+            run.revision,
+            vec![trace],
+            vec![],
+            timer.into_iter().collect(),
+        )
+        .await?;
+        Ok(AutomationRuntimeStep::Advanced)
     }
 
     #[expect(
@@ -435,23 +578,7 @@ impl AutomationRuntime {
             next.node_id = following;
             AutomationRuntimeStep::Advanced
         } else if terminal_failure {
-            match on_failure {
-                AutomationPlanFailurePolicy::Continue => {
-                    next.state = AutomationRunState::Running;
-                    next.node_id = following;
-                    AutomationRuntimeStep::Advanced
-                }
-                AutomationPlanFailurePolicy::Fallback { entry } => {
-                    next.state = AutomationRunState::Running;
-                    next.node_id = (*entry).or(following);
-                    AutomationRuntimeStep::Advanced
-                }
-                AutomationPlanFailurePolicy::StopRun | AutomationPlanFailurePolicy::StopBranch => {
-                    next.state = AutomationRunState::Failed;
-                    next.node_id = None;
-                    AutomationRuntimeStep::Completed
-                }
-            }
+            apply_failure(&mut next, on_failure, following)
         } else {
             next.state = AutomationRunState::Waiting;
             AutomationRuntimeStep::Waiting
@@ -576,6 +703,30 @@ fn checkpoint(run: &AutomationRun, now: DateTime<Utc>) -> AutomationRun {
     next.revision = next.revision.saturating_add(1);
     next.updated_at = now;
     next
+}
+
+fn apply_failure(
+    run: &mut AutomationRun,
+    policy: &AutomationPlanFailurePolicy,
+    following: Option<AutomationPlanNodeId>,
+) -> AutomationRuntimeStep {
+    match policy {
+        AutomationPlanFailurePolicy::Continue => {
+            run.state = AutomationRunState::Running;
+            run.node_id = following;
+            AutomationRuntimeStep::Advanced
+        }
+        AutomationPlanFailurePolicy::Fallback { entry } => {
+            run.state = AutomationRunState::Running;
+            run.node_id = (*entry).or(following);
+            AutomationRuntimeStep::Advanced
+        }
+        AutomationPlanFailurePolicy::StopRun | AutomationPlanFailurePolicy::StopBranch => {
+            run.state = AutomationRunState::Failed;
+            run.node_id = None;
+            AutomationRuntimeStep::Completed
+        }
+    }
 }
 
 fn trace_step(

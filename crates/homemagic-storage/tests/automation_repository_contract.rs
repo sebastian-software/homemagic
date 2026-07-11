@@ -11,8 +11,9 @@ use homemagic_application::{
     Clock, FoundationSnapshot, MemoryFoundationRepository, StoredAutomationVersion,
 };
 use homemagic_domain::{
-    ActorId, AutomationApprovalId, AutomationApprovalRecord, AutomationApprovalRequirement,
-    AutomationApprovalState, AutomationContentHash, AutomationDocument, AutomationDocumentSchema,
+    ActorId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
+    AutomationApprovalRequirement, AutomationApprovalState, AutomationCondition,
+    AutomationContentHash, AutomationDocument, AutomationDocumentSchema, AutomationFailurePolicy,
     AutomationId, AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState,
     AutomationPlanNodeId, AutomationProvenance, AutomationResourceBudget, AutomationRun,
     AutomationRunId, AutomationRunMode, AutomationRunState, AutomationSchedule,
@@ -502,6 +503,77 @@ async fn runtime_should_resume_durable_delay_after_repository_reopen() -> TestRe
     Ok(())
 }
 
+#[tokio::test]
+async fn runtime_wait_timeout_should_apply_failure_policy_durably() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("runtime-wait.sqlite3"),
+    )?);
+    let stored = stored_version_for(wait_document());
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let occurrence = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(occurrence.clone())
+        .await?;
+    let mut pending = run(&stored, &occurrence, now);
+    pending.id = AutomationRunId::from_occurrence(&occurrence.id);
+    repository.create_automation_run(pending.clone()).await?;
+    let clock = Arc::new(ManualClock::new(now));
+    let runtime = AutomationRuntime::new(
+        repository.clone(),
+        Arc::new(MemoryFoundationRepository::default()),
+        clock.clone(),
+    );
+
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Waiting
+    );
+    clock.set(now + TimeDelta::milliseconds(20));
+    let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
+    assert_eq!(
+        scheduler.tick(clock.now(), clock.now()).await?.timers_ready,
+        1
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Completed
+    );
+
+    let completed = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("completed wait run"));
+    assert_eq!(completed.state, AutomationRunState::Completed);
+    assert_eq!(
+        repository
+            .automation_trace(&pending.id, None, 10)
+            .await?
+            .iter()
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            AutomationTraceKind::Trigger,
+            AutomationTraceKind::Condition,
+            AutomationTraceKind::Timer,
+            AutomationTraceKind::Outcome,
+        ]
+    );
+    Ok(())
+}
+
 struct FixedClock(chrono::DateTime<Utc>);
 
 impl Clock for FixedClock {
@@ -602,6 +674,17 @@ fn document() -> AutomationDocument {
         budget: AutomationResourceBudget::default(),
         created_at,
     }
+}
+
+fn wait_document() -> AutomationDocument {
+    let mut document = document();
+    "Durable wait".clone_into(&mut document.name);
+    document.actions = vec![AutomationAction::Wait {
+        condition: AutomationCondition::Literal { value: false },
+        timeout_ms: 10,
+        on_timeout: AutomationFailurePolicy::Continue,
+    }];
+    document
 }
 
 fn activation(stored: &StoredAutomationVersion, expected_revision: u64) -> AutomationActivation {
