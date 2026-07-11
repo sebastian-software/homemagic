@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::{
     Availability, CapabilityDescriptor, CapabilitySnapshot, DeviceId, DeviceLifecycle,
     DeviceTimestamps, EndpointId, FreshnessPolicy, FreshnessState, InstallationId, IntegrationId,
-    LifecycleTransitionError, LifecycleTrigger, SpaceId,
+    LifecycleTransitionError, LifecycleTrigger, RepairRecord, SpaceId,
 };
 
 /// One normalized device discovered by an integration before reconciliation.
@@ -21,6 +21,9 @@ pub struct DiscoveryCandidate {
     pub snapshot: DeviceSnapshot,
     /// Time at which discovery observed the candidate.
     pub discovered_at: DateTime<Utc>,
+    /// Idempotent actionable repairs observed while projecting this candidate.
+    #[serde(default)]
+    pub repairs: Vec<RepairRecord>,
 }
 
 /// Snapshot of one independently addressable part of a device.

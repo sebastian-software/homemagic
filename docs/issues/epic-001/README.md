@@ -21,8 +21,8 @@ the dependency graph and repository edits do not overlap.
 | [E1-002](E1-002-device-lifecycle-contracts.md) | Done | E1-001 | Domain contracts |
 | [E1-003](E1-003-sqlite-storage.md) | Done | E1-001, E1-002 | Durable repositories |
 | [E1-004](E1-004-durable-reconciliation.md) | Done | E1-003 | Load and reconcile |
-| [E1-005](E1-005-shelly-authentication.md) | Ready | E1-001, E1-002 | Credential-safe auth |
-| [E1-006](E1-006-shelly-managed-sessions.md) | Planned | E1-004, E1-005 | Live observations |
+| [E1-005](E1-005-shelly-authentication.md) | Done | E1-001, E1-002 | Credential-safe auth |
+| [E1-006](E1-006-shelly-managed-sessions.md) | Ready | E1-004, E1-005 | Live observations |
 | [E1-007](E1-007-runtime-resilience.md) | Planned | E1-004, E1-006 | Bounded recovery |
 | [E1-008](E1-008-read-api-and-repairs.md) | Planned | E1-003, E1-007 | Stable operational API |
 | [E1-009](E1-009-operations-and-exit-audit.md) | Planned | E1-008 | Release evidence |
@@ -34,3 +34,4 @@ the dependency graph and repository edits do not overlap.
 - 2026-07-11: E1-002 completed; E1-003 and E1-005 are ready.
 - 2026-07-11: E1-003 completed; E1-004 is ready.
 - 2026-07-11: E1-004 completed; E1-005 remains the next ready issue.
+- 2026-07-11: E1-005 completed; E1-006 is ready.

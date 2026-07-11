@@ -6,11 +6,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
     DeviceRegistry, FoundationWrite, HomeMagicApplication, IntegrationScanner, NoopDomainEventSink,
+    SecretStore,
 };
 use homemagic_domain::{Installation, InstallationId, IntegrationId, IntegrationInstance};
+use homemagic_secrets::{FileSecretStore, PlatformSecretStore};
 use homemagic_shelly::ShellyScanner;
 use homemagic_storage::SqliteRepository;
 use tokio::net::TcpListener;
@@ -22,6 +24,12 @@ use tracing_subscriber::EnvFilter;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SecretBackend {
+    Platform,
+    File,
 }
 
 #[derive(Debug, Subcommand)]
@@ -46,6 +54,19 @@ enum Command {
         /// Path to the durable `HomeMagic` `SQLite` database.
         #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
         database: PathBuf,
+        /// Explicit credential backend; file mode never activates implicitly.
+        #[arg(long, value_enum, default_value_t = SecretBackend::Platform, env = "HOMEMAGIC_SECRET_STORE")]
+        secret_store: SecretBackend,
+        /// Owner-only 32-byte master key required by file mode.
+        #[arg(long, env = "HOMEMAGIC_MASTER_KEY_FILE")]
+        master_key_file: Option<PathBuf>,
+        /// Encrypted credential vault directory used only by file mode.
+        #[arg(
+            long,
+            default_value = "homemagic-secrets",
+            env = "HOMEMAGIC_SECRET_VAULT"
+        )]
+        secret_vault: PathBuf,
     },
 }
 
@@ -63,7 +84,20 @@ async fn main() -> Result<()> {
             bind,
             discovery_seconds,
             database,
-        } => serve(bind, discovery_seconds, &database).await,
+            secret_store,
+            master_key_file,
+            secret_vault,
+        } => {
+            serve(
+                bind,
+                discovery_seconds,
+                &database,
+                secret_store,
+                master_key_file.as_deref(),
+                &secret_vault,
+            )
+            .await
+        }
     }
 }
 
@@ -80,8 +114,22 @@ async fn scan(discovery_seconds: u64, summary: bool) -> Result<()> {
     Ok(())
 }
 
-async fn serve(bind: SocketAddr, discovery_seconds: u64, database: &Path) -> Result<()> {
-    let application = durable_application(discovery_seconds, database).await?;
+async fn serve(
+    bind: SocketAddr,
+    discovery_seconds: u64,
+    database: &Path,
+    secret_backend: SecretBackend,
+    master_key_file: Option<&Path>,
+    secret_vault: &Path,
+) -> Result<()> {
+    let application = durable_application(
+        discovery_seconds,
+        database,
+        secret_backend,
+        master_key_file,
+        secret_vault,
+    )
+    .await?;
     let listener = TcpListener::bind(bind)
         .await
         .with_context(|| format!("failed to bind HomeMagic API to {bind}"))?;
@@ -102,28 +150,51 @@ async fn serve(bind: SocketAddr, discovery_seconds: u64, database: &Path) -> Res
 async fn durable_application(
     discovery_seconds: u64,
     database: &Path,
+    secret_backend: SecretBackend,
+    master_key_file: Option<&Path>,
+    secret_vault: &Path,
 ) -> Result<HomeMagicApplication> {
     let repository = Arc::new(
         SqliteRepository::open(database)
             .with_context(|| format!("failed to open database at {}", database.display()))?,
     );
-    let (installation_id, integration_id) = bootstrap_shelly(repository.as_ref()).await?;
-    let shelly: Arc<dyn IntegrationScanner> = Arc::new(
+    let integration = bootstrap_shelly(repository.as_ref()).await?;
+    let scanner = if let Some(reference) = integration.credential_ref.clone() {
+        let secret_store: Arc<dyn SecretStore> = match secret_backend {
+            SecretBackend::Platform => Arc::new(PlatformSecretStore::new("dev.homemagic.shelly")),
+            SecretBackend::File => {
+                let key_file = master_key_file.context(
+                    "HOMEMAGIC_MASTER_KEY_FILE is required when HOMEMAGIC_SECRET_STORE=file",
+                )?;
+                Arc::new(
+                    FileSecretStore::open(secret_vault, key_file)
+                        .await
+                        .context("failed to open encrypted secret vault")?,
+                )
+            }
+        };
+        ShellyScanner::with_authentication(
+            Duration::from_secs(discovery_seconds),
+            integration.installation_id.clone(),
+            integration.id.clone(),
+            reference,
+            secret_store,
+        )
+    } else {
         ShellyScanner::with_identity(
             Duration::from_secs(discovery_seconds),
-            installation_id,
-            integration_id,
+            integration.installation_id.clone(),
+            integration.id.clone(),
         )
-        .context("failed to create Shelly scanner")?,
-    );
+    }
+    .context("failed to create Shelly scanner")?;
+    let shelly: Arc<dyn IntegrationScanner> = Arc::new(scanner);
     HomeMagicApplication::from_repository(repository, Arc::new(NoopDomainEventSink), [shelly])
         .await
         .context("failed to load durable device state")
 }
 
-async fn bootstrap_shelly(
-    repository: &SqliteRepository,
-) -> Result<(InstallationId, IntegrationId)> {
+async fn bootstrap_shelly(repository: &SqliteRepository) -> Result<IntegrationInstance> {
     let snapshot = repository.load_foundation().await?;
     if let Some(integration) = snapshot
         .integrations
@@ -137,7 +208,7 @@ async fn bootstrap_shelly(
         if !installation_exists {
             anyhow::bail!("Shelly integration references a missing installation");
         }
-        return Ok((integration.installation_id.clone(), integration.id.clone()));
+        return Ok(integration.clone());
     }
 
     let mut write = FoundationWrite::default();
@@ -161,10 +232,9 @@ async fn bootstrap_shelly(
         name: "Local Shelly".to_owned(),
         credential_ref: None,
     };
-    let integration_id = integration.id.clone();
-    write.integrations.push(integration);
+    write.integrations.push(integration.clone());
     repository.apply_foundation(write).await?;
-    Ok((installation_id, integration_id))
+    Ok(integration)
 }
 
 fn application(discovery_seconds: u64) -> Result<HomeMagicApplication> {

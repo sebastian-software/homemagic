@@ -1,0 +1,1 @@
+Digest qop="auth", realm="shellyplus1-aabbccddeeff", nonce="1625053638", algorithm=SHA-256

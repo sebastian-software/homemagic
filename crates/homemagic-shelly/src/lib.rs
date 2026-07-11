@@ -3,21 +3,26 @@
 //! The initial adapter discovers `_shelly._tcp.local.` services and reads the
 //! public device information and current status through Shelly HTTP RPC.
 
+mod auth;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use auth::DigestChallenge;
 use chrono::Utc;
-use homemagic_application::{BoxError, IntegrationScanner};
+use homemagic_application::{BoxError, IntegrationScanner, SecretStore, SecretValue};
 use homemagic_domain::{
     CapabilitySnapshot, DeviceId, DeviceSnapshot, DiscoveryCandidate, EndpointId, EndpointSnapshot,
-    InstallationId, IntegrationId, NetworkLocation, RiskClass,
+    InstallationId, IntegrationId, NetworkLocation, RepairKind, RepairRecord, RiskClass, SecretRef,
 };
 use mdns_sd::{ServiceDaemon, ServiceEvent};
-use reqwest::{Client, StatusCode};
+use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use reqwest::{Client, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -55,6 +60,9 @@ pub struct ShellyDeviceInfo {
     /// Whether HTTP RPC requires authentication.
     #[serde(default)]
     pub auth_en: bool,
+    /// Authentication realm, when authentication is enabled.
+    #[serde(default)]
+    pub auth_domain: Option<String>,
 }
 
 /// One resolved Shelly mDNS service.
@@ -87,11 +95,35 @@ pub enum ShellyError {
         /// HTTP client error.
         source: reqwest::Error,
     },
-    /// Device requires credentials not yet configured in this prototype.
-    #[error("device at {host} requires authentication")]
-    AuthenticationRequired {
+    /// Device requires credentials that have not been configured.
+    #[error("device at {host} requires configured credentials")]
+    CredentialsMissing {
         /// Device address.
         host: String,
+    },
+    /// Configured credentials were rejected.
+    #[error("device at {host} rejected configured credentials")]
+    CredentialsRejected {
+        /// Device address.
+        host: String,
+    },
+    /// Selected secret backend could not resolve the configured reference.
+    #[error("secret backend `{backend}` is unavailable for device at {host} ({code})")]
+    SecretStoreUnavailable {
+        /// Device address.
+        host: String,
+        /// Stable backend identifier.
+        backend: &'static str,
+        /// Stable non-sensitive error code.
+        code: &'static str,
+    },
+    /// Device returned an invalid or unsupported authentication challenge.
+    #[error("device at {host} returned an invalid authentication challenge ({code})")]
+    AuthenticationProtocol {
+        /// Device address.
+        host: String,
+        /// Stable non-sensitive error code.
+        code: &'static str,
     },
     /// Shelly returned an unexpected HTTP status.
     #[error("device at {host} returned HTTP {status}")]
@@ -110,6 +142,8 @@ pub struct ShellyScanner {
     discovery_window: Duration,
     installation_id: InstallationId,
     integration_id: IntegrationId,
+    credential_ref: Option<SecretRef>,
+    secret_store: Option<Arc<dyn SecretStore>>,
 }
 
 impl ShellyScanner {
@@ -140,60 +174,147 @@ impl ShellyScanner {
             discovery_window,
             installation_id,
             integration_id,
+            credential_ref: None,
+            secret_store: None,
         })
     }
 
-    async fn fetch_snapshot(
+    /// Creates a scanner with an opaque credential reference and secret backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the HTTP client cannot be constructed.
+    pub fn with_authentication(
+        discovery_window: Duration,
+        installation_id: InstallationId,
+        integration_id: IntegrationId,
+        credential_ref: SecretRef,
+        secret_store: Arc<dyn SecretStore>,
+    ) -> Result<Self, reqwest::Error> {
+        let mut scanner = Self::with_identity(discovery_window, installation_id, integration_id)?;
+        scanner.credential_ref = Some(credential_ref);
+        scanner.secret_store = Some(secret_store);
+        Ok(scanner)
+    }
+
+    async fn fetch_candidate(
         &self,
         target: &DiscoveredShelly,
-    ) -> Result<DeviceSnapshot, ShellyError> {
+    ) -> Result<DiscoveryCandidate, ShellyError> {
         let info_url = rpc_url(target, "Shelly.GetDeviceInfo");
         let info = self.get_json::<ShellyDeviceInfo>(&info_url).await?;
         let status_url = rpc_url(target, "Shelly.GetStatus");
         let config_url = rpc_url(target, "Shelly.GetConfig");
-        let (status, config) = tokio::join!(
-            self.get_json::<Map<String, Value>>(&status_url),
-            self.get_json::<Map<String, Value>>(&config_url),
-        );
-        let status = match status {
-            Ok(value) => Some(value),
-            Err(ShellyError::AuthenticationRequired { .. }) => {
-                warn!(device = %info.id, "Shelly status requires authentication");
-                None
+        let credential = if info.auth_en {
+            match (&self.credential_ref, &self.secret_store) {
+                (Some(reference), Some(store)) => match store.get(reference).await {
+                    Ok(value) => Some(value),
+                    Err(error) if error.code == "not_found" => {
+                        return Ok(self.authentication_candidate(
+                            target,
+                            info,
+                            RepairKind::CredentialsMissing,
+                            "credentials_missing",
+                            "Configure Shelly credentials",
+                        ));
+                    }
+                    Err(error) => {
+                        return Ok(self.authentication_candidate(
+                            target,
+                            info,
+                            RepairKind::SecretStoreUnavailable {
+                                backend: error.backend.to_owned(),
+                            },
+                            "secret_store_unavailable",
+                            "Restore access to the configured secret backend",
+                        ));
+                    }
+                },
+                _ => {
+                    return Ok(self.authentication_candidate(
+                        target,
+                        info,
+                        RepairKind::CredentialsMissing,
+                        "credentials_missing",
+                        "Configure Shelly credentials",
+                    ));
+                }
             }
-            Err(error) => return Err(error),
+        } else {
+            None
         };
-        let config = match config {
-            Ok(value) => Some(value),
-            Err(ShellyError::AuthenticationRequired { .. }) => None,
-            Err(error) => return Err(error),
+        let (status, config) = tokio::join!(
+            self.get_json_maybe_authenticated::<Map<String, Value>>(
+                &status_url,
+                credential.as_ref()
+            ),
+            self.get_json_maybe_authenticated::<Map<String, Value>>(
+                &config_url,
+                credential.as_ref()
+            ),
+        );
+        let (status, config) = match (status, config) {
+            (Ok(status), Ok(config)) => (Some(status), Some(config)),
+            (Err(ShellyError::CredentialsRejected { .. }), _)
+            | (_, Err(ShellyError::CredentialsRejected { .. })) => {
+                return Ok(self.authentication_candidate(
+                    target,
+                    info,
+                    RepairKind::CredentialsRejected,
+                    "credentials_rejected",
+                    "Update the rejected Shelly credentials",
+                ));
+            }
+            (Err(error), _) | (_, Err(error)) => return Err(error),
         };
 
-        Ok(project_snapshot(
-            target,
-            &self.integration_id,
-            info,
-            status,
-            config,
-        ))
+        let snapshot = project_snapshot(target, &self.integration_id, info, status, config);
+        Ok(DiscoveryCandidate {
+            installation_id: self.installation_id.clone(),
+            integration_id: self.integration_id.clone(),
+            discovered_at: snapshot.observed_at,
+            snapshot,
+            repairs: Vec::new(),
+        })
+    }
+
+    fn authentication_candidate(
+        &self,
+        target: &DiscoveredShelly,
+        info: ShellyDeviceInfo,
+        kind: RepairKind,
+        condition: &str,
+        summary: &str,
+    ) -> DiscoveryCandidate {
+        let mut snapshot = project_snapshot(target, &self.integration_id, info, None, None);
+        snapshot.vendor_data.insert(
+            "shelly.authentication".to_owned(),
+            serde_json::json!({ "status": condition }),
+        );
+        let repair = RepairRecord::for_device_condition(
+            snapshot.id.clone(),
+            condition,
+            kind,
+            summary,
+            snapshot.observed_at,
+        );
+        DiscoveryCandidate {
+            installation_id: self.installation_id.clone(),
+            integration_id: self.integration_id.clone(),
+            discovered_at: snapshot.observed_at,
+            snapshot,
+            repairs: vec![repair],
+        }
     }
 
     async fn get_json<T>(&self, url: &str) -> Result<T, ShellyError>
     where
         T: serde::de::DeserializeOwned,
     {
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|source| ShellyError::Http {
-                url: url.to_owned(),
-                source,
-            })?;
+        let response = self.send(url, None).await?;
 
         if response.status() == StatusCode::UNAUTHORIZED {
-            return Err(ShellyError::AuthenticationRequired {
+            return Err(ShellyError::CredentialsMissing {
                 host: url.to_owned(),
             });
         }
@@ -209,6 +330,92 @@ impl ShellyScanner {
             source,
         })
     }
+
+    async fn get_json_maybe_authenticated<T>(
+        &self,
+        url: &str,
+        credential: Option<&SecretValue>,
+    ) -> Result<T, ShellyError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let Some(credential) = credential else {
+            return self.get_json(url).await;
+        };
+        let parsed = Url::parse(url).map_err(|_| ShellyError::AuthenticationProtocol {
+            host: url.to_owned(),
+            code: "invalid_url",
+        })?;
+        let uri = parsed.path();
+        let response = self.send(url, None).await?;
+        if response.status() != StatusCode::UNAUTHORIZED {
+            return decode_response(url, response).await;
+        }
+        let mut challenge = DigestChallenge::parse(response.headers().get(WWW_AUTHENTICATE))
+            .map_err(|error| ShellyError::AuthenticationProtocol {
+                host: url.to_owned(),
+                code: error.code(),
+            })?;
+
+        for attempt in 0..2 {
+            let authorization = challenge
+                .authorization(credential.expose(), "GET", uri, 1, rand::random())
+                .map_err(|error| ShellyError::AuthenticationProtocol {
+                    host: url.to_owned(),
+                    code: error.code(),
+                })?;
+            let response = self.send(url, Some(authorization)).await?;
+            if response.status() != StatusCode::UNAUTHORIZED {
+                return decode_response(url, response).await;
+            }
+            let refreshed = DigestChallenge::parse(response.headers().get(WWW_AUTHENTICATE))
+                .map_err(|error| ShellyError::AuthenticationProtocol {
+                    host: url.to_owned(),
+                    code: error.code(),
+                })?;
+            if attempt == 0 && refreshed.stale() {
+                challenge = refreshed;
+                continue;
+            }
+            return Err(ShellyError::CredentialsRejected {
+                host: url.to_owned(),
+            });
+        }
+        Err(ShellyError::CredentialsRejected {
+            host: url.to_owned(),
+        })
+    }
+
+    async fn send(
+        &self,
+        url: &str,
+        authorization: Option<reqwest::header::HeaderValue>,
+    ) -> Result<Response, ShellyError> {
+        let mut request = self.client.get(url);
+        if let Some(authorization) = authorization {
+            request = request.header(AUTHORIZATION, authorization);
+        }
+        request.send().await.map_err(|source| ShellyError::Http {
+            url: url.to_owned(),
+            source,
+        })
+    }
+}
+
+async fn decode_response<T>(url: &str, response: Response) -> Result<T, ShellyError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    if !response.status().is_success() {
+        return Err(ShellyError::HttpStatus {
+            host: url.to_owned(),
+            status: response.status(),
+        });
+    }
+    response.json().await.map_err(|source| ShellyError::Http {
+        url: url.to_owned(),
+        source,
+    })
 }
 
 #[async_trait]
@@ -225,15 +432,15 @@ impl IntegrationScanner for ShellyScanner {
         for target in targets {
             let scanner = self.clone();
             tasks.spawn(async move {
-                let result = scanner.fetch_snapshot(&target).await;
+                let result = scanner.fetch_candidate(&target).await;
                 (target, result)
             });
         }
 
         while let Some(task) = tasks.join_next().await {
             match task {
-                Ok((_, Ok(snapshot))) => {
-                    snapshots.insert(snapshot.id.clone(), snapshot);
+                Ok((_, Ok(candidate))) => {
+                    snapshots.insert(candidate.snapshot.id.clone(), candidate);
                 }
                 Ok((target, Err(error))) => {
                     warn!(address = %target.address, %error, "Shelly refresh failed");
@@ -242,15 +449,7 @@ impl IntegrationScanner for ShellyScanner {
             }
         }
 
-        Ok(snapshots
-            .into_values()
-            .map(|snapshot| DiscoveryCandidate {
-                installation_id: self.installation_id.clone(),
-                integration_id: self.integration_id.clone(),
-                discovered_at: snapshot.observed_at,
-                snapshot,
-            })
-            .collect())
+        Ok(snapshots.into_values().collect())
     }
 }
 
@@ -602,7 +801,92 @@ fn string<'a>(component: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
+
+    #[derive(Clone, Copy)]
+    enum ServerMode {
+        Success,
+        StaleThenSuccess,
+        Reject,
+    }
+
+    async fn auth_server(
+        mode: ServerMode,
+        requests: usize,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|error| panic!("bind fixture server: {error}"));
+        let address = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("fixture address: {error}"));
+        let observed = Arc::new(AtomicUsize::new(0));
+        let task_observed = observed.clone();
+        let task = tokio::spawn(async move {
+            for index in 0..requests {
+                let (mut stream, _) = listener
+                    .accept()
+                    .await
+                    .unwrap_or_else(|error| panic!("accept fixture request: {error}"));
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 1024];
+                    let read = stream
+                        .read(&mut chunk)
+                        .await
+                        .unwrap_or_else(|error| panic!("read fixture request: {error}"));
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                task_observed.fetch_add(1, Ordering::SeqCst);
+                let authorized = String::from_utf8_lossy(&request).lines().any(|line| {
+                    line.to_ascii_lowercase()
+                        .starts_with("authorization: digest")
+                });
+                let success = match mode {
+                    ServerMode::Success => index == 1 && authorized,
+                    ServerMode::StaleThenSuccess => index == 2 && authorized,
+                    ServerMode::Reject => false,
+                };
+                let response = if success {
+                    let body = r#"{"ok":true}"#;
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                } else {
+                    let stale = matches!(mode, ServerMode::StaleThenSuccess) && index == 1;
+                    let nonce = if stale {
+                        "fresh-nonce"
+                    } else {
+                        "fixture-nonce"
+                    };
+                    let stale_parameter = if stale { ", stale=true" } else { "" };
+                    format!(
+                        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Digest qop=\"auth\", realm=\"shelly-fixture\", nonce=\"{nonce}\", algorithm=SHA-256{stale_parameter}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                };
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap_or_else(|error| panic!("write fixture response: {error}"));
+            }
+        });
+        (
+            format!("http://{address}/rpc/Shelly.GetStatus"),
+            observed,
+            task,
+        )
+    }
 
     fn fixture_info() -> ShellyDeviceInfo {
         serde_json::from_str(include_str!("../tests/fixtures/device_info.json"))
@@ -667,6 +951,111 @@ mod tests {
             snapshot.vendor_data.get("shelly.authentication_required"),
             Some(&Value::Bool(true))
         );
+    }
+
+    #[tokio::test]
+    async fn digest_transport_should_authenticate_after_challenge() {
+        let (url, requests, server) = auth_server(ServerMode::Success, 2).await;
+        let scanner = ShellyScanner::new(Duration::from_millis(1))
+            .unwrap_or_else(|error| panic!("scanner: {error}"));
+
+        let response: Value = scanner
+            .get_json_maybe_authenticated(
+                &url,
+                Some(&SecretValue::new(b"fixture-password".to_vec())),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("authenticated request: {error}"));
+        server
+            .await
+            .unwrap_or_else(|error| panic!("fixture server: {error}"));
+
+        assert_eq!(response.get("ok"), Some(&Value::Bool(true)));
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn digest_transport_should_refresh_one_stale_nonce() {
+        let (url, requests, server) = auth_server(ServerMode::StaleThenSuccess, 3).await;
+        let scanner = ShellyScanner::new(Duration::from_millis(1))
+            .unwrap_or_else(|error| panic!("scanner: {error}"));
+
+        let response: Value = scanner
+            .get_json_maybe_authenticated(
+                &url,
+                Some(&SecretValue::new(b"fixture-password".to_vec())),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("stale nonce request: {error}"));
+        server
+            .await
+            .unwrap_or_else(|error| panic!("fixture server: {error}"));
+
+        assert_eq!(response.get("ok"), Some(&Value::Bool(true)));
+        assert_eq!(requests.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn digest_transport_should_bound_rejected_credentials() {
+        let (url, requests, server) = auth_server(ServerMode::Reject, 2).await;
+        let scanner = ShellyScanner::new(Duration::from_millis(1))
+            .unwrap_or_else(|error| panic!("scanner: {error}"));
+        let secret = "rejection-canary-password";
+
+        let error = scanner
+            .get_json_maybe_authenticated::<Value>(
+                &url,
+                Some(&SecretValue::new(secret.as_bytes().to_vec())),
+            )
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("rejected credential must fail"));
+        server
+            .await
+            .unwrap_or_else(|error| panic!("fixture server: {error}"));
+        let diagnostic = format!("{error:?} {error}");
+
+        assert!(matches!(error, ShellyError::CredentialsRejected { .. }));
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+        assert!(!diagnostic.contains(secret));
+        assert!(!diagnostic.contains("fixture-nonce"));
+    }
+
+    #[test]
+    fn authentication_failure_should_create_stable_actionable_repair() {
+        let target = DiscoveredShelly {
+            address: IpAddr::from([192, 0, 2, 42]),
+            port: 80,
+        };
+        let scanner = ShellyScanner::new(Duration::from_millis(1))
+            .unwrap_or_else(|error| panic!("scanner: {error}"));
+        let mut info = fixture_info();
+        info.auth_en = true;
+
+        let first = scanner.authentication_candidate(
+            &target,
+            info.clone(),
+            RepairKind::CredentialsRejected,
+            "credentials_rejected",
+            "Update the rejected Shelly credentials",
+        );
+        let second = scanner.authentication_candidate(
+            &target,
+            info,
+            RepairKind::CredentialsRejected,
+            "credentials_rejected",
+            "Update the rejected Shelly credentials",
+        );
+
+        assert_eq!(first.repairs[0].id, second.repairs[0].id);
+        assert!(matches!(
+            first.repairs[0].kind,
+            RepairKind::CredentialsRejected
+        ));
+        let persisted = serde_json::to_string(&first)
+            .unwrap_or_else(|error| panic!("serialize candidate: {error}"));
+        assert!(!persisted.contains("password"));
+        assert!(!persisted.contains("nonce"));
     }
 
     #[cfg(target_os = "macos")]

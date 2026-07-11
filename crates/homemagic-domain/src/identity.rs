@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 const DEVICE_NAMESPACE: Uuid = Uuid::from_u128(0x91d0_41aa_328c_5ba1_aaf6_e116_81a1_0cc9);
 const INTEGRATION_NAMESPACE: Uuid = Uuid::from_u128(0xa75d_dbe0_0bd8_5ed4_9ff2_3af9_a4d6_eb65);
+const REPAIR_NAMESPACE: Uuid = Uuid::from_u128(0x36bf_9702_60d4_5a68_aaf7_8a85_276b_693b);
 const LEGACY_INSTALLATION: Uuid = Uuid::from_u128(0xc776_218d_d377_5a5e_b6a7_9384_dc1c_da37);
 
 /// Stable opaque identifier for a `HomeMagic` installation.
@@ -244,6 +245,15 @@ impl RepairId {
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+
+    /// Derives a stable repair identity for one device condition.
+    #[must_use]
+    pub fn from_condition(device_id: &DeviceId, condition: &str) -> Self {
+        Self(Uuid::new_v5(
+            &REPAIR_NAMESPACE,
+            format!("{device_id}:{condition}").as_bytes(),
+        ))
     }
 }
 

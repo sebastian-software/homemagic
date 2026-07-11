@@ -84,6 +84,26 @@ impl RepairRecord {
         }
     }
 
+    /// Creates an idempotent open device repair for a stable condition code.
+    #[must_use]
+    pub fn for_device_condition(
+        device_id: DeviceId,
+        condition: &str,
+        kind: RepairKind,
+        summary: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id: RepairId::from_condition(&device_id, condition),
+            device_id: Some(device_id),
+            kind,
+            summary: summary.into(),
+            created_at,
+            status: RepairStatus::Open,
+            closed_at: None,
+        }
+    }
+
     /// Resolves an open repair.
     ///
     /// # Errors

@@ -1,0 +1,1 @@
+Digest qop="auth", realm="shellypro4pm-aabbccddeeff", nonce="QUFBQUFBQm5GaXh0dXJlTm9uY2U", algorithm=SHA-256, stale=true

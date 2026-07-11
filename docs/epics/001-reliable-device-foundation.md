@@ -98,9 +98,12 @@ debug logs.
 
 ## Workstream E1.3: Shelly sessions and authentication
 
-- [ ] Store credential references without storing plaintext secrets in device
-  snapshots, logs, or automation data.
-- [ ] Implement Shelly digest authentication and reauthentication failure states.
+- [x] Store credential references without storing plaintext secrets in device
+  snapshots, logs, or automation data. Evidence: `SecretRef`, `SecretStore`,
+  zeroizing `SecretValue`, and encrypted/platform adapters.
+- [x] Implement Shelly digest authentication and reauthentication failure states.
+  Evidence: strict SHA-256 challenge response, bounded stale retry, and stable
+  credential repair records.
 - [ ] Establish one managed WebSocket RPC session per active device.
 - [ ] Consume `NotifyStatus` and `NotifyEvent` frames.
 - [ ] Merge partial status notifications without dropping unchanged fields.
@@ -108,7 +111,8 @@ debug logs.
 - [ ] Fall back to a bounded HTTP refresh after subscription gaps.
 - [ ] Respect sleeping-device behavior without treating normal sleep as failure.
 - [ ] Shut down sessions and mDNS workers cleanly on process termination.
-- [ ] Redact credentials, nonces, and sensitive headers from diagnostics.
+- [x] Redact credentials, nonces, and sensitive headers from diagnostics.
+  Evidence: secret/challenge debug redaction and captured-error canary tests.
 
 ## Workstream E1.4: Reconciliation and scheduling
 
@@ -157,8 +161,10 @@ debug logs.
   with identical HomeMagic, endpoint, and capability identities.
 - [ ] AC2: A physical Shelly state change reaches the registry and event stream
   without calling `devices.refresh`.
-- [ ] AC3: An authenticated Shelly can be enrolled and observed without exposing
+- [x] AC3: An authenticated Shelly can be enrolled and observed without exposing
   its password in persisted snapshots, logs, RPC responses, or diagnostics.
+  Evidence: authenticated transport fixtures, opaque persisted references, and
+  credential-canary tests.
 - [x] AC4: Missing discovery advertisements do not delete a known device.
   Evidence: `discovery_miss_should_not_change_known_device`.
 - [ ] AC5: Disconnect, backoff, stale state, reconnect, and recovery are visible
@@ -172,7 +178,8 @@ debug logs.
 - [ ] All acceptance criteria contain linked evidence.
 - [ ] Required ADRs are accepted and indexed.
 - [ ] Operator and API documentation match the shipped behavior.
-- [ ] No plaintext secret appears in repository fixtures or captured diagnostics.
+- [x] No plaintext secret appears in repository fixtures or captured diagnostics.
+  Evidence: sanitized challenge fixtures and captured diagnostic canary tests.
 - [ ] The full workspace quality gate passes on macOS ARM and Linux x86_64.
 - [ ] EPIC-002 is updated with the finalized repository, event, and credential
   contracts.
@@ -195,6 +202,8 @@ debug logs.
   retention decisions in ADR-0007 through ADR-0009.
 - 2026-07-11: Completed E1-002 domain lifecycle contracts and application ports;
   full workspace format, Clippy, tests, and doctests pass.
+- 2026-07-11: Completed E1-005 secret-safe Shelly digest authentication,
+  platform/headless secret adapters, stable repairs, and redaction tests.
 - 2026-07-11: Completed E1-003 SQLite storage, schema migrations, repository
   contracts, backup/restore, and health diagnostics.
 - 2026-07-11: Completed E1-004 load-first startup and durable discovery

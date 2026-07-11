@@ -14,6 +14,7 @@ homemagic-api = { path = "../homemagic-api" }
 homemagic-application = { path = "../homemagic-application" }
 homemagic-domain = { path = "../homemagic-domain" }
 homemagic-shelly = { path = "../homemagic-shelly" }
+homemagic-secrets = { path = "../homemagic-secrets" }
 homemagic-storage = { path = "../homemagic-storage" }
 serde_json.workspace = true
 tokio.workspace = true

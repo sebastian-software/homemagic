@@ -384,6 +384,7 @@ mod tests {
             integration_id: record.integration_id,
             discovered_at: record.snapshot.observed_at,
             snapshot: record.snapshot,
+            repairs: Vec::new(),
         };
         let scanner: Arc<dyn IntegrationScanner> = Arc::new(StaticScanner {
             candidates: vec![candidate],

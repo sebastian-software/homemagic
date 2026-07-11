@@ -46,6 +46,7 @@ pub(crate) fn reconcile(
     let mut accepted = 0;
 
     for candidate in candidates {
+        repairs.extend(candidate.repairs.iter().cloned());
         let expected_id =
             DeviceId::from_integration(&candidate.integration_id, &candidate.snapshot.native_id);
         if candidate.snapshot.id != expected_id {
@@ -351,6 +352,7 @@ mod tests {
                 vendor_data: BTreeMap::new(),
             },
             discovered_at: observed_at,
+            repairs: Vec::new(),
         }
     }
 }
