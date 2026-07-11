@@ -2,10 +2,10 @@
 id: E1-007
 epic: EPIC-001
 title: Add bounded scheduling, recovery, and shutdown
-status: planned
+status: ready
 priority: high
 depends_on: [E1-004, E1-006]
-adrs: [ADR-0006]
+adrs: [ADR-0006, ADR-0011]
 created: 2026-07-11
 updated: 2026-07-11
 ---
@@ -47,3 +47,5 @@ explicit availability, deterministic recovery, and graceful shutdown.
 ## Progress log
 
 - 2026-07-11: Issue created.
+- 2026-07-11: Accepted ADR-0011 for bounded discovery, reconnect, gap-refresh,
+  freshness, and shutdown loops.
