@@ -1,19 +1,20 @@
 # JSON-RPC Prototype API
 
-## Status
+## Status and transport
 
-This is an inspectable prototype transport for the application contract described
-in ADR-0003. Method names and payloads may change before the first stable API
-version. The server accepts JSON-RPC 2.0 requests at `POST /rpc`.
+This is the RPC-first transport described by ADR-0003. Request/response methods
+use JSON-RPC 2.0 at `POST /rpc`. Durable event subscriptions use JSON-RPC 2.0
+messages over a WebSocket at `GET /rpc/ws` as defined by ADR-0012.
 
 The default listener is `127.0.0.1:8787`. The prototype has no authentication and
 must not be bound to an untrusted interface.
 
-## Methods
+## Read methods
 
 ### `system.health`
 
-Returns process status and package version.
+Returns process status, package version, repository backend, migration version,
+integrity result, WAL state, and retained event-cursor bounds.
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"system.health","params":{}}
@@ -21,56 +22,121 @@ Returns process status and package version.
 
 ### `devices.list`
 
-Returns every current device snapshot in stable HomeMagic ID order.
+Returns durable device records in stable HomeMagic ID order. Optional filters are
+combined with logical AND: `lifecycle`, `availability`, `freshness`, `integration`,
+and `space_id`. Every item includes freshness calculated with the runtime policy.
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"devices.list","params":{}}
 ```
 
-### `devices.get`
-
-Returns one current snapshot by opaque HomeMagic device ID.
-
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 1,
-  "method": "devices.get",
-  "params": {"id": "00000000-0000-0000-0000-000000000000"}
+  "id": 2,
+  "method": "devices.list",
+  "params": {"availability": "online", "freshness": "fresh", "integration": "shelly"}
 }
+```
+
+### `devices.get`
+
+Returns one durable aggregate, a connection/freshness summary, latest capability
+observations, and retained repair records.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"devices.get","params":{"id":"DEVICE_ID"}}
 ```
 
 ### `devices.refresh`
 
-Runs configured integration scanners, updates the in-memory registry, and returns
-the refresh summary and current snapshots. A Shelly refresh waits for the bounded
-mDNS discovery window before reading device RPC endpoints.
+Runs configured integration scanners, durably reconciles the registry, and
+returns the integration summary and current snapshots. Per-device requests and
+the complete refresh cycle are bounded by runtime deadlines.
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"devices.refresh","params":{}}
 ```
 
-## Errors
+### Repair methods
 
-The prototype uses standard JSON-RPC codes where possible:
+`repairs.list` returns retained records in stable repair-ID order and optionally
+filters by `status` and `device_id`. `repairs.get` returns one retained record.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"repairs.list","params":{"status":"open","device_id":"DEVICE_ID"}}
+```
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"repairs.get","params":{"id":"REPAIR_ID"}}
+```
+
+## Metadata methods
+
+Display metadata is mutable; HomeMagic, native-device, endpoint, and capability
+identities never change. Names and aliases are trimmed and bounded. Assigned
+space IDs must already exist. `actor` is optional causation metadata.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"devices.rename","params":{"id":"DEVICE_ID","name":"Kitchen light","actor":"agent:home"}}
+```
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"devices.aliases.set","params":{"id":"DEVICE_ID","aliases":["Main light","Ceiling"]}}
+```
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"devices.spaces.set","params":{"id":"DEVICE_ID","spaces":["SPACE_ID"]}}
+```
+
+## Event subscriptions
+
+Open `/rpc/ws` and send exactly one `events.subscribe` request. `cursor` is the
+last event the client fully processed. Omitting it starts after the current tail;
+using `0` replays all retained history.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"events.subscribe","params":{"cursor":42}}
+```
+
+The response reports `subscription_id`, the accepted cursor, retained cursor
+bounds, the 128-event durable catch-up limit, and the 256-signal live capacity.
+Events then arrive in durable cursor order:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "events.next",
+  "params": {"subscription_id": "...", "item": {"cursor": 43, "event": {}}}
+}
+```
+
+The bounded live channel only wakes the subscriber; event payloads are read from
+durable storage. If wake-ups overrun while the socket is blocked, the server emits
+`events.lagged` with `last_delivered_cursor`, then catches up from the database.
+A disconnected client reconnects with its last fully processed cursor. A cursor
+older than retained history receives `cursor_expired` with `earliest_cursor` and
+must rebuild from the read APIs.
+
+## Errors
 
 | Code | Meaning |
 | ---: | --- |
-| `-32600` | Invalid JSON-RPC version/request |
+| `-32600` | Invalid JSON-RPC version or request |
 | `-32601` | Method not found |
-| `-32602` | Invalid method parameters |
-| `-32000` | Integration refresh failed |
+| `-32602` | Invalid method parameters or metadata |
+| `-32000` | HomeMagic operation failed |
 | `-32004` | Device not found |
+| `-32005` | Space not found |
+| `-32006` | Repair not found |
+| `-32010` | Event cursor expired |
+| `-32011` | Event subscriptions unavailable in this runtime |
+| `-32012` | A second subscription was attempted on one WebSocket |
 
-## Snapshot shape
+## Durable device shape
 
-A device has stable HomeMagic and adapter-native identities, a mutable display
-name obtained from the device, manufacturer/model metadata, network locations,
-an observation timestamp, endpoints, normalized capability snapshots, and
-namespaced vendor data for diagnostics.
-
-Capability objects carry a versioned `kind` such as `on_off`, `level`, `position`,
-`power`, or `energy`. This prototype serializes the capability enum directly. A
-later contract version will include explicit schema discovery and compatibility
-rules before third-party clients are supported.
-
+A durable device record separates stable HomeMagic and adapter-native identities
+from mutable display name, aliases, space assignments, lifecycle, availability,
+timestamps, endpoint/capability descriptions, network locations, latest snapshots,
+and namespaced vendor diagnostics. Capability contracts are versioned independently
+from mutable metadata.

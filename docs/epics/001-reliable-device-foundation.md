@@ -74,7 +74,8 @@ debug logs.
   Evidence: `migration_fixtures.rs`.
 - [x] Add backup/restore validation for the current schema. Evidence:
   `backup_restore.rs`.
-- [ ] Expose database health and migration version through `system.health`.
+- [x] Expose database health and migration version through `system.health`.
+  Evidence: repository health port, SQLite implementation, and RPC tests.
 
 ## Workstream E1.2: Device and observation lifecycle
 
@@ -141,13 +142,17 @@ debug logs.
 
 ## Workstream E1.5: Read API and operations
 
-- [ ] Extend `devices.list` with lifecycle, availability, and freshness filters.
-- [ ] Extend `devices.get` with connection and diagnostic summaries.
-- [ ] Add `events.subscribe` or an equivalent server-streaming prototype for
+- [x] Extend `devices.list` with lifecycle, availability, and freshness filters.
+  Evidence: deterministic JSON-RPC filter dispatch tests.
+- [x] Extend `devices.get` with connection and diagnostic summaries. Evidence:
+  `DeviceDetails` with connection, observations, and repairs.
+- [x] Add `events.subscribe` or an equivalent server-streaming prototype for
   observations and lifecycle events.
-- [ ] Add RPC methods for naming devices and assigning spaces without changing
-  identity.
-- [ ] Add structured repair records and a read API for them.
+  Evidence: `/rpc/ws`, durable cursor pages, and WebSocket integration test.
+- [x] Add RPC methods for naming devices and assigning spaces without changing
+  identity. Evidence: metadata application test and JSON-RPC dispatch tests.
+- [x] Add structured repair records and a read API for them. Evidence:
+  `repairs.list`, `repairs.get`, and device detail repairs.
 - [ ] Document database location, backup, credential setup, and recovery.
 - [ ] Add a repeatable hardware smoke-test command that emits a redacted report.
 
@@ -187,8 +192,9 @@ debug logs.
   credential-canary tests.
 - [x] AC4: Missing discovery advertisements do not delete a known device.
   Evidence: `discovery_miss_should_not_change_known_device`.
-- [ ] AC5: Disconnect, backoff, stale state, reconnect, and recovery are visible
-  through structured API data.
+- [x] AC5: Disconnect, backoff, stale state, reconnect, and recovery are visible
+  through structured API data. Evidence: availability/freshness device details,
+  retained repairs, and ordered lifecycle event subscriptions.
 - [ ] AC6: Schema migration and backup/restore tests pass from a clean checkout.
 - [ ] AC7: Hardware compatibility evidence lists tested model, firmware, host,
   capabilities, and result.
@@ -232,3 +238,5 @@ debug logs.
   observations, typed events, gap signaling, and graceful lifecycle wiring.
 - 2026-07-11: Completed E1-007 bounded scheduling, refresh concurrency and
   deadlines, reconnect recovery, freshness transitions, and graceful shutdown.
+- 2026-07-11: Completed E1-008 durable health and cursor reads, filtered device
+  details, metadata/repair RPCs, and bounded JSON-RPC WebSocket subscriptions.

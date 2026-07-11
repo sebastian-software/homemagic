@@ -4,23 +4,29 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use homemagic_application::{ApplicationError, DeviceMetadataUpdate, HomeMagicApplication};
 use homemagic_domain::{
-    AvailabilityState, DeviceId, DeviceLifecycle, FreshnessState, RepairId, RepairStatus, SpaceId,
+    AvailabilityState, DeviceId, DeviceLifecycle, EventId, FreshnessState, RepairId, RepairStatus,
+    SpaceId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tower_http::trace::TraceLayer;
 
 const JSON_RPC_VERSION: &str = "2.0";
+const EVENT_PAGE_LIMIT: usize = 128;
+const EVENT_WAKE_CAPACITY: usize = 256;
 
 /// Builds the HTTP router for the current application instance.
 pub fn router(application: HomeMagicApplication) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/rpc", post(rpc))
+        .route("/rpc/ws", get(rpc_websocket))
         .layer(TraceLayer::new_for_http())
         .with_state(application)
 }
@@ -45,6 +51,233 @@ async fn rpc(
     Json(request): Json<RpcRequest>,
 ) -> Json<RpcResponse> {
     Json(dispatch(&application, request).await)
+}
+
+async fn rpc_websocket(
+    websocket: WebSocketUpgrade,
+    State(application): State<HomeMagicApplication>,
+) -> Response {
+    websocket.on_upgrade(move |socket| event_socket(socket, application))
+}
+
+#[derive(Default, Deserialize)]
+struct EventSubscribeParams {
+    cursor: Option<u64>,
+}
+
+struct ActiveSubscription {
+    wakeups: tokio::sync::broadcast::Receiver<()>,
+    id: String,
+    cursor: u64,
+}
+
+async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication) {
+    let Some(mut subscription) = accept_subscription(&mut socket, &application).await else {
+        return;
+    };
+    if !drain_events(
+        &mut socket,
+        &application,
+        &subscription.id,
+        &mut subscription.cursor,
+    )
+    .await
+    {
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Ping(payload))) => {
+                    if socket.send(Message::Pong(payload)).await.is_err() {
+                        return;
+                    }
+                }
+                Some(Ok(Message::Close(_)) | Err(_)) | None => return,
+                Some(Ok(Message::Text(_))) => {
+                    let response = RpcResponse::error(
+                        Value::Null,
+                        -32012,
+                        "Only one event subscription is allowed per WebSocket",
+                        None,
+                    );
+                    if send_response(&mut socket, &response).await.is_err() {
+                        return;
+                    }
+                }
+                Some(Ok(Message::Binary(_) | Message::Pong(_))) => {}
+            },
+            wakeup = subscription.wakeups.recv() => match wakeup {
+                Ok(()) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    if send_notification(
+                        &mut socket,
+                        "events.lagged",
+                        json!({
+                            "subscription_id": subscription.id,
+                            "last_delivered_cursor": subscription.cursor,
+                            "skipped_wakeups": skipped
+                        }),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+        if !drain_events(
+            &mut socket,
+            &application,
+            &subscription.id,
+            &mut subscription.cursor,
+        )
+        .await
+        {
+            return;
+        }
+    }
+}
+
+async fn accept_subscription(
+    socket: &mut WebSocket,
+    application: &HomeMagicApplication,
+) -> Option<ActiveSubscription> {
+    let Some(Ok(Message::Text(text))) = socket.recv().await else {
+        return None;
+    };
+    let request = match serde_json::from_str::<RpcRequest>(&text) {
+        Ok(request) => request,
+        Err(error) => {
+            let response = RpcResponse::error(
+                Value::Null,
+                -32600,
+                "Invalid Request",
+                Some(json!({"detail": error.to_string()})),
+            );
+            let _ = send_response(socket, &response).await;
+            return None;
+        }
+    };
+    if request.jsonrpc != JSON_RPC_VERSION || request.method != "events.subscribe" {
+        let response = RpcResponse::error(request.id, -32601, "Method not found", None);
+        let _ = send_response(socket, &response).await;
+        return None;
+    }
+    let params = match serde_json::from_value::<EventSubscribeParams>(request.params) {
+        Ok(params) => params,
+        Err(error) => {
+            let response = RpcResponse::error(
+                request.id,
+                -32602,
+                "Invalid params",
+                Some(json!({"detail": error.to_string()})),
+            );
+            let _ = send_response(socket, &response).await;
+            return None;
+        }
+    };
+    let Some(wakeups) = application.subscribe_events() else {
+        let response =
+            RpcResponse::error(request.id, -32011, "Event subscriptions unavailable", None);
+        let _ = send_response(socket, &response).await;
+        return None;
+    };
+    let health = match application.repository_health().await {
+        Ok(health) => health,
+        Err(error) => {
+            let response = application_error(request.id, error);
+            let _ = send_response(socket, &response).await;
+            return None;
+        }
+    };
+    let cursor = params
+        .cursor
+        .unwrap_or(health.latest_event_cursor.unwrap_or(0));
+    if params.cursor.is_some()
+        && let Err(error) = application.events_after(cursor, 1).await
+    {
+        let response = application_error(request.id, error);
+        let _ = send_response(socket, &response).await;
+        return None;
+    }
+    let subscription_id = EventId::new().to_string();
+    let response = RpcResponse::success(
+        request.id,
+        json!({
+            "subscription_id": subscription_id,
+            "cursor": cursor,
+            "earliest_cursor": health.earliest_event_cursor,
+            "latest_cursor": health.latest_event_cursor,
+            "page_limit": EVENT_PAGE_LIMIT,
+            "live_capacity": EVENT_WAKE_CAPACITY
+        }),
+    );
+    if send_response(socket, &response).await.is_err() {
+        return None;
+    }
+    Some(ActiveSubscription {
+        wakeups,
+        id: subscription_id,
+        cursor,
+    })
+}
+
+async fn drain_events(
+    socket: &mut WebSocket,
+    application: &HomeMagicApplication,
+    subscription_id: &str,
+    cursor: &mut u64,
+) -> bool {
+    loop {
+        let page = match application.events_after(*cursor, EVENT_PAGE_LIMIT).await {
+            Ok(page) => page,
+            Err(error) => {
+                let response = application_error(Value::Null, error);
+                let _ = send_response(socket, &response).await;
+                return false;
+            }
+        };
+        let count = page.events.len();
+        for event in page.events {
+            *cursor = event.cursor;
+            if send_notification(
+                socket,
+                "events.next",
+                json!({"subscription_id": subscription_id, "item": event}),
+            )
+            .await
+            .is_err()
+            {
+                return false;
+            }
+        }
+        if count < EVENT_PAGE_LIMIT {
+            return true;
+        }
+    }
+}
+
+async fn send_response(socket: &mut WebSocket, response: &RpcResponse) -> Result<(), axum::Error> {
+    let text = serde_json::to_string(response).map_err(axum::Error::new)?;
+    socket.send(Message::Text(text.into())).await
+}
+
+async fn send_notification(
+    socket: &mut WebSocket,
+    method: &'static str,
+    params: Value,
+) -> Result<(), axum::Error> {
+    let text = serde_json::to_string(&json!({
+        "jsonrpc": JSON_RPC_VERSION,
+        "method": method,
+        "params": params
+    }))
+    .map_err(axum::Error::new)?;
+    socket.send(Message::Text(text.into())).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -457,11 +690,15 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::Utc;
+    use futures_util::{SinkExt, StreamExt};
     use homemagic_application::{
-        DeviceRegistry, FoundationRepository, FoundationWrite, MemoryFoundationRepository,
-        NoopDomainEventSink,
+        BroadcastDomainEventSink, DeviceRegistry, FoundationRepository, FoundationWrite,
+        MemoryFoundationRepository, NoopDomainEventSink,
     };
-    use homemagic_domain::{DeviceRecord, DeviceSnapshot, InstallationId, IntegrationId};
+    use homemagic_domain::{
+        CausationMetadata, CorrelationId, DeviceRecord, DeviceSnapshot, DomainEvent,
+        DomainEventKind, EventId, InstallationId, IntegrationId,
+    };
 
     use super::*;
 
@@ -604,5 +841,110 @@ mod tests {
         )
         .await;
         assert_eq!(missing.error.map(|error| error.code), Some(-32004));
+    }
+
+    #[tokio::test]
+    async fn websocket_should_resume_events_in_cursor_order_and_disconnect() {
+        let repository = Arc::new(MemoryFoundationRepository::default());
+        let now = Utc::now();
+        let installation_id = InstallationId::new();
+        let integration_id = IntegrationId::from_native(&installation_id, "test", "events");
+        let device_id = DeviceId::from_integration(&integration_id, "fixture");
+        let record = DeviceRecord::candidate(
+            installation_id,
+            integration_id,
+            DeviceSnapshot {
+                id: device_id.clone(),
+                native_id: "fixture".to_owned(),
+                integration: "test".to_owned(),
+                name: "Fixture".to_owned(),
+                manufacturer: "Test".to_owned(),
+                model: "Device".to_owned(),
+                network: Vec::new(),
+                endpoints: Vec::new(),
+                observed_at: now,
+                vendor_data: BTreeMap::new(),
+            },
+            now,
+        );
+        let events = ["name", "aliases"]
+            .into_iter()
+            .map(|field| DomainEvent {
+                id: EventId::new(),
+                device_id: device_id.clone(),
+                occurred_at: now,
+                causation: CausationMetadata {
+                    correlation_id: CorrelationId::new(),
+                    causation_event_id: None,
+                    actor: Some("test:websocket".to_owned()),
+                },
+                kind: DomainEventKind::MetadataChanged {
+                    fields: vec![field.to_owned()],
+                },
+            })
+            .collect::<Vec<_>>();
+        repository
+            .apply(FoundationWrite {
+                devices: vec![record],
+                events,
+                ..FoundationWrite::default()
+            })
+            .await
+            .unwrap_or_else(|error| panic!("seed event history: {error}"));
+        let application = HomeMagicApplication::from_repository(
+            repository,
+            Arc::new(BroadcastDomainEventSink::new(EVENT_WAKE_CAPACITY)),
+            [],
+        )
+        .await
+        .unwrap_or_else(|error| panic!("load event application: {error}"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|error| panic!("bind API fixture: {error}"));
+        let address = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("API fixture address: {error}"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(application))
+                .await
+                .unwrap_or_else(|error| panic!("serve API fixture: {error}"));
+        });
+        let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{address}/rpc/ws"))
+            .await
+            .unwrap_or_else(|error| panic!("connect API fixture: {error}"));
+        client
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": 1,
+                    "method": "events.subscribe",
+                    "params": {"cursor": 0}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("send subscription: {error}"));
+
+        let response = client.next().await.and_then(Result::ok);
+        let first = client.next().await.and_then(Result::ok);
+        let second = client.next().await.and_then(Result::ok);
+        let values = [response, first, second].map(|message| {
+            let text = message
+                .and_then(|message| message.into_text().ok())
+                .unwrap_or_else(|| panic!("expected text WebSocket message"));
+            serde_json::from_str::<Value>(&text)
+                .unwrap_or_else(|error| panic!("valid WebSocket JSON: {error}"))
+        });
+
+        assert_eq!(values[0]["result"]["cursor"], json!(0));
+        assert_eq!(values[1]["method"], json!("events.next"));
+        assert_eq!(values[1]["params"]["item"]["cursor"], json!(1));
+        assert_eq!(values[2]["params"]["item"]["cursor"], json!(2));
+        client
+            .close(None)
+            .await
+            .unwrap_or_else(|error| panic!("close subscription: {error}"));
+        server.abort();
     }
 }

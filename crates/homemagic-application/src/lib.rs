@@ -19,7 +19,7 @@ use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-pub use memory::{MemoryFoundationRepository, NoopDomainEventSink};
+pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use ports::{
     Clock, CursorEvent, DomainEventSink, EventPage, FoundationRepository, FoundationSnapshot,
     FoundationWrite, IntegrationSessionPort, LiveObservationBatch, LiveObservationSink,
@@ -369,6 +369,12 @@ impl HomeMagicApplication {
         now: chrono::DateTime<chrono::Utc>,
     ) -> FreshnessState {
         device.freshness_at(self.freshness_policy, now)
+    }
+
+    /// Opens a bounded live event wake-up receiver when configured by runtime.
+    #[must_use]
+    pub fn subscribe_events(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
+        self.event_sink.subscribe()
     }
 
     /// Returns secret-safe repository and event-cursor health.
@@ -908,6 +914,38 @@ mod tests {
         candidates: Vec<DiscoveryCandidate>,
     }
 
+    struct ExpiredCursorRepository;
+
+    #[async_trait]
+    impl FoundationRepository for ExpiredCursorRepository {
+        async fn load(&self) -> Result<FoundationSnapshot, BoxError> {
+            Ok(FoundationSnapshot::default())
+        }
+
+        async fn apply(&self, _write: FoundationWrite) -> Result<(), BoxError> {
+            Ok(())
+        }
+
+        async fn health(&self) -> Result<RepositoryHealth, BoxError> {
+            Ok(RepositoryHealth {
+                backend: "fixture".to_owned(),
+                schema_version: None,
+                integrity: "ok".to_owned(),
+                wal_enabled: None,
+                earliest_event_cursor: Some(5),
+                latest_event_cursor: Some(8),
+            })
+        }
+
+        async fn events_after(&self, _cursor: u64, _limit: usize) -> Result<EventPage, BoxError> {
+            Ok(EventPage {
+                earliest_cursor: Some(5),
+                latest_cursor: Some(8),
+                events: Vec::new(),
+            })
+        }
+    }
+
     #[async_trait]
     impl IntegrationScanner for StaticScanner {
         fn integration(&self) -> &'static str {
@@ -1245,6 +1283,60 @@ mod tests {
         assert!(matches!(
             events.events[0].event.kind,
             DomainEventKind::MetadataChanged { .. }
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn event_wakeup_sink_should_bound_and_signal_subscriber_lag() -> Result<(), BoxError> {
+        let sink = BroadcastDomainEventSink::new(2);
+        let mut subscriber = sink
+            .subscribe()
+            .unwrap_or_else(|| panic!("broadcast sink should support subscriptions"));
+        let event = DomainEvent {
+            id: EventId::new(),
+            device_id: record().snapshot.id,
+            occurred_at: Utc::now(),
+            causation: CausationMetadata {
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                actor: Some("test:lag".to_owned()),
+            },
+            kind: DomainEventKind::MetadataChanged {
+                fields: vec!["name".to_owned()],
+            },
+        };
+        for _ in 0..3 {
+            sink.publish(std::slice::from_ref(&event)).await?;
+        }
+
+        let lag = subscriber.recv().await;
+        assert!(matches!(
+            lag,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(1))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn event_page_should_return_typed_expired_cursor() -> Result<(), BoxError> {
+        let application = HomeMagicApplication::from_repository(
+            Arc::new(ExpiredCursorRepository),
+            Arc::new(NoopDomainEventSink),
+            [],
+        )
+        .await?;
+
+        let Err(error) = application.events_after(1, 10).await else {
+            panic!("cursor before retention floor should fail");
+        };
+
+        assert!(matches!(
+            error,
+            ApplicationError::CursorExpired {
+                requested: 1,
+                earliest: 5
+            }
         ));
         Ok(())
     }

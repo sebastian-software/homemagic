@@ -102,6 +102,35 @@ impl DomainEventSink for NoopDomainEventSink {
     }
 }
 
+/// Bounded wake-up fan-out for durable event subscribers.
+#[derive(Clone, Debug)]
+pub struct BroadcastDomainEventSink {
+    sender: tokio::sync::broadcast::Sender<()>,
+}
+
+impl BroadcastDomainEventSink {
+    /// Creates a wake-up channel with at least one retained signal.
+    #[must_use]
+    pub fn new(capacity: usize) -> Self {
+        let (sender, _) = tokio::sync::broadcast::channel(capacity.max(1));
+        Self { sender }
+    }
+}
+
+#[async_trait]
+impl DomainEventSink for BroadcastDomainEventSink {
+    async fn publish(&self, events: &[DomainEvent]) -> Result<(), BoxError> {
+        if !events.is_empty() {
+            let _ = self.sender.send(());
+        }
+        Ok(())
+    }
+
+    fn subscribe(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
+        Some(self.sender.subscribe())
+    }
+}
+
 fn upsert_installations(current: &mut Vec<Installation>, incoming: Vec<Installation>) {
     let mut values: BTreeMap<InstallationId, Installation> = current
         .drain(..)

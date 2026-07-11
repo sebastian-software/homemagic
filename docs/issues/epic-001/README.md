@@ -24,8 +24,8 @@ the dependency graph and repository edits do not overlap.
 | [E1-005](E1-005-shelly-authentication.md) | Done | E1-001, E1-002 | Credential-safe auth |
 | [E1-006](E1-006-shelly-managed-sessions.md) | Done | E1-004, E1-005 | Live observations |
 | [E1-007](E1-007-runtime-resilience.md) | Done | E1-004, E1-006 | Bounded recovery |
-| [E1-008](E1-008-read-api-and-repairs.md) | Ready | E1-003, E1-007 | Stable operational API |
-| [E1-009](E1-009-operations-and-exit-audit.md) | Planned | E1-008 | Release evidence |
+| [E1-008](E1-008-read-api-and-repairs.md) | Done | E1-003, E1-007 | Stable operational API |
+| [E1-009](E1-009-operations-and-exit-audit.md) | Ready | E1-008 | Release evidence |
 
 ## Progress log
 
@@ -37,3 +37,4 @@ the dependency graph and repository edits do not overlap.
 - 2026-07-11: E1-005 completed; E1-006 is ready.
 - 2026-07-11: E1-006 completed; E1-007 is ready.
 - 2026-07-11: E1-007 completed; E1-008 is ready.
+- 2026-07-11: E1-008 completed; E1-009 is ready.

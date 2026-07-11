@@ -170,6 +170,11 @@ pub trait DomainEventSink: Send + Sync {
     ///
     /// Returns a sink-specific delivery error.
     async fn publish(&self, events: &[DomainEvent]) -> Result<(), BoxError>;
+
+    /// Opens a bounded live wake-up receiver when this sink supports streaming.
+    fn subscribe(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
+        None
+    }
 }
 
 /// One normalized, durable live-device delivery.

@@ -8,8 +8,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
-    DeviceRegistry, FoundationWrite, HomeMagicApplication, IntegrationScanner, NoopDomainEventSink,
-    RepositoryLiveObservationSink, SecretStore,
+    BroadcastDomainEventSink, DeviceRegistry, FoundationWrite, HomeMagicApplication,
+    IntegrationScanner, RepositoryLiveObservationSink, SecretStore,
 };
 use homemagic_domain::{
     FreshnessPolicy, Installation, InstallationId, IntegrationId, IntegrationInstance,
@@ -243,7 +243,7 @@ async fn durable_application(
     }
     .context("failed to create Shelly scanner")?;
     let shelly: Arc<dyn IntegrationScanner> = Arc::new(scanner);
-    let event_sink = Arc::new(NoopDomainEventSink);
+    let event_sink = Arc::new(BroadcastDomainEventSink::new(256));
     let application =
         HomeMagicApplication::from_repository(repository.clone(), event_sink.clone(), [shelly])
             .await
