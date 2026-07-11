@@ -5,9 +5,9 @@ title: Agent-Authored Automation Engine issue index
 status: in_progress
 priority: critical
 depends_on: [EPIC-002]
-adrs: [ADR-0004, ADR-0017, ADR-0018, ADR-0019, ADR-0020]
+adrs: [ADR-0004, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024]
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # EPIC-003 Issue Index
@@ -19,7 +19,7 @@ updated: 2026-07-11
 | [E3-003](E3-003-validation-compiler.md) | Done | E3-002 | Resolver, validator, Safety Profiles, reducer |
 | [E3-004](E3-004-automation-storage.md) | Done | E3-002 | Durable versions, runs, timers, trace, retention |
 | [E3-005](E3-005-deterministic-simulator.md) | Done | E3-003 | Virtual-time side-effect-free simulation |
-| [E3-006](E3-006-runtime-scheduler.md) | Ready | E3-003, E3-004 | Durable interpreter and scheduler |
+| [E3-006](E3-006-runtime-scheduler.md) | In progress | E3-003, E3-004 | Durable interpreter and scheduler |
 | [E3-007](E3-007-automation-rpc.md) | Planned | E3-004, E3-005, E3-006 | Governance and authenticated RPC |
 | [E3-008](E3-008-automation-exit-audit.md) | Planned | E3-007 | Operations and exit evidence |
 
@@ -43,3 +43,8 @@ updated: 2026-07-11
   triggers/state/outcomes, deterministic schedule/DST behavior, missed/catch-up
   semantics, complete node/failure-policy interpretation, and byte-stable trace
   evidence completed.
+- 2026-07-12: E3-006 durable runtime work is in progress. Run intent and every
+  interpreter checkpoint are atomic; physical actions use CommandService only;
+  deterministic schedule and command crash-window tests prove no duplicate
+  run or physical dispatch. ADR-0021 through ADR-0024 govern group
+  continuations, retry attempts, timer scopes, and continuous conditions.

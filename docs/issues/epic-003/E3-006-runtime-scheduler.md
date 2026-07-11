@@ -2,7 +2,7 @@
 id: E3-006
 epic: EPIC-003
 title: Execute active automation plans durably
-status: planned
+status: in_progress
 priority: critical
 depends_on: [E3-003, E3-004]
 adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024]
@@ -16,9 +16,9 @@ updated: 2026-07-12
 
 - [ ] Implement the shared durable step interpreter.
 - [ ] Subscribe only active versions to durable normalized events.
-- [ ] Persist run intent before interpreting work.
-- [ ] Persist each step, variables, timer, command ID, and outcome before continuation.
-- [ ] Submit physical actions exclusively through `CommandService`.
+- [x] Persist run intent before interpreting work.
+- [x] Persist each step, variables, timer, command ID, and outcome before continuation.
+- [x] Submit physical actions exclusively through `CommandService`.
 - [ ] Implement single, restart, bounded queued, and bounded parallel modes.
 - [ ] Implement same-timestamp ordering and self-trigger suppression.
 - [ ] Persist missed/skipped occurrences and explicit catch-up runs.
@@ -28,7 +28,7 @@ updated: 2026-07-12
 ## Acceptance criteria
 
 - [ ] Runtime and simulator make equivalent decisions for identical histories.
-- [ ] Restart cannot duplicate a dispatched command or schedule occurrence.
+- [x] Restart cannot duplicate a dispatched command or schedule occurrence.
 - [ ] Missed schedules never execute without an explicit new catch-up request.
 - [ ] Queue, parallelism, trace, retry, and duration bounds hold under load.
 
