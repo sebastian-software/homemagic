@@ -8,44 +8,86 @@ use homemagic_domain::{
 };
 use tokio::sync::RwLock;
 
-use crate::{BoxError, DomainEventSink, FoundationRepository, FoundationSnapshot, FoundationWrite};
+use crate::{
+    BoxError, CursorEvent, DomainEventSink, EventPage, FoundationRepository, FoundationSnapshot,
+    FoundationWrite, RepositoryHealth,
+};
+
+#[derive(Default)]
+struct MemoryState {
+    snapshot: FoundationSnapshot,
+    events: Vec<CursorEvent>,
+}
 
 /// In-memory repository used by one-shot scans and focused tests.
 #[derive(Clone, Default)]
 pub struct MemoryFoundationRepository {
-    snapshot: Arc<RwLock<FoundationSnapshot>>,
+    state: Arc<RwLock<MemoryState>>,
 }
 
 #[async_trait]
 impl FoundationRepository for MemoryFoundationRepository {
     async fn load(&self) -> Result<FoundationSnapshot, BoxError> {
-        Ok(self.snapshot.read().await.clone())
+        Ok(self.state.read().await.snapshot.clone())
     }
 
     async fn apply(&self, write: FoundationWrite) -> Result<(), BoxError> {
-        let mut snapshot = self.snapshot.write().await;
-        upsert_installations(&mut snapshot.installations, write.installations);
-        upsert_integrations(&mut snapshot.integrations, write.integrations);
-        upsert_spaces(&mut snapshot.spaces, write.spaces);
-        upsert_devices(&mut snapshot.devices, write.devices);
-        upsert_repairs(&mut snapshot.repairs, write.repairs);
+        let mut state = self.state.write().await;
+        upsert_installations(&mut state.snapshot.installations, write.installations);
+        upsert_integrations(&mut state.snapshot.integrations, write.integrations);
+        upsert_spaces(&mut state.snapshot.spaces, write.spaces);
+        upsert_devices(&mut state.snapshot.devices, write.devices);
+        upsert_repairs(&mut state.snapshot.repairs, write.repairs);
         for observation in write.observations {
-            if let Some(current) = snapshot.observations.iter_mut().find(|current| {
+            if let Some(current) = state.snapshot.observations.iter_mut().find(|current| {
                 current.device_id == observation.device_id
                     && current.endpoint_id == observation.endpoint_id
                     && current.capability == observation.capability
             }) {
                 *current = observation;
             } else {
-                snapshot.observations.push(observation);
+                state.snapshot.observations.push(observation);
             }
         }
         if !write.events.is_empty() {
-            let current = snapshot.event_cursor.unwrap_or(0);
-            let event_count = u64::try_from(write.events.len()).unwrap_or(u64::MAX);
-            snapshot.event_cursor = Some(current.saturating_add(event_count));
+            let current = state.snapshot.event_cursor.unwrap_or(0);
+            for (offset, event) in write.events.into_iter().enumerate() {
+                let offset = u64::try_from(offset).unwrap_or(u64::MAX);
+                state.events.push(CursorEvent {
+                    cursor: current.saturating_add(offset).saturating_add(1),
+                    event,
+                });
+            }
+            state.snapshot.event_cursor = state.events.last().map(|event| event.cursor);
         }
         Ok(())
+    }
+
+    async fn health(&self) -> Result<RepositoryHealth, BoxError> {
+        let state = self.state.read().await;
+        Ok(RepositoryHealth {
+            backend: "memory".to_owned(),
+            schema_version: None,
+            integrity: "ok".to_owned(),
+            wal_enabled: None,
+            earliest_event_cursor: state.events.first().map(|event| event.cursor),
+            latest_event_cursor: state.events.last().map(|event| event.cursor),
+        })
+    }
+
+    async fn events_after(&self, cursor: u64, limit: usize) -> Result<EventPage, BoxError> {
+        let state = self.state.read().await;
+        Ok(EventPage {
+            earliest_cursor: state.events.first().map(|event| event.cursor),
+            latest_cursor: state.events.last().map(|event| event.cursor),
+            events: state
+                .events
+                .iter()
+                .filter(|event| event.cursor > cursor)
+                .take(limit)
+                .cloned()
+                .collect(),
+        })
     }
 }
 

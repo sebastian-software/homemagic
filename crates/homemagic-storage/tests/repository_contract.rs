@@ -5,8 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use homemagic_application::{BoxError, FoundationRepository, FoundationWrite};
 use homemagic_domain::{
-    CapabilitySnapshot, DeviceId, DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot,
-    Installation, InstallationId, IntegrationId, IntegrationInstance, RiskClass, Space, SpaceId,
+    AvailabilityState, CapabilitySnapshot, CausationMetadata, CorrelationId, DeviceId,
+    DeviceRecord, DeviceSnapshot, DomainEvent, DomainEventKind, EndpointId, EndpointSnapshot,
+    EventId, Installation, InstallationId, IntegrationId, IntegrationInstance, RiskClass, Space,
+    SpaceId,
 };
 use homemagic_storage::SqliteRepository;
 use tempfile::TempDir;
@@ -139,5 +141,54 @@ async fn repository_should_report_schema_and_wal_health() -> Result<(), BoxError
     assert_eq!(health.schema_version, 1);
     assert_eq!(health.integrity, "ok");
     assert!(health.wal_enabled);
+    Ok(())
+}
+
+#[tokio::test]
+async fn repository_should_page_events_in_durable_cursor_order() -> Result<(), BoxError> {
+    let fixture = fixture()?;
+    let occurred_at = fixture.device.snapshot.observed_at;
+    let events = [AvailabilityState::Online, AvailabilityState::Degraded]
+        .into_iter()
+        .map(|to| DomainEvent {
+            id: EventId::new(),
+            device_id: fixture.device.snapshot.id.clone(),
+            occurred_at,
+            causation: CausationMetadata {
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                actor: Some("test:event-page".to_owned()),
+            },
+            kind: DomainEventKind::AvailabilityChanged {
+                from: AvailabilityState::Unknown,
+                to,
+                reason: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    fixture
+        .repository
+        .apply(FoundationWrite {
+            installations: vec![fixture.installation],
+            integrations: vec![fixture.integration],
+            spaces: vec![fixture.space],
+            devices: vec![fixture.device],
+            events: events.clone(),
+            ..FoundationWrite::default()
+        })
+        .await?;
+
+    let first = FoundationRepository::events_after(&fixture.repository, 0, 1).await?;
+    let second = FoundationRepository::events_after(&fixture.repository, 1, 10).await?;
+    let health = FoundationRepository::health(&fixture.repository).await?;
+
+    assert_eq!(first.earliest_cursor, Some(1));
+    assert_eq!(first.latest_cursor, Some(2));
+    assert_eq!(first.events[0].cursor, 1);
+    assert_eq!(first.events[0].event, events[0]);
+    assert_eq!(second.events[0].cursor, 2);
+    assert_eq!(second.events[0].event, events[1]);
+    assert_eq!(health.latest_event_cursor, Some(2));
+    assert_eq!(health.backend, "sqlite");
     Ok(())
 }

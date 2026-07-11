@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, MutexGuard};
 
 use async_trait::async_trait;
-use homemagic_application::{BoxError, FoundationRepository, FoundationSnapshot, FoundationWrite};
+use homemagic_application::{
+    BoxError, CursorEvent, EventPage, FoundationRepository, FoundationSnapshot, FoundationWrite,
+    RepositoryHealth,
+};
 use homemagic_domain::{
     CapabilitySnapshot, DeviceRecord, Installation, IntegrationInstance, Space,
 };
@@ -108,6 +111,32 @@ impl FoundationRepository for SqliteRepository {
             .await
             .map_err(|error| Box::new(error) as BoxError)
     }
+
+    async fn health(&self) -> Result<RepositoryHealth, BoxError> {
+        let health = SqliteRepository::health(self)
+            .await
+            .map_err(|error| Box::new(error) as BoxError)?;
+        let page = self.events_after(0, 0).await?;
+        Ok(RepositoryHealth {
+            backend: "sqlite".to_owned(),
+            schema_version: Some(health.schema_version),
+            integrity: health.integrity,
+            wal_enabled: Some(health.wal_enabled),
+            earliest_event_cursor: page.earliest_cursor,
+            latest_event_cursor: page.latest_cursor,
+        })
+    }
+
+    async fn events_after(&self, cursor: u64, limit: usize) -> Result<EventPage, BoxError> {
+        let connection = Arc::clone(&self.connection);
+        tokio::task::spawn_blocking(move || {
+            let connection = lock(&connection)?;
+            load_events_after(&connection, cursor, limit)
+        })
+        .await
+        .map_err(|error| Box::new(StorageError::Worker(error.to_string())) as BoxError)?
+        .map_err(|error| Box::new(error) as BoxError)
+    }
 }
 
 fn lock(connection: &SharedConnection) -> Result<MutexGuard<'_, Connection>, StorageError> {
@@ -147,6 +176,47 @@ fn load_event_cursor(connection: &Connection) -> Result<Option<u64>, StorageErro
             .map_err(|_| StorageError::InvalidEventCursor { value }),
         None => Ok(None),
     }
+}
+
+fn load_events_after(
+    connection: &Connection,
+    cursor: u64,
+    limit: usize,
+) -> Result<EventPage, StorageError> {
+    let earliest_cursor = load_cursor(connection, "MIN")?;
+    let latest_cursor = load_cursor(connection, "MAX")?;
+    let cursor =
+        i64::try_from(cursor).map_err(|_| StorageError::InvalidEventCursor { value: i64::MAX })?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let mut statement = connection.prepare(
+        "SELECT cursor, payload_json FROM events
+         WHERE cursor > ?1 ORDER BY cursor LIMIT ?2",
+    )?;
+    let rows = statement.query_map(params![cursor, limit], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut events = Vec::new();
+    for row in rows {
+        let (cursor, payload) = row?;
+        events.push(CursorEvent {
+            cursor: u64::try_from(cursor)
+                .map_err(|_| StorageError::InvalidEventCursor { value: cursor })?,
+            event: decode(&payload)?,
+        });
+    }
+    Ok(EventPage {
+        earliest_cursor,
+        latest_cursor,
+        events,
+    })
+}
+
+fn load_cursor(connection: &Connection, aggregate: &str) -> Result<Option<u64>, StorageError> {
+    let sql = format!("SELECT {aggregate}(cursor) FROM events");
+    let value: Option<i64> = connection.query_row(&sql, [], |row| row.get(0))?;
+    value
+        .map(|value| u64::try_from(value).map_err(|_| StorageError::InvalidEventCursor { value }))
+        .transpose()
 }
 
 fn load_payloads<T>(connection: &Connection, sql: &str) -> Result<Vec<T>, StorageError>

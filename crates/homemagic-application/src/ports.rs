@@ -4,6 +4,7 @@ use homemagic_domain::{
     CapabilityObservation, DeviceId, DeviceRecord, DomainEvent, Installation, IntegrationInstance,
     RepairRecord, SecretRef, Space,
 };
+use serde::Serialize;
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -47,6 +48,43 @@ pub struct FoundationWrite {
     pub repairs: Vec<RepairRecord>,
 }
 
+/// Secret-safe persistence health returned through the application boundary.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RepositoryHealth {
+    /// Stable backend name such as `sqlite` or `memory`.
+    pub backend: String,
+    /// Current migration version for schema-backed repositories.
+    pub schema_version: Option<u32>,
+    /// Backend integrity result.
+    pub integrity: String,
+    /// Whether write-ahead logging is active, when applicable.
+    pub wal_enabled: Option<bool>,
+    /// Earliest retained event cursor.
+    pub earliest_event_cursor: Option<u64>,
+    /// Latest committed event cursor.
+    pub latest_event_cursor: Option<u64>,
+}
+
+/// One durable event paired with its installation-local cursor.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CursorEvent {
+    /// Monotonic durable cursor.
+    pub cursor: u64,
+    /// Typed domain event committed at this cursor.
+    pub event: DomainEvent,
+}
+
+/// One bounded cursor-ordered event history page.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct EventPage {
+    /// Earliest cursor still retained, if history exists.
+    pub earliest_cursor: Option<u64>,
+    /// Latest committed cursor, if history exists.
+    pub latest_cursor: Option<u64>,
+    /// Events strictly after the requested cursor.
+    pub events: Vec<CursorEvent>,
+}
+
 /// Durable repository port owned by the application layer.
 #[async_trait]
 pub trait FoundationRepository: Send + Sync {
@@ -63,6 +101,12 @@ pub trait FoundationRepository: Send + Sync {
     ///
     /// Returns a storage-specific error and leaves no partial write.
     async fn apply(&self, write: FoundationWrite) -> Result<(), BoxError>;
+
+    /// Returns secret-safe backend, migration, integrity, and cursor health.
+    async fn health(&self) -> Result<RepositoryHealth, BoxError>;
+
+    /// Reads a bounded page strictly after `cursor` in durable cursor order.
+    async fn events_after(&self, cursor: u64, limit: usize) -> Result<EventPage, BoxError>;
 }
 
 /// Secret bytes that are zeroized when dropped and cannot be serialized.
