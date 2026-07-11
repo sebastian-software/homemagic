@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
-    CapabilityObservation, DeviceId, DeviceRecord, DomainEvent, Installation, IntegrationInstance,
-    RepairRecord, SecretRef, Space,
+    Actor, ActorGrant, ActorId, CapabilityObservation, CommandAggregate, CommandAuditRecord,
+    CommandId, DeviceId, DeviceRecord, DomainEvent, Installation, InstallationId,
+    IntegrationInstance, RepairRecord, SecretRef, Space,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -107,6 +108,153 @@ pub trait FoundationRepository: Send + Sync {
 
     /// Reads a bounded page strictly after `cursor` in durable cursor order.
     async fn events_after(&self, cursor: u64, limit: usize) -> Result<EventPage, BoxError>;
+}
+
+/// Canonical SHA-256 request digest used to compare idempotent retries.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CanonicalRequestHash(String);
+
+impl CanonicalRequestHash {
+    /// Creates a digest from 64 lowercase hexadecimal characters.
+    ///
+    /// # Errors
+    ///
+    /// Rejects values that are not canonical SHA-256 encodings.
+    pub fn new(value: impl Into<String>) -> Result<Self, CanonicalRequestHashError> {
+        let value = value.into();
+        if value.len() != 64
+            || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || value.bytes().any(|byte| byte.is_ascii_uppercase())
+        {
+            return Err(CanonicalRequestHashError);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the canonical lowercase hexadecimal digest.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Invalid canonical request digest.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("canonical request hash must be 64 lowercase hexadecimal characters")]
+pub struct CanonicalRequestHashError;
+
+/// Stored Argon2id credential hash; raw bearer tokens never cross this port.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActorCredential {
+    /// Actor authenticated by the credential.
+    pub actor_id: ActorId,
+    /// Password-hash string including Argon2id parameters and salt.
+    pub token_hash: String,
+    /// Last credential rotation time.
+    pub rotated_at: DateTime<Utc>,
+}
+
+/// Actor, credential hash, and grants loaded as one security projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActorSecurity {
+    /// Durable actor record.
+    pub actor: Actor,
+    /// Optional credential hash for actors not yet provisioned.
+    pub credential: Option<ActorCredential>,
+    /// Current explicit policy grants.
+    pub grants: Vec<ActorGrant>,
+}
+
+/// Result of atomically creating an idempotent command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommandCreateOutcome {
+    /// New command and receipt audit were committed.
+    Created(CommandAggregate),
+    /// The same actor, key, and canonical request already exist.
+    ExistingEquivalent(CommandAggregate),
+    /// The actor reused the key for a different canonical request.
+    Conflict(CommandId),
+}
+
+/// Bounded command and audit retention policy for one installation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandRetention {
+    /// Installation whose retained history is bounded.
+    pub installation_id: InstallationId,
+    /// Terminal commands older than this time are eligible for removal.
+    pub terminal_before: DateTime<Utc>,
+    /// Maximum retained terminal command rows.
+    pub maximum_terminal_commands: usize,
+    /// Audit rows older than this time are eligible for removal.
+    pub audit_before: DateTime<Utc>,
+    /// Maximum retained audit rows.
+    pub maximum_audit_records: usize,
+}
+
+/// Rows removed by one retention pass.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CommandRetentionResult {
+    /// Terminal command rows removed.
+    pub commands_removed: usize,
+    /// Immutable audit rows removed after their longer retention period.
+    pub audit_records_removed: usize,
+}
+
+/// Durable command control-plane repository owned by the application layer.
+#[async_trait]
+pub trait CommandRepository: Send + Sync {
+    /// Inserts or updates an actor and optional credential hash atomically.
+    async fn store_actor(
+        &self,
+        actor: Actor,
+        credential: Option<ActorCredential>,
+    ) -> Result<(), BoxError>;
+
+    /// Replaces one actor's complete grant set atomically.
+    async fn replace_actor_grants(
+        &self,
+        actor_id: &ActorId,
+        grants: Vec<ActorGrant>,
+    ) -> Result<(), BoxError>;
+
+    /// Loads one actor's security projection.
+    async fn actor_security(&self, actor_id: &ActorId) -> Result<Option<ActorSecurity>, BoxError>;
+
+    /// Atomically persists a received command and its initial audit record.
+    async fn create_command(
+        &self,
+        command: CommandAggregate,
+        request_hash: CanonicalRequestHash,
+        audit: CommandAuditRecord,
+    ) -> Result<CommandCreateOutcome, BoxError>;
+
+    /// Loads one current command aggregate.
+    async fn command(&self, command_id: &CommandId) -> Result<Option<CommandAggregate>, BoxError>;
+
+    /// Atomically replaces the current aggregate and appends its audit transition.
+    async fn transition_command(
+        &self,
+        command: CommandAggregate,
+        expected_version: u64,
+        audit: CommandAuditRecord,
+    ) -> Result<(), BoxError>;
+
+    /// Loads a bounded command-local audit page after `sequence`.
+    async fn command_audit(
+        &self,
+        command_id: &CommandId,
+        after_sequence: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<CommandAuditRecord>, BoxError>;
+
+    /// Loads a bounded, oldest-first page of non-terminal restart work.
+    async fn recoverable_commands(&self, limit: usize) -> Result<Vec<CommandAggregate>, BoxError>;
+
+    /// Enforces command and audit bounds without removing active commands.
+    async fn retain_commands(
+        &self,
+        policy: CommandRetention,
+    ) -> Result<CommandRetentionResult, BoxError>;
 }
 
 /// Secret bytes that are zeroized when dropped and cannot be serialized.

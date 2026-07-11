@@ -256,7 +256,9 @@ impl CommandState {
         )
     }
 
-    const fn can_transition_to(self, next: Self) -> bool {
+    /// Returns whether the explicit lifecycle permits `next`.
+    #[must_use]
+    pub const fn allows_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
             (
@@ -351,7 +353,7 @@ impl CommandAggregate {
         next: CommandState,
         at: DateTime<Utc>,
     ) -> Result<(), CommandTransitionError> {
-        if !self.state.can_transition_to(next) {
+        if !self.state.allows_transition_to(next) {
             return Err(CommandTransitionError {
                 from: self.state,
                 to: next,
@@ -631,7 +633,7 @@ mod tests {
         for from in states {
             for to in states {
                 assert_eq!(
-                    from.can_transition_to(to),
+                    from.allows_transition_to(to),
                     allowed.contains(&(from, to)),
                     "unexpected {from:?} -> {to:?} rule"
                 );

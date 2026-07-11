@@ -97,14 +97,14 @@ from ADR-0009.
 
 ## Workstream E2.3: Durable dispatch and audit
 
-- [ ] Persist the command before physical dispatch.
-- [ ] Return the existing outcome for a repeated idempotency key and equivalent
+- [x] Persist the command before physical dispatch.
+- [x] Return the existing outcome for a repeated idempotency key and equivalent
   payload.
-- [ ] Reject an idempotency-key collision with a different payload.
+- [x] Reject an idempotency-key collision with a different payload.
 - [ ] Enforce deadlines before and during dispatch.
-- [ ] Record every transition in an append-only audit trail.
+- [x] Record every transition in an append-only audit trail.
 - [ ] Include actor, policy decision, target, adapter result, and causation chain.
-- [ ] Redact credentials and sensitive payload fields.
+- [x] Redact credentials and sensitive payload fields.
 - [ ] Recover safely from process termination between dispatch and confirmation.
 
 ## Workstream E2.4: Shelly command adapters
@@ -137,7 +137,7 @@ from ADR-0009.
 - [ ] Policy matrix tests cover actors, targets, risk classes, and default denial.
 - [ ] Adapter fixtures cover success, timeout, reconnect, protection errors, and
   inconsistent observations.
-- [ ] Process-restart test covers commands left in every non-terminal state.
+- [x] Process-restart test covers commands left in every non-terminal state.
 - [ ] Audit tests prove immutability, ordering, causation, and redaction.
 - [ ] Hardware tests cover switch on/off, dimmer level, cover open/close/stop, and
   calibrated positioning.
@@ -188,3 +188,6 @@ from ADR-0009.
   ADRs and created the dependency-ordered EPIC-002 issue set.
 - 2026-07-11: Completed E2-002 typed command, lifecycle, idempotency,
   precondition, acknowledgement/confirmation, and policy domain contracts.
+- 2026-07-11: Completed E2-003 schema-v2 actor, grant, command, credential-hash,
+  and audit persistence with atomic idempotency, optimistic locking, bounded
+  recovery, independent retention, and restart-state coverage.

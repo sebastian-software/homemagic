@@ -1,6 +1,7 @@
 //! `SQLite` persistence adapter for the `HomeMagic` device foundation.
 
 mod backup;
+mod command_repository;
 mod migrations;
 mod repository;
 
@@ -73,6 +74,20 @@ pub enum StorageError {
     /// A supposedly string-backed enum serialized to another JSON type.
     #[error("persisted enum contract did not serialize as a string")]
     InvalidEnumEncoding,
+    /// A command mutation violated a durable lifecycle invariant.
+    #[error("invalid durable command mutation: {0}")]
+    InvalidCommand(&'static str),
+    /// Optimistic command version did not match the durable aggregate.
+    #[error("command version conflict: expected {expected}, found {found}")]
+    CommandVersionConflict {
+        /// Version supplied by the caller.
+        expected: u64,
+        /// Current durable version.
+        found: u64,
+    },
+    /// An unsigned contract value exceeded `SQLite`'s signed integer range.
+    #[error("numeric command value exceeds SQLite range")]
+    NumericOverflow,
 }
 
 type SharedConnection = Arc<Mutex<Connection>>;

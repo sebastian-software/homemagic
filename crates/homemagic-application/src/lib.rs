@@ -21,9 +21,11 @@ use tokio::sync::RwLock;
 
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use ports::{
-    Clock, CursorEvent, DomainEventSink, EventPage, FoundationRepository, FoundationSnapshot,
-    FoundationWrite, IntegrationSessionPort, LiveObservationBatch, LiveObservationSink,
-    RepositoryHealth, SecretStore, SecretStoreError, SecretValue, SystemClock,
+    ActorCredential, ActorSecurity, CanonicalRequestHash, CanonicalRequestHashError, Clock,
+    CommandCreateOutcome, CommandRepository, CommandRetention, CommandRetentionResult, CursorEvent,
+    DomainEventSink, EventPage, FoundationRepository, FoundationSnapshot, FoundationWrite,
+    IntegrationSessionPort, LiveObservationBatch, LiveObservationSink, RepositoryHealth,
+    SecretStore, SecretStoreError, SecretValue, SystemClock,
 };
 
 /// Durable live-observation sink backed by the foundation repository.

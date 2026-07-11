@@ -19,7 +19,7 @@ use crate::{
 /// `SQLite` implementation of the device-foundation repository port.
 #[derive(Clone)]
 pub struct SqliteRepository {
-    connection: SharedConnection,
+    pub(crate) connection: SharedConnection,
     database_path: Arc<PathBuf>,
 }
 

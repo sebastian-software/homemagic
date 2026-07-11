@@ -4,6 +4,8 @@ use sha2::{Digest, Sha256};
 use crate::StorageError;
 
 const INITIAL_SCHEMA: &str = include_str!("../migrations/0001_initial.sql");
+const COMMAND_CONTROL_PLANE_SCHEMA: &str =
+    include_str!("../migrations/0002_command_control_plane.sql");
 
 struct Migration {
     version: u32,
@@ -11,13 +13,20 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: INITIAL_SCHEMA,
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: INITIAL_SCHEMA,
+    },
+    Migration {
+        version: 2,
+        name: "command_control_plane",
+        sql: COMMAND_CONTROL_PLANE_SCHEMA,
+    },
+];
 
-pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let found = schema_version(connection)?;

@@ -15,7 +15,7 @@ async fn schema_v0_fixture_should_upgrade_to_current() -> Result<(), BoxError> {
     let repository = SqliteRepository::open(&path)?;
     let health = repository.health().await?;
 
-    assert_eq!(health.schema_version, 1);
+    assert_eq!(health.schema_version, 2);
     assert_eq!(health.integrity, "ok");
     Ok(())
 }
@@ -32,8 +32,10 @@ async fn schema_v1_fixture_should_reopen_and_load() -> Result<(), BoxError> {
 
     let repository = SqliteRepository::open(&path)?;
     let snapshot = repository.load().await?;
+    let health = repository.health().await?;
 
     assert_eq!(snapshot.installations.len(), 1);
+    assert_eq!(health.schema_version, 2);
     Ok(())
 }
 
