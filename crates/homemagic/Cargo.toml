@@ -9,13 +9,19 @@ rust-version.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+chrono.workspace = true
 homemagic-api = { path = "../homemagic-api" }
 homemagic-application = { path = "../homemagic-application" }
+homemagic-domain = { path = "../homemagic-domain" }
 homemagic-shelly = { path = "../homemagic-shelly" }
+homemagic-storage = { path = "../homemagic-storage" }
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

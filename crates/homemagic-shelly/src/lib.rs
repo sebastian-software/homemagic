@@ -13,8 +13,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use homemagic_application::{BoxError, IntegrationScanner};
 use homemagic_domain::{
-    CapabilitySnapshot, DeviceId, DeviceSnapshot, EndpointId, EndpointSnapshot, NetworkLocation,
-    RiskClass,
+    CapabilitySnapshot, DeviceId, DeviceSnapshot, DiscoveryCandidate, EndpointId, EndpointSnapshot,
+    InstallationId, IntegrationId, NetworkLocation, RiskClass,
 };
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use reqwest::{Client, StatusCode};
@@ -108,6 +108,8 @@ pub enum ShellyError {
 pub struct ShellyScanner {
     client: Client,
     discovery_window: Duration,
+    installation_id: InstallationId,
+    integration_id: IntegrationId,
 }
 
 impl ShellyScanner {
@@ -117,10 +119,27 @@ impl ShellyScanner {
     ///
     /// Returns an error when the HTTP client cannot be constructed.
     pub fn new(discovery_window: Duration) -> Result<Self, reqwest::Error> {
+        let installation_id = InstallationId::new();
+        let integration_id = IntegrationId::from_native(&installation_id, INTEGRATION, "local");
+        Self::with_identity(discovery_window, installation_id, integration_id)
+    }
+
+    /// Creates a scanner bound to durable installation and integration IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the HTTP client cannot be constructed.
+    pub fn with_identity(
+        discovery_window: Duration,
+        installation_id: InstallationId,
+        integration_id: IntegrationId,
+    ) -> Result<Self, reqwest::Error> {
         let client = Client::builder().timeout(Duration::from_secs(4)).build()?;
         Ok(Self {
             client,
             discovery_window,
+            installation_id,
+            integration_id,
         })
     }
 
@@ -150,7 +169,13 @@ impl ShellyScanner {
             Err(error) => return Err(error),
         };
 
-        Ok(project_snapshot(target, info, status, config))
+        Ok(project_snapshot(
+            target,
+            &self.integration_id,
+            info,
+            status,
+            config,
+        ))
     }
 
     async fn get_json<T>(&self, url: &str) -> Result<T, ShellyError>
@@ -192,7 +217,7 @@ impl IntegrationScanner for ShellyScanner {
         INTEGRATION
     }
 
-    async fn scan(&self) -> Result<Vec<DeviceSnapshot>, BoxError> {
+    async fn scan(&self) -> Result<Vec<DiscoveryCandidate>, BoxError> {
         let targets = discover(self.discovery_window).await?;
         let mut snapshots = BTreeMap::new();
         let mut tasks = JoinSet::new();
@@ -217,7 +242,15 @@ impl IntegrationScanner for ShellyScanner {
             }
         }
 
-        Ok(snapshots.into_values().collect())
+        Ok(snapshots
+            .into_values()
+            .map(|snapshot| DiscoveryCandidate {
+                installation_id: self.installation_id.clone(),
+                integration_id: self.integration_id.clone(),
+                discovered_at: snapshot.observed_at,
+                snapshot,
+            })
+            .collect())
     }
 }
 
@@ -407,6 +440,7 @@ fn rpc_url(target: &DiscoveredShelly, method: &str) -> String {
 
 fn project_snapshot(
     target: &DiscoveredShelly,
+    integration_id: &IntegrationId,
     info: ShellyDeviceInfo,
     status: Option<Map<String, Value>>,
     config: Option<Map<String, Value>>,
@@ -449,7 +483,7 @@ fn project_snapshot(
     }
 
     DeviceSnapshot {
-        id: DeviceId::from_native(INTEGRATION, &info.id),
+        id: DeviceId::from_integration(integration_id, &info.id),
         native_id: info.id.clone(),
         integration: INTEGRATION.to_owned(),
         name,
@@ -585,6 +619,11 @@ mod tests {
             .unwrap_or_else(|error| panic!("valid Shelly config fixture: {error}"))
     }
 
+    fn integration_id() -> IntegrationId {
+        let installation_id = InstallationId::new();
+        IntegrationId::from_native(&installation_id, INTEGRATION, "test")
+    }
+
     #[test]
     fn projection_should_create_switch_light_and_cover_endpoints() {
         let target = DiscoveredShelly {
@@ -596,6 +635,7 @@ mod tests {
 
         let snapshot = project_snapshot(
             &target,
+            &integration_id(),
             fixture_info(),
             Some(fixture_status()),
             Some(fixture_config()),
@@ -620,7 +660,7 @@ mod tests {
         let mut info = fixture_info();
         info.auth_en = true;
 
-        let snapshot = project_snapshot(&target, info, None, None);
+        let snapshot = project_snapshot(&target, &integration_id(), info, None, None);
 
         assert_eq!(snapshot.endpoints.len(), 1);
         assert_eq!(

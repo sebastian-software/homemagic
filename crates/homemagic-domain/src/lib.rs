@@ -17,7 +17,9 @@ pub use capability::{
     CapabilityDescriptor, CapabilityDescriptorError, CapabilitySnapshot, RiskClass,
 };
 pub use configuration::{Installation, IntegrationInstance, Space};
-pub use device::{DeviceRecord, DeviceSnapshot, EndpointSnapshot, NetworkLocation};
+pub use device::{
+    DeviceRecord, DeviceSnapshot, DiscoveryCandidate, EndpointSnapshot, NetworkLocation,
+};
 pub use event::{CausationMetadata, DomainEvent, DomainEventKind};
 pub use identity::{
     CorrelationId, DeviceId, EndpointId, EventId, InstallationId, IntegrationId, RepairId, SpaceId,

@@ -10,6 +10,19 @@ use crate::{
     LifecycleTransitionError, LifecycleTrigger, SpaceId,
 };
 
+/// One normalized device discovered by an integration before reconciliation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiscoveryCandidate {
+    /// Installation in which discovery occurred.
+    pub installation_id: InstallationId,
+    /// Integration instance that observed the native identity.
+    pub integration_id: IntegrationId,
+    /// Adapter-projected device state.
+    pub snapshot: DeviceSnapshot,
+    /// Time at which discovery observed the candidate.
+    pub discovered_at: DateTime<Utc>,
+}
+
 /// Snapshot of one independently addressable part of a device.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EndpointSnapshot {
@@ -87,20 +100,7 @@ impl DeviceRecord {
         snapshot: DeviceSnapshot,
         first_seen: DateTime<Utc>,
     ) -> Self {
-        let capability_descriptors = snapshot
-            .endpoints
-            .iter()
-            .map(|endpoint| {
-                (
-                    endpoint.id.clone(),
-                    endpoint
-                        .capabilities
-                        .iter()
-                        .map(CapabilitySnapshot::descriptor)
-                        .collect(),
-                )
-            })
-            .collect();
+        let capability_descriptors = descriptors(&snapshot);
         Self {
             installation_id,
             integration_id,
@@ -112,6 +112,14 @@ impl DeviceRecord {
             spaces: BTreeSet::new(),
             capability_descriptors,
         }
+    }
+
+    /// Replaces mutable adapter state while preserving identity and refreshing
+    /// versioned capability descriptors.
+    pub fn replace_snapshot(&mut self, mut snapshot: DeviceSnapshot) {
+        snapshot.id = self.snapshot.id.clone();
+        self.capability_descriptors = descriptors(&snapshot);
+        self.snapshot = snapshot;
     }
 
     /// Applies a lifecycle transition to this aggregate.
@@ -132,6 +140,23 @@ impl DeviceRecord {
     pub fn freshness_at(&self, policy: FreshnessPolicy, now: DateTime<Utc>) -> FreshnessState {
         policy.evaluate(self.timestamps.last_success, self.availability.state, now)
     }
+}
+
+fn descriptors(snapshot: &DeviceSnapshot) -> BTreeMap<EndpointId, Vec<CapabilityDescriptor>> {
+    snapshot
+        .endpoints
+        .iter()
+        .map(|endpoint| {
+            (
+                endpoint.id.clone(),
+                endpoint
+                    .capabilities
+                    .iter()
+                    .map(CapabilitySnapshot::descriptor)
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

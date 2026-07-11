@@ -56,6 +56,24 @@ impl SqliteRepository {
         .map_err(|error| StorageError::Worker(error.to_string()))?
     }
 
+    /// Loads the complete durable foundation using the concrete storage error.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed storage error when reading or decoding fails.
+    pub async fn load_foundation(&self) -> Result<FoundationSnapshot, StorageError> {
+        self.load_inner().await
+    }
+
+    /// Atomically applies a foundation write using the concrete storage error.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed storage error and leaves no partial write.
+    pub async fn apply_foundation(&self, write: FoundationWrite) -> Result<(), StorageError> {
+        self.apply_inner(write).await
+    }
+
     async fn load_inner(&self) -> Result<FoundationSnapshot, StorageError> {
         let connection = Arc::clone(&self.connection);
         tokio::task::spawn_blocking(move || {
@@ -80,13 +98,13 @@ impl SqliteRepository {
 #[async_trait]
 impl FoundationRepository for SqliteRepository {
     async fn load(&self) -> Result<FoundationSnapshot, BoxError> {
-        self.load_inner()
+        self.load_foundation()
             .await
             .map_err(|error| Box::new(error) as BoxError)
     }
 
     async fn apply(&self, write: FoundationWrite) -> Result<(), BoxError> {
-        self.apply_inner(write)
+        self.apply_foundation(write)
             .await
             .map_err(|error| Box::new(error) as BoxError)
     }

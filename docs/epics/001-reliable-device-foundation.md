@@ -78,17 +78,23 @@ debug logs.
 
 ## Workstream E1.2: Device and observation lifecycle
 
-- [ ] Replace in-memory-only startup with load-then-reconcile behavior.
+- [x] Replace in-memory-only startup with load-then-reconcile behavior. Evidence:
+  durable daemon composition and load-first application tests.
 - [x] Model discovery candidate, enrolled, online, degraded, offline, stale, and
   removed lifecycle states. Evidence: `crates/homemagic-domain/src/lifecycle.rs`.
 - [x] Add `first_seen`, `last_seen`, `last_success`, and freshness timestamps.
   Evidence: `DeviceTimestamps`, `ObservedValue`, and `FreshnessPolicy`.
-- [ ] Preserve a known device when a bounded discovery window misses it.
+- [x] Preserve a known device when a bounded discovery window misses it.
+  Evidence: `discovery_miss_should_not_change_known_device`.
 - [x] Mark observations stale without rewriting them as an assumed current state.
   Evidence: freshness is calculated separately from field-level `ObservedValue`.
-- [ ] Detect native identity collisions and surface a repair record.
-- [ ] Define explicit removal and rediscovery behavior.
+- [x] Detect native identity collisions and surface a repair record. Evidence:
+  collision reconciliation test and `RepairKind::IdentityCollision`.
+- [x] Define explicit removal and rediscovery behavior. Evidence: application
+  tombstone and reconciliation tests.
 - [ ] Publish typed lifecycle and observation events with causation metadata.
+  Partial evidence: correlated lifecycle/availability event fan-out is complete;
+  live observation publication remains in E1-006.
 
 ## Workstream E1.3: Shelly sessions and authentication
 
@@ -137,7 +143,8 @@ debug logs.
 - [ ] Recorded Shelly fixtures cover full status, partial notifications, events,
   authentication challenges, malformed frames, and firmware variations.
 - [ ] Reconnect tests use deterministic time and verify backoff bounds.
-- [ ] Restart test proves stable device and endpoint IDs.
+- [x] Restart test proves stable device and endpoint IDs. Evidence: storage
+  reopen contract and daemon bootstrap identity reuse test.
 - [ ] Network-loss test proves stale/offline behavior and recovery.
 - [ ] macOS Apple Silicon hardware test covers at least one switch, dimmer, and
   cover.
@@ -152,7 +159,8 @@ debug logs.
   without calling `devices.refresh`.
 - [ ] AC3: An authenticated Shelly can be enrolled and observed without exposing
   its password in persisted snapshots, logs, RPC responses, or diagnostics.
-- [ ] AC4: Missing discovery advertisements do not delete a known device.
+- [x] AC4: Missing discovery advertisements do not delete a known device.
+  Evidence: `discovery_miss_should_not_change_known_device`.
 - [ ] AC5: Disconnect, backoff, stale state, reconnect, and recovery are visible
   through structured API data.
 - [ ] AC6: Schema migration and backup/restore tests pass from a clean checkout.
@@ -189,3 +197,5 @@ debug logs.
   full workspace format, Clippy, tests, and doctests pass.
 - 2026-07-11: Completed E1-003 SQLite storage, schema migrations, repository
   contracts, backup/restore, and health diagnostics.
+- 2026-07-11: Completed E1-004 load-first startup and durable discovery
+  reconciliation; local daemon health and device-list smoke tests pass.
