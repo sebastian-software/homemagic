@@ -24,3 +24,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0009: Separate current state from bounded event retention](0009-current-state-and-event-retention.md)
 - [ADR-0010: Own one managed session per active device](0010-managed-device-sessions-and-notification-gaps.md)
 - [ADR-0011: Bound runtime scheduling and recovery loops](0011-bounded-runtime-scheduling-and-recovery.md)
+- [ADR-0012: Stream durable events over JSON-RPC WebSockets](0012-json-rpc-websocket-event-subscriptions.md)

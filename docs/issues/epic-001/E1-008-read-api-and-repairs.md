@@ -2,10 +2,10 @@
 id: E1-008
 epic: EPIC-001
 title: Expose durable reads, event streams, metadata, and repairs
-status: planned
+status: in_progress
 priority: high
 depends_on: [E1-003, E1-007]
-adrs: [ADR-0003]
+adrs: [ADR-0003, ADR-0012]
 created: 2026-07-11
 updated: 2026-07-11
 ---
@@ -46,3 +46,5 @@ events, manage human metadata without changing identity, and diagnose repairs.
 ## Progress log
 
 - 2026-07-11: Issue created.
+- 2026-07-11: Accepted ADR-0012 for durable-cursor JSON-RPC WebSocket
+  subscriptions with bounded wake-ups and explicit lag signaling.
