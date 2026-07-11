@@ -576,6 +576,7 @@ impl HomeMagicApplication {
                 correlation_id: CorrelationId::new(),
                 causation_event_id: None,
                 actor: update.actor,
+                automation: None,
             },
             kind: DomainEventKind::MetadataChanged { fields },
         };
@@ -699,6 +700,7 @@ impl HomeMagicApplication {
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
             actor,
+            automation: None,
         };
         let events = vec![
             DomainEvent {
@@ -784,6 +786,7 @@ impl HomeMagicApplication {
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
             actor: Some("system:freshness".to_owned()),
+            automation: None,
         };
         let mut changed = Vec::new();
         let mut events = Vec::new();
@@ -1350,6 +1353,7 @@ mod tests {
                 correlation_id: CorrelationId::new(),
                 causation_event_id: None,
                 actor: Some("test:lag".to_owned()),
+                automation: None,
             },
             kind: DomainEventKind::MetadataChanged {
                 fields: vec!["name".to_owned()],

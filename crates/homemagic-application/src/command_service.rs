@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
-    Actor, ActorId, AuditId, CapabilityDescriptor, CapabilitySnapshot, CommandAggregate,
-    CommandAuditRecord, CommandEnvelope, CommandErrorCode, CommandFailure, CommandId,
-    CommandPayload, CommandState, ConstraintState, CorrelationId, DeviceId, DomainEvent,
+    Actor, ActorId, AuditId, AutomationCausation, CapabilityDescriptor, CapabilitySnapshot,
+    CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode, CommandFailure,
+    CommandId, CommandPayload, CommandState, ConstraintState, CorrelationId, DeviceId, DomainEvent,
     DomainEventKind, EndpointId, EventId, ExpectedObservation, FreshnessPolicy, FreshnessState,
     IdempotencyKey, OnOffCommand, PolicyInput, PositionCommand, RiskClass,
 };
@@ -44,6 +44,8 @@ pub struct CommandRequest {
     pub correlation_id: CorrelationId,
     /// Optional directly causing durable event.
     pub causation_event_id: Option<EventId>,
+    /// Exact causing automation execution, when present.
+    pub automation_causation: Option<AutomationCausation>,
 }
 
 /// Failure at the application command boundary.
@@ -191,6 +193,7 @@ impl CommandService {
             dry_run: request.dry_run,
             correlation_id: request.correlation_id.clone(),
             causation_event_id: request.causation_event_id.clone(),
+            automation_causation: request.automation_causation.clone(),
             received_at: now,
         };
         let command = CommandAggregate::received(envelope);
@@ -795,12 +798,15 @@ impl CommandAuditSink for DomainEventCommandAuditSink {
                 correlation_id: audit.correlation_id.clone(),
                 causation_event_id: audit.causation_event_id.clone(),
                 actor: Some(audit.actor_id.to_string()),
+                automation: command.envelope.automation_causation.clone(),
             },
             kind: DomainEventKind::CommandTransitioned {
                 command_id: audit.command_id.clone(),
                 from: audit.from,
                 to: audit.to,
                 sequence: audit.sequence,
+                endpoint_id: Some(command.envelope.endpoint_id),
+                capability: Some(command.envelope.capability.schema()),
             },
         };
         self.foundation

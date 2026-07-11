@@ -87,6 +87,7 @@ fn persisted_domain_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
             actor: None,
+            automation: None,
         },
         kind: DomainEventKind::AvailabilityChanged {
             from: AvailabilityState::Unknown,
@@ -113,6 +114,7 @@ fn persisted_domain_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
         dry_run: false,
         correlation_id: CorrelationId::new(),
         causation_event_id: None,
+        automation_causation: None,
         received_at: now,
     });
 

@@ -17,7 +17,7 @@ use homemagic_application::{
     DomainEventCommandAuditSink, FoundationRepository, FoundationWrite, StoredAutomationVersion,
 };
 use homemagic_domain::{
-    Actor, ActorGrant, AdapterAcknowledgement, AuditId, AutomationAction,
+    Actor, ActorGrant, AdapterAcknowledgement, AuditId, AutomationAction, AutomationCausation,
     AutomationCommandAttemptPhase, AutomationDeviceReference, AutomationDocument,
     AutomationDocumentSchema, AutomationExecutionPlan, AutomationFailurePolicy, AutomationId,
     AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState, AutomationProvenance,
@@ -281,6 +281,7 @@ impl Fixture {
             dry_run,
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
+            automation_causation: None,
         }
     }
 
@@ -366,13 +367,18 @@ async fn execute_should_commit_each_fact_and_retry_without_redispatch() -> TestR
 #[tokio::test]
 async fn committed_audit_should_project_to_durable_typed_event() -> TestResult {
     let fixture = Fixture::new(true).await?;
+    let automation_id = AutomationId::new();
+    let automation_version = AutomationVersion::new(2)?;
+    let automation_run_id = AutomationRunId::new();
+    let mut request = fixture.request("event", true);
+    request.automation_causation = Some(AutomationCausation {
+        automation_id: automation_id.clone(),
+        version: automation_version,
+        run_id: automation_run_id.clone(),
+    });
     let command = fixture
         .service
-        .execute(
-            &fixture.actor,
-            fixture.request("event", true),
-            fixture.clock.now(),
-        )
+        .execute(&fixture.actor, request, fixture.clock.now())
         .await?;
     let audit = fixture
         .repository
@@ -395,12 +401,24 @@ async fn committed_audit_should_project_to_durable_typed_event() -> TestResult {
             command_id,
             to: CommandState::Validated,
             sequence: 1,
+            endpoint_id: Some(endpoint_id),
+            capability: Some(capability),
             ..
         } if command_id == &command.envelope.id
+            && endpoint_id == &fixture.endpoint_id
+            && capability == "on_off.v1"
     ));
     assert_eq!(
         page.events[0].event.causation.actor.as_deref(),
         Some(fixture.actor.id.to_string().as_str())
+    );
+    assert_eq!(
+        page.events[0].event.causation.automation,
+        Some(AutomationCausation {
+            automation_id,
+            version: automation_version,
+            run_id: automation_run_id,
+        })
     );
     Ok(())
 }
@@ -694,6 +712,7 @@ async fn automation_restart_window_should_reuse_command_without_redispatch() -> 
                 dry_run: false,
                 correlation_id: run.correlation_id,
                 causation_event_id: None,
+                automation_causation: None,
             },
             now,
         )
@@ -852,6 +871,7 @@ async fn seed(
         dry_run: false,
         correlation_id: request.correlation_id,
         causation_event_id: None,
+        automation_causation: request.automation_causation,
         received_at: fixture.clock.now(),
     });
     let receipt = audit(&command, None);

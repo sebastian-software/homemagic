@@ -39,6 +39,7 @@ pub(crate) fn reconcile(
         correlation_id: CorrelationId::new(),
         causation_event_id: None,
         actor: Some("system:discovery".to_owned()),
+        automation: None,
     };
     let mut changed = BTreeMap::new();
     let mut events = Vec::new();

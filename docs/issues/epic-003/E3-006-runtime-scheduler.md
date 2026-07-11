@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: in_progress
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -80,3 +80,7 @@ updated: 2026-07-12
   runtime evaluator. SQLite evidence persists pending, consumes a ready timer
   into mature, then advances and clears the interval; a pure reset test proves
   a false nested value invalidates the matching canonical condition hash.
+- 2026-07-12: Accepted ADR-0025 and propagated exact automation, version, and
+  run causation through persisted commands into typed command-transition
+  events. Contract evidence also proves resolved endpoint and capability
+  identity survive the audit projection for precise outcome-trigger matching.

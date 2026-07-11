@@ -158,6 +158,7 @@ async fn repository_should_page_events_in_durable_cursor_order() -> Result<(), B
                 correlation_id: CorrelationId::new(),
                 causation_event_id: None,
                 actor: Some("test:event-page".to_owned()),
+                automation: None,
             },
             kind: DomainEventKind::AvailabilityChanged {
                 from: AvailabilityState::Unknown,

@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    ActorId, AuditId, CapabilityDescriptor, CommandId, CorrelationId, DeviceId, EndpointId,
-    EventId, FreshnessState, GrantId, InstallationId, RiskClass, SpaceId,
+    ActorId, AuditId, AutomationCausation, CapabilityDescriptor, CommandId, CorrelationId,
+    DeviceId, EndpointId, EventId, FreshnessState, GrantId, InstallationId, RiskClass, SpaceId,
 };
 
 /// Durable actor identity and operational state; credentials are stored separately.
@@ -201,6 +201,9 @@ pub struct CommandEnvelope {
     pub correlation_id: CorrelationId,
     /// Optional directly causing event.
     pub causation_event_id: Option<EventId>,
+    /// Exact causing automation execution, when present.
+    #[serde(default)]
+    pub automation_causation: Option<AutomationCausation>,
     /// Server receipt time.
     pub received_at: DateTime<Utc>,
 }
@@ -686,6 +689,7 @@ mod tests {
             dry_run: true,
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
+            automation_causation: None,
             received_at: now,
         };
         let mut command = CommandAggregate::received(envelope);

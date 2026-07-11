@@ -5,14 +5,14 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    AutomationCommandAttempt, AutomationCommandAttemptPhase, AutomationConditionDuration,
-    AutomationConditionDurationPhase, AutomationContentHash, AutomationPlanFailurePolicy,
-    AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRetryPolicy, AutomationRun,
-    AutomationRunContinuation, AutomationRunContinuationKind, AutomationRunId, AutomationRunState,
-    AutomationTimer, AutomationTimerId, AutomationTimerKind, AutomationTimerState,
-    AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandAggregate,
-    CommandId, CommandState, IdempotencyKey, ResolvedAutomationCondition, ResolvedAutomationTarget,
-    canonical_automation_hash,
+    AutomationCausation, AutomationCommandAttempt, AutomationCommandAttemptPhase,
+    AutomationConditionDuration, AutomationConditionDurationPhase, AutomationContentHash,
+    AutomationPlanFailurePolicy, AutomationPlanNodeId, AutomationPlanNodeKind,
+    AutomationRetryPolicy, AutomationRun, AutomationRunContinuation, AutomationRunContinuationKind,
+    AutomationRunId, AutomationRunState, AutomationTimer, AutomationTimerId, AutomationTimerKind,
+    AutomationTimerState, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
+    AutomationValue, CommandAggregate, CommandId, CommandState, IdempotencyKey,
+    ResolvedAutomationCondition, ResolvedAutomationTarget, canonical_automation_hash,
 };
 use thiserror::Error;
 
@@ -870,6 +870,11 @@ impl AutomationRuntime {
                         dry_run: false,
                         correlation_id: run.correlation_id.clone(),
                         causation_event_id: run.causation_event_id.clone(),
+                        automation_causation: Some(AutomationCausation {
+                            automation_id: run.automation_id.clone(),
+                            version: run.version,
+                            run_id: run.id.clone(),
+                        }),
                     },
                     self.clock.now(),
                 )
@@ -1595,6 +1600,7 @@ mod tests {
                 dry_run: false,
                 correlation_id: CorrelationId::new(),
                 causation_event_id: None,
+                automation_causation: None,
                 received_at: at,
             },
             state,

@@ -406,6 +406,7 @@ fn event_batch(device: &DeviceRecord, events: Vec<crate::ShellyEvent>) -> LiveOb
                     correlation_id: correlation_id.clone(),
                     causation_event_id: None,
                     actor: Some(format!("device:{}", device.snapshot.id)),
+                    automation: None,
                 },
                 kind: DomainEventKind::DeviceEvent {
                     endpoint_id: EndpointId::new(event.component),

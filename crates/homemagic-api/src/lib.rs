@@ -580,6 +580,7 @@ async fn command_execute(
         dry_run,
         correlation_id: params.correlation_id.unwrap_or_else(CorrelationId::new),
         causation_event_id: params.causation_event_id,
+        automation_causation: None,
     };
     match commands.execute(actor, request, now).await {
         Ok(command) => RpcResponse::success(id, json!({"command": command})),
@@ -995,7 +996,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
     use futures_util::{SinkExt, StreamExt};
     use homemagic_application::{
         ActorAuthenticationError, AuthenticateActor, BroadcastDomainEventSink, CommandDispatcher,
@@ -1026,6 +1027,27 @@ mod tests {
             name: "API test".to_owned(),
             enabled: true,
             created_at: Utc::now(),
+        }
+    }
+
+    fn metadata_event(
+        device_id: &DeviceId,
+        occurred_at: DateTime<Utc>,
+        field: &str,
+    ) -> DomainEvent {
+        DomainEvent {
+            id: EventId::new(),
+            device_id: device_id.clone(),
+            occurred_at,
+            causation: CausationMetadata {
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                actor: Some("test:websocket".to_owned()),
+                automation: None,
+            },
+            kind: DomainEventKind::MetadataChanged {
+                fields: vec![field.to_owned()],
+            },
         }
     }
 
@@ -1269,6 +1291,7 @@ mod tests {
                     dry_run: true,
                     correlation_id: CorrelationId::new(),
                     causation_event_id: None,
+                    automation_causation: None,
                 },
                 Utc::now(),
             )
@@ -1587,19 +1610,7 @@ mod tests {
         );
         let events = ["name", "aliases"]
             .into_iter()
-            .map(|field| DomainEvent {
-                id: EventId::new(),
-                device_id: device_id.clone(),
-                occurred_at: now,
-                causation: CausationMetadata {
-                    correlation_id: CorrelationId::new(),
-                    causation_event_id: None,
-                    actor: Some("test:websocket".to_owned()),
-                },
-                kind: DomainEventKind::MetadataChanged {
-                    fields: vec![field.to_owned()],
-                },
-            })
+            .map(|field| metadata_event(&device_id, now, field))
             .collect::<Vec<_>>();
         repository
             .apply(FoundationWrite {

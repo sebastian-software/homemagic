@@ -557,6 +557,7 @@ mod tests {
             dry_run: false,
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
+            automation_causation: None,
             received_at: now,
         }
     }

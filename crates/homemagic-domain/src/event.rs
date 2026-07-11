@@ -2,9 +2,21 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AvailabilityState, CapabilityDescriptor, CommandId, CommandState, CorrelationId, DeviceId,
-    DeviceLifecycle, EndpointId, EventId, LifecycleTrigger, RepairId,
+    AutomationId, AutomationRunId, AutomationVersion, AvailabilityState, CapabilityDescriptor,
+    CommandId, CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId, EventId,
+    LifecycleTrigger, RepairId,
 };
+
+/// Exact automation execution that caused an emitted fact.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationCausation {
+    /// Stable automation identity.
+    pub automation_id: AutomationId,
+    /// Exact immutable automation version.
+    pub version: AutomationVersion,
+    /// Durable causing run.
+    pub run_id: AutomationRunId,
+}
 
 /// Causal metadata shared across commands, observations, and events.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -15,6 +27,9 @@ pub struct CausationMetadata {
     pub causation_event_id: Option<EventId>,
     /// Stable actor identifier when the cause was user- or agent-originated.
     pub actor: Option<String>,
+    /// Exact automation execution provenance when automation-originated.
+    #[serde(default)]
+    pub automation: Option<AutomationCausation>,
 }
 
 /// Typed immutable fact emitted by the device foundation.
@@ -90,5 +105,11 @@ pub enum DomainEventKind {
         to: CommandState,
         /// Command-local monotonic sequence.
         sequence: u64,
+        /// Stable endpoint target when retained by the producing command.
+        #[serde(default)]
+        endpoint_id: Option<EndpointId>,
+        /// Versioned capability schema when retained by the producing command.
+        #[serde(default)]
+        capability: Option<String>,
     },
 }

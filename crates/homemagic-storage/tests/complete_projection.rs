@@ -194,6 +194,7 @@ fn event(
             correlation_id: CorrelationId::new(),
             causation_event_id: None,
             actor: None,
+            automation: None,
         },
         kind: DomainEventKind::ObservationChanged {
             endpoint_id,
