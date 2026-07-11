@@ -1,3 +1,4 @@
+DROP TABLE automation_event_cursor;
 DROP TABLE automation_trace;
 DROP TABLE automation_timers;
 DROP TABLE automation_runs;
@@ -6,5 +7,5 @@ DROP TABLE automation_approvals;
 DROP TABLE automation_versions;
 DROP TABLE automation_drafts;
 DROP TABLE automation_identities;
-DELETE FROM schema_migrations WHERE version = 3;
+DELETE FROM schema_migrations WHERE version IN (3, 4);
 PRAGMA user_version = 2;

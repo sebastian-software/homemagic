@@ -113,6 +113,14 @@ pub enum StorageError {
         /// Current durable revision.
         found: u64,
     },
+    /// Optimistic event-consumer revision did not match durable state.
+    #[error("automation event cursor conflict: expected {expected}, found {found}")]
+    AutomationEventCursorConflict {
+        /// Revision supplied by the caller.
+        expected: u64,
+        /// Current durable revision.
+        found: u64,
+    },
     /// An unsigned contract value exceeded `SQLite`'s signed integer range.
     #[error("numeric command value exceeds SQLite range")]
     NumericOverflow,

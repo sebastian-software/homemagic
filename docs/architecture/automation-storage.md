@@ -47,5 +47,7 @@ transaction.
 ## Schema evolution
 
 Migration `0003_automation_engine.sql` is forward-only and checksum protected.
+Migration `0004_automation_event_runtime.sql` adds the optimistic singleton
+event-consumer checkpoint and cursor-aware deterministic recovery index.
 The committed schema-v2 fixture proves an existing command-control-plane database
 upgrades to the automation schema and reopens at schema version 3.

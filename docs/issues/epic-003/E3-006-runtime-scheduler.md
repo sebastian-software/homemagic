@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: in_progress
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -84,3 +84,9 @@ updated: 2026-07-12
   run causation through persisted commands into typed command-transition
   events. Contract evidence also proves resolved endpoint and capability
   identity survive the audit projection for precise outcome-trigger matching.
+- 2026-07-12: Accepted ADR-0026 and added migration 0004 plus a cursor-last,
+  active-version-only event processor. SQLite evidence proves same-timestamp
+  cursor order, replay idempotency, inactive-version exclusion, exact
+  self-cause suppression, scheduler admission, restart persistence, optimistic
+  conflicts, and every historical schema upgrade path. Production worker
+  orchestration remains open before the subscription task can be checked.

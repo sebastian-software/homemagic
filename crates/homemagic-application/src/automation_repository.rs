@@ -128,6 +128,15 @@ pub struct AutomationRecovery {
     pub timers: Vec<AutomationTimer>,
 }
 
+/// Optimistic checkpoint of the durable domain-event consumer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationEventCursor {
+    /// Highest event cursor completely materialized into occurrences.
+    pub cursor: u64,
+    /// Monotonic optimistic checkpoint revision.
+    pub revision: u64,
+}
+
 /// One atomic durable interpreter-step commit.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AutomationStepWrite {
@@ -234,6 +243,17 @@ pub trait AutomationRepository: Send + Sync {
         &self,
         limit: usize,
     ) -> Result<Vec<ActiveAutomationVersion>, BoxError>;
+
+    /// Loads the singleton durable event-consumer checkpoint.
+    async fn automation_event_cursor(&self) -> Result<AutomationEventCursor, BoxError>;
+
+    /// Advances the event checkpoint after all matching occurrences are durable.
+    async fn advance_automation_event_cursor(
+        &self,
+        expected_revision: u64,
+        cursor: u64,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AutomationEventCursor, BoxError>;
 
     /// Inserts one occurrence idempotently by stable identity and payload.
     async fn create_automation_occurrence(

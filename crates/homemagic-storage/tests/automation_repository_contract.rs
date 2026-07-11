@@ -1,29 +1,196 @@
 //! `SQLite` contracts for durable automation governance and restart work.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
-    AutomationActivation, AutomationCompiler, AutomationDraft, AutomationRepository,
-    AutomationRetention, AutomationRuntime, AutomationRuntimeStep, AutomationScheduler,
-    AutomationSimulationEvidence, AutomationStepWrite, AutomationValidationEvidence, BoxError,
-    Clock, FoundationSnapshot, MemoryFoundationRepository, StoredAutomationVersion,
+    AutomationActivation, AutomationCompiler, AutomationDraft, AutomationEventProcessor,
+    AutomationRepository, AutomationRetention, AutomationRuntime, AutomationRuntimeStep,
+    AutomationScheduler, AutomationSimulationEvidence, AutomationStepWrite,
+    AutomationValidationEvidence, BoxError, Clock, FoundationRepository, FoundationSnapshot,
+    FoundationWrite, MemoryFoundationRepository, StoredAutomationVersion,
 };
 use homemagic_domain::{
     ActorId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
-    AutomationApprovalRequirement, AutomationApprovalState, AutomationCondition,
-    AutomationContentHash, AutomationDocument, AutomationDocumentSchema, AutomationFailurePolicy,
-    AutomationId, AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState,
-    AutomationPlanNodeId, AutomationProvenance, AutomationResourceBudget, AutomationRun,
-    AutomationRunId, AutomationRunMode, AutomationRunState, AutomationSchedule,
-    AutomationSelfTriggerPolicy, AutomationTimer, AutomationTimerId, AutomationTimerState,
-    AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationTrigger,
-    AutomationVersion, AutomationVersionState, CorrelationId, canonical_automation_plan_hash,
+    AutomationApprovalRequirement, AutomationApprovalState, AutomationCausation,
+    AutomationCondition, AutomationContentHash, AutomationDocument, AutomationDocumentSchema,
+    AutomationFailurePolicy, AutomationId, AutomationOccurrence, AutomationOccurrenceId,
+    AutomationOccurrenceState, AutomationPlanNodeId, AutomationProvenance,
+    AutomationResourceBudget, AutomationRun, AutomationRunId, AutomationRunMode,
+    AutomationRunState, AutomationSchedule, AutomationSelfTriggerPolicy, AutomationTimer,
+    AutomationTimerId, AutomationTimerState, AutomationTraceId, AutomationTraceKind,
+    AutomationTraceStep, AutomationTrigger, AutomationVersion, AutomationVersionState,
+    CausationMetadata, CommandId, CommandState, CorrelationId, DeviceId, DomainEvent,
+    DomainEventKind, EventId, canonical_automation_plan_hash,
 };
 use homemagic_storage::SqliteRepository;
 
 type TestResult = Result<(), BoxError>;
+
+#[tokio::test]
+async fn event_cursor_should_advance_optimistically_and_survive_reopen() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("event-cursor.sqlite3");
+    let repository = SqliteRepository::open(&path)?;
+    let now = Utc
+        .with_ymd_and_hms(2026, 7, 12, 10, 0, 0)
+        .single()
+        .ok_or("valid fixture instant")?;
+
+    assert_eq!(repository.automation_event_cursor().await?.cursor, 0);
+    let first = repository
+        .advance_automation_event_cursor(0, 4, now)
+        .await?;
+    assert_eq!(first.cursor, 4);
+    assert_eq!(first.revision, 1);
+    assert!(
+        repository
+            .advance_automation_event_cursor(0, 5, now)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .advance_automation_event_cursor(1, 4, now)
+            .await
+            .is_err()
+    );
+    drop(repository);
+
+    let reopened = SqliteRepository::open(&path)?;
+    assert_eq!(reopened.automation_event_cursor().await?, first);
+    assert_eq!(
+        reopened
+            .advance_automation_event_cursor(1, 7, now + TimeDelta::seconds(1))
+            .await?
+            .cursor,
+        7
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn active_event_subscription_should_order_replay_and_suppress_exact_self_causes() -> TestResult
+{
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("event-subscription.sqlite3"),
+    )?);
+    let foundation = Arc::new(MemoryFoundationRepository::default());
+    let now = Utc
+        .with_ymd_and_hms(2026, 7, 12, 10, 30, 0)
+        .single()
+        .ok_or("valid fixture instant")?;
+    let mut active_document = document();
+    active_document.triggers = vec![AutomationTrigger::CommandOutcome {
+        target: None,
+        states: BTreeSet::from([CommandState::Confirmed]),
+    }];
+    active_document.run_mode = AutomationRunMode::Parallel {
+        maximum_parallel: 2,
+    };
+    let active = stored_version_for(active_document);
+    repository.store_automation_version(active.clone()).await?;
+    repository
+        .activate_automation(activation(&active, 0))
+        .await?;
+    let mut inactive_document = active.document.clone();
+    inactive_document.id = AutomationId::new();
+    let inactive = stored_version_for(inactive_document);
+    repository.store_automation_version(inactive).await?;
+
+    let device_id = DeviceId::from_native("event-test", "relay");
+    foundation
+        .apply(FoundationWrite {
+            events: vec![
+                command_event(device_id.clone(), now, None),
+                command_event(device_id.clone(), now, None),
+            ],
+            ..FoundationWrite::default()
+        })
+        .await?;
+    let processor = AutomationEventProcessor::new(
+        repository.clone(),
+        foundation.clone(),
+        Arc::new(FixedClock(now)),
+    );
+
+    let first = processor.process(10).await?;
+    assert_eq!(first.events, 2);
+    assert_eq!(first.occurrences, 2);
+    assert_eq!(first.suppressed, 0);
+    assert_eq!(first.cursor, 2);
+    let recovery = repository.recoverable_automation_work(10).await?;
+    assert_eq!(
+        recovery
+            .occurrences
+            .iter()
+            .map(|occurrence| occurrence.event_cursor)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_eq!(processor.process(10).await?.events, 0);
+
+    let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(now)));
+    let admitted = scheduler.tick(now, now).await?;
+    assert_eq!(admitted.accepted, 2);
+    assert_eq!(
+        repository.recoverable_automation_work(10).await?.runs.len(),
+        2
+    );
+
+    foundation
+        .apply(FoundationWrite {
+            events: vec![command_event(
+                device_id,
+                now,
+                Some(AutomationCausation {
+                    automation_id: active.document.id.clone(),
+                    version: active.document.version,
+                    run_id: AutomationRunId::new(),
+                }),
+            )],
+            ..FoundationWrite::default()
+        })
+        .await?;
+    let self_caused = processor.process(10).await?;
+    assert_eq!(self_caused.events, 1);
+    assert_eq!(self_caused.occurrences, 1);
+    assert_eq!(self_caused.suppressed, 1);
+    assert_eq!(self_caused.cursor, 3);
+    assert_eq!(
+        repository.recoverable_automation_work(10).await?.runs.len(),
+        2
+    );
+    Ok(())
+}
+
+fn command_event(
+    device_id: DeviceId,
+    occurred_at: chrono::DateTime<Utc>,
+    automation: Option<AutomationCausation>,
+) -> DomainEvent {
+    DomainEvent {
+        id: EventId::new(),
+        device_id,
+        occurred_at,
+        causation: CausationMetadata {
+            correlation_id: CorrelationId::new(),
+            causation_event_id: None,
+            actor: None,
+            automation,
+        },
+        kind: DomainEventKind::CommandTransitioned {
+            command_id: CommandId::new(),
+            from: Some(CommandState::Dispatched),
+            to: CommandState::Confirmed,
+            sequence: 4,
+            endpoint_id: None,
+            capability: None,
+        },
+    }
+}
 
 #[tokio::test]
 async fn versions_activation_drafts_and_reopen_should_preserve_exact_evidence() -> TestResult {

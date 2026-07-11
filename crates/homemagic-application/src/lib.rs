@@ -3,6 +3,7 @@
 mod authentication;
 mod automation_compiler;
 mod automation_evaluator;
+mod automation_events;
 mod automation_repository;
 mod automation_runtime;
 mod automation_scheduler;
@@ -37,11 +38,14 @@ pub use automation_evaluator::{
     AutomationEvaluationContext, AutomationEvaluationError, evaluate_automation_condition,
     evaluate_automation_expression,
 };
+pub use automation_events::{
+    AutomationEventProcessor, AutomationEventProcessorError, AutomationEventProcessorTick,
+};
 pub use automation_repository::{
-    ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
-    AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
-    AutomationSimulationEvidence, AutomationStepWrite, AutomationValidationEvidence,
-    StoredAutomationVersion,
+    ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationEventCursor,
+    AutomationIdentityState, AutomationRecovery, AutomationRepository, AutomationRetention,
+    AutomationRetentionResult, AutomationSimulationEvidence, AutomationStepWrite,
+    AutomationValidationEvidence, StoredAutomationVersion,
 };
 pub use automation_runtime::{
     AutomationRuntime, AutomationRuntimeCommandDependencies, AutomationRuntimeError,

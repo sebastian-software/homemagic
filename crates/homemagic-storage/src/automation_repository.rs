@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use homemagic_application::{
-    ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
-    AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
-    AutomationStepWrite, StoredAutomationVersion,
+    ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationEventCursor,
+    AutomationIdentityState, AutomationRecovery, AutomationRepository, AutomationRetention,
+    AutomationRetentionResult, AutomationStepWrite, StoredAutomationVersion,
 };
 use homemagic_domain::{
     AutomationApprovalRecord, AutomationApprovalRequirement, AutomationApprovalState, AutomationId,
@@ -124,6 +124,27 @@ impl AutomationRepository for SqliteRepository {
     ) -> Result<Vec<ActiveAutomationVersion>, homemagic_application::BoxError> {
         run_read(&self.connection, move |connection| {
             load_active_versions(connection, limit)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn automation_event_cursor(
+        &self,
+    ) -> Result<AutomationEventCursor, homemagic_application::BoxError> {
+        run_read(&self.connection, load_event_cursor)
+            .await
+            .map_err(boxed)
+    }
+
+    async fn advance_automation_event_cursor(
+        &self,
+        expected_revision: u64,
+        cursor: u64,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<AutomationEventCursor, homemagic_application::BoxError> {
+        run_write(&self.connection, move |transaction| {
+            advance_event_cursor(transaction, expected_revision, cursor, updated_at)
         })
         .await
         .map_err(boxed)
@@ -289,6 +310,59 @@ impl AutomationRepository for SqliteRepository {
 
 fn boxed(error: StorageError) -> homemagic_application::BoxError {
     Box::new(error)
+}
+
+fn load_event_cursor(connection: &Connection) -> Result<AutomationEventCursor, StorageError> {
+    connection
+        .query_row(
+            "SELECT cursor, revision FROM automation_event_cursor WHERE singleton = 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?
+        .map_or(
+            Ok(AutomationEventCursor::default()),
+            |(cursor, revision)| {
+                Ok(AutomationEventCursor {
+                    cursor: unsigned(cursor)?,
+                    revision: unsigned(revision)?,
+                })
+            },
+        )
+}
+
+fn advance_event_cursor(
+    transaction: &Transaction<'_>,
+    expected_revision: u64,
+    cursor: u64,
+    updated_at: chrono::DateTime<chrono::Utc>,
+) -> Result<AutomationEventCursor, StorageError> {
+    let current = load_event_cursor(transaction)?;
+    if current.revision != expected_revision {
+        return Err(StorageError::AutomationEventCursorConflict {
+            expected: expected_revision,
+            found: current.revision,
+        });
+    }
+    if cursor <= current.cursor {
+        return Err(StorageError::InvalidAutomation(
+            "automation event cursor must advance",
+        ));
+    }
+    let revision = current
+        .revision
+        .checked_add(1)
+        .ok_or(StorageError::NumericOverflow)?;
+    transaction.execute(
+        "INSERT INTO automation_event_cursor(singleton, cursor, revision, updated_at)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(singleton) DO UPDATE SET
+            cursor = excluded.cursor,
+            revision = excluded.revision,
+            updated_at = excluded.updated_at",
+        params![signed(cursor)?, signed(revision)?, updated_at],
+    )?;
+    Ok(AutomationEventCursor { cursor, revision })
 }
 
 async fn run_read<T, F>(connection: &SharedConnection, operation: F) -> Result<T, StorageError>
@@ -902,7 +976,8 @@ fn recover(connection: &Connection, limit: usize) -> Result<AutomationRecovery, 
         occurrences: load_payload_page(
             connection,
             "SELECT payload_json FROM automation_occurrences
-             WHERE state IN ('scheduled', 'accepted') ORDER BY occurred_at, id LIMIT ?1",
+             WHERE state IN ('scheduled', 'accepted')
+             ORDER BY occurred_at, event_cursor IS NOT NULL, event_cursor, id LIMIT ?1",
             [limit],
         )?,
         runs: load_payload_page(
