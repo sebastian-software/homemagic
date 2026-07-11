@@ -169,13 +169,20 @@ impl CommandService {
             })
             .cloned()
             .unwrap_or(fallback);
+        let effective_payload = effective_payload(
+            &request.payload,
+            &request.endpoint_id,
+            device,
+            self.freshness,
+            now,
+        );
         let envelope = CommandEnvelope {
             id: CommandId::new(),
             actor_id: actor.id.clone(),
             device_id: request.device_id.clone(),
             endpoint_id: request.endpoint_id.clone(),
             capability: descriptor,
-            payload: request.payload.clone(),
+            payload: effective_payload,
             idempotency_key: request.idempotency_key.clone(),
             deadline: request.deadline,
             expected: request.expected.clone(),
@@ -276,7 +283,7 @@ impl CommandService {
         device: &homemagic_domain::DeviceRecord,
         now: DateTime<Utc>,
     ) -> Result<CommandAggregate, CommandServiceError> {
-        if let Err(code) = validate_target(&command, device, self.freshness, now) {
+        if let Err(code) = validate_target(&command, device, now) {
             return self.reject(command, code, now, None).await;
         }
         let security = self
@@ -533,7 +540,6 @@ impl CommandService {
 fn validate_target(
     command: &CommandAggregate,
     device: &homemagic_domain::DeviceRecord,
-    freshness: FreshnessPolicy,
     now: DateTime<Utc>,
 ) -> Result<(), CommandErrorCode> {
     command.envelope.validate(now)?;
@@ -555,8 +561,7 @@ fn validate_target(
     if matches!(
         command.envelope.payload,
         CommandPayload::OnOff(OnOffCommand::Toggle)
-    ) && device.freshness_at(freshness, now) != FreshnessState::Fresh
-    {
+    ) {
         return Err(CommandErrorCode::StaleObservation);
     }
     if constraint_state(
@@ -568,6 +573,38 @@ fn validate_target(
         return Err(CommandErrorCode::UnsupportedConstraint);
     }
     Ok(())
+}
+
+fn effective_payload(
+    payload: &CommandPayload,
+    endpoint_id: &EndpointId,
+    device: &homemagic_domain::DeviceRecord,
+    freshness: FreshnessPolicy,
+    now: DateTime<Utc>,
+) -> CommandPayload {
+    if !matches!(payload, CommandPayload::OnOff(OnOffCommand::Toggle))
+        || device.freshness_at(freshness, now) != FreshnessState::Fresh
+    {
+        return payload.clone();
+    }
+    device
+        .snapshot
+        .endpoints
+        .iter()
+        .find(|endpoint| endpoint.id == *endpoint_id)
+        .and_then(|endpoint| {
+            endpoint
+                .capabilities
+                .iter()
+                .find_map(|capability| match capability {
+                    CapabilitySnapshot::OnOff { on, .. } => Some(!on),
+                    _ => None,
+                })
+        })
+        .map_or_else(
+            || payload.clone(),
+            |on| CommandPayload::OnOff(OnOffCommand::Set { on }),
+        )
 }
 
 fn constraint_state(

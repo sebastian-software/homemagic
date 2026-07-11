@@ -48,6 +48,7 @@ impl Clock for FixedClock {
 
 struct RecordingDispatcher {
     calls: AtomicUsize,
+    payloads: Mutex<Vec<CommandPayload>>,
     clock: Arc<FixedClock>,
     advance_to: Mutex<Option<DateTime<Utc>>>,
 }
@@ -56,9 +57,13 @@ struct RecordingDispatcher {
 impl CommandDispatcher for RecordingDispatcher {
     async fn dispatch(
         &self,
-        _command: &CommandEnvelope,
+        command: &CommandEnvelope,
     ) -> Result<AdapterAcknowledgement, CommandFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.payloads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(command.payload.clone());
         if let Some(now) = self
             .advance_to
             .lock()
@@ -214,6 +219,7 @@ impl Fixture {
         let clock = Arc::new(FixedClock(Mutex::new(now)));
         let dispatcher = Arc::new(RecordingDispatcher {
             calls: AtomicUsize::new(0),
+            payloads: Mutex::new(Vec::new()),
             clock: clock.clone(),
             advance_to: Mutex::new(None),
         });
@@ -257,6 +263,30 @@ impl Fixture {
             causation_event_id: None,
         }
     }
+}
+
+#[tokio::test]
+async fn toggle_should_materialize_observed_state_before_dispatch() -> TestResult {
+    let fixture = Fixture::new(true).await?;
+    let mut request = fixture.request("toggle", false);
+    request.payload = CommandPayload::OnOff(OnOffCommand::Toggle);
+
+    let command = fixture
+        .service
+        .execute(&fixture.actor, request, fixture.clock.now())
+        .await?;
+    let payloads = fixture
+        .dispatcher
+        .payloads
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    assert_eq!(command.state, CommandState::Confirmed);
+    assert_eq!(
+        payloads.as_slice(),
+        [CommandPayload::OnOff(OnOffCommand::Set { on: true })]
+    );
+    Ok(())
 }
 
 #[tokio::test]

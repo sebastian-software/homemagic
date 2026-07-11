@@ -9,6 +9,7 @@ mod notification;
 mod session;
 mod websocket;
 
+pub use command::ShellyCommandAdapter;
 pub use notification::{
     EventDeduplicator, NotificationError, NotificationFrame, ShellyEvent, StatusApply, StatusCache,
     StatusNotification, parse_notification,

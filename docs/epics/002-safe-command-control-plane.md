@@ -114,10 +114,10 @@ from ADR-0009.
 - [x] Map `position.v1` open, close, stop, and go-to-position.
 - [x] Reject go-to-position when calibration or position control is unavailable.
 - [x] Add command origin tags where supported.
-- [ ] Confirm outcomes from push observations with bounded read fallback.
+- [x] Confirm outcomes from push observations with bounded read fallback.
 - [x] Surface protection, obstruction, overtemperature, and vendor RPC failures as
   structured outcomes.
-- [ ] Prevent duplicate physical dispatch during retries and reconnects.
+- [x] Prevent duplicate physical dispatch during retries and reconnects.
 
 ## Workstream E2.5: RPC and operator surface
 
@@ -135,7 +135,7 @@ from ADR-0009.
 
 - [ ] Property tests cover idempotency and state-machine invariants.
 - [ ] Policy matrix tests cover actors, targets, risk classes, and default denial.
-- [ ] Adapter fixtures cover success, timeout, reconnect, protection errors, and
+- [x] Adapter fixtures cover success, timeout, reconnect, protection errors, and
   inconsistent observations.
 - [x] Process-restart test covers commands left in every non-terminal state.
 - [x] Audit tests prove immutability, ordering, causation, and redaction.
@@ -152,9 +152,9 @@ from ADR-0009.
   decision before dispatch.
 - [x] AC3: A caller can distinguish rejection, adapter acknowledgement, observed
   confirmation, timeout, and failure.
-- [ ] AC4: Switches, dimmers, and covers can be controlled through common
+- [x] AC4: Switches, dimmers, and covers can be controlled through common
   capability commands rather than Shelly-specific RPC payloads.
-- [ ] AC5: Unauthorized and mechanically unsafe requests are rejected before
+- [x] AC5: Unauthorized and mechanically unsafe requests are rejected before
   adapter dispatch.
 - [x] AC6: Command and audit history survives restart and contains a complete
   causation chain.
@@ -201,3 +201,7 @@ from ADR-0009.
   post-await deadlines, idempotent retry, and no-blind-redispatch recovery.
 - 2026-07-11: Added E2-006 private typed Shelly Switch, Light, and Cover mappings,
   origin tags, calibration gating, and stable safety/RPC error normalization.
+- 2026-07-11: Completed E2-006 with bounded typed HTTP dispatch and Digest
+  authentication, push-first confirmation with one bounded read fallback,
+  explicit toggle targets, and fixtures proving transport failures cannot cause
+  an automatic second physical dispatch.
