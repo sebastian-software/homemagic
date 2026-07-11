@@ -28,8 +28,9 @@ stores a `scheduled` occurrence before considering admission. A bounded tick:
 1. moves expired pending timers to `ready`;
 2. records expired occurrence windows as `missed_skipped` and never creates a
    run for them;
-3. applies single/queued/parallel admission bounds (restart admission is
-   intentionally handled by the step coordinator cancellation phase);
+3. applies single, FIFO queued, and parallel admission bounds against state
+   updated during the pass; restart mode atomically cancels prior runs and
+   their eligible timers before admitting replacement work;
 4. transitions an eligible occurrence to `accepted`;
 5. creates or confirms the deterministic pending run intent before any node is
    interpreted.

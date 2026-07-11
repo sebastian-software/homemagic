@@ -5,7 +5,7 @@ title: Execute active automation plans durably
 status: in_progress
 priority: critical
 depends_on: [E3-003, E3-004]
-adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026]
+adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -19,7 +19,7 @@ updated: 2026-07-12
 - [x] Persist run intent before interpreting work.
 - [x] Persist each step, variables, timer, command ID, and outcome before continuation.
 - [x] Submit physical actions exclusively through `CommandService`.
-- [ ] Implement single, restart, bounded queued, and bounded parallel modes.
+- [x] Implement single, restart, bounded queued, and bounded parallel modes.
 - [ ] Implement same-timestamp ordering and self-trigger suppression.
 - [ ] Persist missed/skipped occurrences and explicit catch-up runs.
 - [ ] Recover timers, queues, runs, and interrupted commands without blind resubmit.
@@ -90,3 +90,8 @@ updated: 2026-07-12
   self-cause suppression, scheduler admission, restart persistence, optimistic
   conflicts, and every historical schema upgrade path. Production worker
   orchestration remains open before the subscription task can be checked.
+- 2026-07-12: Accepted ADR-0027 and made admission state evolve within each
+  scheduler pass. SQLite contracts prove same-tick single and parallel bounds,
+  FIFO queued deferral and overflow suppression, next-run admission after a
+  terminal predecessor, and restart cancellation of the prior run, trace, and
+  timer before replacement intent.

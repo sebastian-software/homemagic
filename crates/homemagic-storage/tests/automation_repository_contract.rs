@@ -87,9 +87,7 @@ async fn active_event_subscription_should_order_replay_and_suppress_exact_self_c
         target: None,
         states: BTreeSet::from([CommandState::Confirmed]),
     }];
-    active_document.run_mode = AutomationRunMode::Parallel {
-        maximum_parallel: 2,
-    };
+    active_document.run_mode = AutomationRunMode::Single;
     let active = stored_version_for(active_document);
     repository.store_automation_version(active.clone()).await?;
     repository
@@ -134,10 +132,11 @@ async fn active_event_subscription_should_order_replay_and_suppress_exact_self_c
 
     let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(now)));
     let admitted = scheduler.tick(now, now).await?;
-    assert_eq!(admitted.accepted, 2);
+    assert_eq!(admitted.accepted, 1);
+    assert_eq!(admitted.suppressed, 1);
     assert_eq!(
         repository.recoverable_automation_work(10).await?.runs.len(),
-        2
+        1
     );
 
     foundation
@@ -161,9 +160,173 @@ async fn active_event_subscription_should_order_replay_and_suppress_exact_self_c
     assert_eq!(self_caused.cursor, 3);
     assert_eq!(
         repository.recoverable_automation_work(10).await?.runs.len(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn restart_mode_should_cancel_prior_run_and_timer_before_new_intent() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("restart-mode.sqlite3"),
+    )?);
+    let mut restart_document = document();
+    restart_document.run_mode = AutomationRunMode::Restart;
+    let stored = stored_version_for(restart_document);
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let accepted = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(accepted.clone())
+        .await?;
+    let mut prior = run(&stored, &accepted, now);
+    prior.id = AutomationRunId::from_occurrence(&accepted.id);
+    repository.create_automation_run(prior.clone()).await?;
+    let ready_at = now + TimeDelta::seconds(5);
+    let timer = AutomationTimer {
+        id: AutomationTimerId::from_key(&prior.id, 0, ready_at.timestamp_millis()),
+        run_id: prior.id.clone(),
+        node_id: AutomationPlanNodeId(0),
+        kind: homemagic_domain::AutomationTimerKind::Delay,
+        ready_at,
+        state: AutomationTimerState::Pending,
+    };
+    repository.create_automation_timer(timer.clone()).await?;
+    repository
+        .create_automation_occurrence(scheduled_occurrence(&stored, now, 9))
+        .await?;
+
+    let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(now)));
+    let tick = scheduler.tick(now, now).await?;
+
+    assert_eq!(tick.runs_cancelled, 1);
+    assert_eq!(tick.accepted, 1);
+    assert_eq!(
+        repository
+            .automation_run(&prior.id)
+            .await?
+            .map(|run| run.state),
+        Some(AutomationRunState::Cancelled)
+    );
+    assert_eq!(
+        repository
+            .automation_timer(&timer.id)
+            .await?
+            .map(|timer| timer.state),
+        Some(AutomationTimerState::Cancelled)
+    );
+    let trace = repository.automation_trace(&prior.id, None, 10).await?;
+    assert_eq!(
+        trace.last().map(|step| step.kind),
+        Some(AutomationTraceKind::Outcome)
+    );
+    assert_eq!(
+        repository.recoverable_automation_work(10).await?.runs.len(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn queued_mode_should_defer_in_order_and_enforce_queue_capacity() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("queued-mode.sqlite3"),
+    )?);
+    let mut queued_document = document();
+    queued_document.run_mode = AutomationRunMode::Queued { capacity: 2 };
+    let stored = stored_version_for(queued_document);
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let accepted = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(accepted.clone())
+        .await?;
+    let mut active_run = run(&stored, &accepted, now);
+    active_run.id = AutomationRunId::from_occurrence(&accepted.id);
+    repository.create_automation_run(active_run.clone()).await?;
+    for cursor in 9..=11 {
+        repository
+            .create_automation_occurrence(scheduled_occurrence(&stored, now, cursor))
+            .await?;
+    }
+    let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(now)));
+
+    let bounded = scheduler.tick(now, now).await?;
+    assert_eq!(bounded.accepted, 0);
+    assert_eq!(bounded.suppressed, 1);
+    assert_eq!(scheduled_count(repository.as_ref()).await?, 2);
+
+    let mut cancelled = active_run;
+    cancelled.state = AutomationRunState::Cancelled;
+    cancelled.revision = 1;
+    cancelled.updated_at = now + TimeDelta::seconds(1);
+    repository.transition_automation_run(cancelled, 0).await?;
+    let admitted = scheduler.tick(now, now).await?;
+    assert_eq!(admitted.accepted, 1);
+    let recovery = repository.recoverable_automation_work(10).await?;
+    assert_eq!(recovery.runs.len(), 1);
+    assert_eq!(
+        recovery
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.state == AutomationOccurrenceState::Scheduled)
+            .map(|occurrence| occurrence.event_cursor)
+            .collect::<Vec<_>>(),
+        vec![Some(10)]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn parallel_mode_should_enforce_same_tick_active_bound() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("parallel-mode.sqlite3"),
+    )?);
+    let mut parallel_document = document();
+    parallel_document.run_mode = AutomationRunMode::Parallel {
+        maximum_parallel: 2,
+    };
+    let stored = stored_version_for(parallel_document);
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    for cursor in 9..=11 {
+        repository
+            .create_automation_occurrence(scheduled_occurrence(&stored, now, cursor))
+            .await?;
+    }
+
+    let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(now)));
+    let tick = scheduler.tick(now, now).await?;
+
+    assert_eq!(tick.accepted, 2);
+    assert_eq!(tick.suppressed, 1);
+    assert_eq!(
+        repository.recoverable_automation_work(10).await?.runs.len(),
         2
     );
     Ok(())
+}
+
+async fn scheduled_count(repository: &SqliteRepository) -> Result<usize, BoxError> {
+    Ok(repository
+        .recoverable_automation_work(10)
+        .await?
+        .occurrences
+        .iter()
+        .filter(|occurrence| occurrence.state == AutomationOccurrenceState::Scheduled)
+        .count())
 }
 
 fn command_event(
@@ -1093,6 +1256,28 @@ fn occurrence(
         state: AutomationOccurrenceState::Accepted,
         event_cursor: Some(8),
         correlation_id: CorrelationId::new(),
+        causation_event_id: None,
+    }
+}
+
+fn scheduled_occurrence(
+    stored: &StoredAutomationVersion,
+    now: chrono::DateTime<Utc>,
+    event_cursor: u64,
+) -> AutomationOccurrence {
+    AutomationOccurrence {
+        id: AutomationOccurrenceId::from_key(
+            &stored.document.id,
+            stored.document.version.get(),
+            &format!("event:{event_cursor}"),
+        ),
+        automation_id: stored.document.id.clone(),
+        version: stored.document.version,
+        occurred_at: now,
+        window_ends_at: chrono::DateTime::<Utc>::MAX_UTC,
+        state: AutomationOccurrenceState::Scheduled,
+        event_cursor: Some(event_cursor),
+        correlation_id: CorrelationId::from_key(&format!("event:{event_cursor}")),
         causation_event_id: None,
     }
 }
