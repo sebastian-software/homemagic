@@ -45,3 +45,7 @@ updated: 2026-07-11
 - 2026-07-11: Added atomic `AutomationStepWrite` persistence for one optimistic
   run revision, contiguous trace batch, and timer creates/transitions. A forced
   trace failure proves the preceding run/timer changes roll back together.
+- 2026-07-11: Extracted the simulator's expression, comparison, boolean, typed
+  observation, and IANA-time-window decisions into the shared
+  `AutomationEvaluationContext` evaluator. Continuous duration remains an
+  explicit host policy so runtime can persist timers instead of blocking.

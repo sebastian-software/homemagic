@@ -47,3 +47,12 @@ Every trace step and timer must belong to the same run. A stale run revision,
 invalid timer edge, non-contiguous trace, or cross-run payload rolls the complete
 step back. The contract test deliberately fails trace sequencing after a valid
 run transition and proves the run revision did not advance.
+
+## Shared decision evaluator
+
+Simulation and runtime use the same pure expression, comparison, boolean
+short-circuit, observation lookup, and IANA-time-window evaluator. The host owns
+only continuous-duration behavior: simulation advances virtual time, while the
+runtime must represent elapsed time with durable timers. This prevents the two
+hosts from quietly developing different branch or variable semantics while
+preserving restart-safe runtime waiting.

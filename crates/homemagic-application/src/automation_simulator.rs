@@ -1,23 +1,26 @@
 //! Deterministic, side-effect-free execution of normalized automation plans.
 
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveTime, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
 use homemagic_domain::{
-    AutomationApprovalRequirement, AutomationComparison, AutomationContentHash,
-    AutomationExecutionPlan, AutomationPlanFailurePolicy, AutomationPlanNodeId,
-    AutomationPlanNodeKind, AutomationRunId, AutomationRunMode, AutomationSafetyProfile,
-    AutomationSelfTriggerPolicy, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
-    AutomationValue, AutomationVersion, CommandErrorCode, CommandPayload, CommandState,
-    CorrelationId, EventId, ResolvedAutomationCondition, ResolvedAutomationExpression,
-    ResolvedAutomationTarget, ResolvedAutomationTrigger,
+    AutomationApprovalRequirement, AutomationContentHash, AutomationExecutionPlan,
+    AutomationPlanFailurePolicy, AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRunId,
+    AutomationRunMode, AutomationSafetyProfile, AutomationSelfTriggerPolicy, AutomationTraceId,
+    AutomationTraceKind, AutomationTraceStep, AutomationValue, AutomationVersion, CommandErrorCode,
+    CommandPayload, CommandState, CorrelationId, EventId, ResolvedAutomationCondition,
+    ResolvedAutomationExpression, ResolvedAutomationTarget, ResolvedAutomationTrigger,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::{
+    AutomationEvaluationContext, AutomationEvaluationError, evaluate_automation_condition,
+    evaluate_automation_expression,
+};
 
 /// Stable normalized observation lookup key used by simulation fixtures.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -701,100 +704,19 @@ impl<'a, P: StepPorts> StepInterpreter<'a, P> {
         &mut self,
         condition: &ResolvedAutomationCondition,
     ) -> Result<bool, AutomationSimulationError> {
-        match condition {
-            ResolvedAutomationCondition::Literal { value } => Ok(*value),
-            ResolvedAutomationCondition::Compare {
-                left,
-                operator,
-                right,
-            } => compare_values(
-                &self.evaluate_expression(left)?,
-                *operator,
-                &self.evaluate_expression(right)?,
-            ),
-            ResolvedAutomationCondition::All { conditions } => {
-                for condition in conditions {
-                    if !self.evaluate_condition(condition)? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            ResolvedAutomationCondition::Any { conditions } => {
-                for condition in conditions {
-                    if self.evaluate_condition(condition)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            ResolvedAutomationCondition::Not { condition } => {
-                Ok(!self.evaluate_condition(condition)?)
-            }
-            ResolvedAutomationCondition::TimeWindow {
-                timezone,
-                start,
-                end,
-            } => {
-                let timezone = Tz::from_str(timezone)
-                    .map_err(|_| AutomationSimulationError::InvalidSchedule)?;
-                let start = NaiveTime::parse_from_str(start, "%H:%M:%S")
-                    .map_err(|_| AutomationSimulationError::InvalidSchedule)?;
-                let end = NaiveTime::parse_from_str(end, "%H:%M:%S")
-                    .map_err(|_| AutomationSimulationError::InvalidSchedule)?;
-                let local = self.ports.now().with_timezone(&timezone).time();
-                Ok(if start <= end {
-                    local >= start && local < end
-                } else {
-                    local >= start || local < end
-                })
-            }
-            ResolvedAutomationCondition::StateDuration {
-                condition,
-                duration_ms,
-            } => {
-                if !self.evaluate_condition(condition)? {
-                    return Ok(false);
-                }
-                let deadline = add_millis(self.ports.now(), *duration_ms)?;
-                while let Some(change_at) = self.ports.next_change_through(deadline) {
-                    self.ports.advance_to(change_at);
-                    if !self.evaluate_condition(condition)? {
-                        return Ok(false);
-                    }
-                }
-                self.ports.advance_to(deadline);
-                Ok(self.evaluate_condition(condition)?)
-            }
-        }
+        let variables = self.variables.clone();
+        let mut context = SimulationEvaluationContext { ports: self.ports };
+        evaluate_automation_condition(condition, &variables, &mut context)
+            .map_err(map_evaluation_error)
     }
 
     fn evaluate_expression(
-        &self,
+        &mut self,
         expression: &ResolvedAutomationExpression,
     ) -> Result<AutomationValue, AutomationSimulationError> {
-        match expression {
-            ResolvedAutomationExpression::Literal { value } => Ok(value.clone()),
-            ResolvedAutomationExpression::Variable { name } => self
-                .variables
-                .get(name)
-                .cloned()
-                .ok_or(AutomationSimulationError::MissingValue("variable")),
-            ResolvedAutomationExpression::Observation { targets, field } => {
-                let target = targets
-                    .first()
-                    .ok_or(AutomationSimulationError::MissingValue(
-                        "observation target",
-                    ))?;
-                self.ports
-                    .observation(&SimulationObservationKey {
-                        target: target.clone(),
-                        field: field.clone(),
-                    })
-                    .cloned()
-                    .ok_or(AutomationSimulationError::MissingValue("observation"))
-            }
-        }
+        let context = SimulationEvaluationContext { ports: self.ports };
+        evaluate_automation_expression(expression, &self.variables, &context)
+            .map_err(map_evaluation_error)
     }
 
     fn consume_budget(&mut self) -> Result<(), AutomationSimulationError> {
@@ -853,42 +775,6 @@ impl<'a, P: StepPorts> StepInterpreter<'a, P> {
     }
 }
 
-fn compare_values(
-    left: &AutomationValue,
-    operator: AutomationComparison,
-    right: &AutomationValue,
-) -> Result<bool, AutomationSimulationError> {
-    let ordering = match (left, right) {
-        (AutomationValue::Null, AutomationValue::Null) => Ordering::Equal,
-        (AutomationValue::Boolean(left), AutomationValue::Boolean(right)) => left.cmp(right),
-        (AutomationValue::Integer(left), AutomationValue::Integer(right)) => left.cmp(right),
-        (AutomationValue::Decimal(left), AutomationValue::Decimal(right)) => left
-            .parse::<f64>()
-            .ok()
-            .and_then(|left| {
-                right
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(|right| left.partial_cmp(&right))
-            })
-            .ok_or(AutomationSimulationError::TypeMismatch)?,
-        (AutomationValue::String(left), AutomationValue::String(right)) => left.cmp(right),
-        (AutomationValue::Timestamp(left), AutomationValue::Timestamp(right)) => left.cmp(right),
-        (AutomationValue::DurationMillis(left), AutomationValue::DurationMillis(right)) => {
-            left.cmp(right)
-        }
-        _ => return Err(AutomationSimulationError::TypeMismatch),
-    };
-    Ok(match operator {
-        AutomationComparison::Equal => ordering == Ordering::Equal,
-        AutomationComparison::NotEqual => ordering != Ordering::Equal,
-        AutomationComparison::LessThan => ordering == Ordering::Less,
-        AutomationComparison::LessThanOrEqual => ordering != Ordering::Greater,
-        AutomationComparison::GreaterThan => ordering == Ordering::Greater,
-        AutomationComparison::GreaterThanOrEqual => ordering != Ordering::Less,
-    })
-}
-
 fn add_millis(
     at: DateTime<Utc>,
     milliseconds: u64,
@@ -897,6 +783,65 @@ fn add_millis(
         i64::try_from(milliseconds).map_err(|_| AutomationSimulationError::BudgetExceeded)?;
     at.checked_add_signed(TimeDelta::milliseconds(milliseconds))
         .ok_or(AutomationSimulationError::BudgetExceeded)
+}
+
+struct SimulationEvaluationContext<'a, P> {
+    ports: &'a mut P,
+}
+
+impl<P: StepPorts> AutomationEvaluationContext for SimulationEvaluationContext<'_, P> {
+    fn now(&self) -> DateTime<Utc> {
+        self.ports.now()
+    }
+
+    fn observation(
+        &self,
+        target: &ResolvedAutomationTarget,
+        field: &str,
+    ) -> Option<AutomationValue> {
+        self.ports
+            .observation(&SimulationObservationKey {
+                target: target.clone(),
+                field: field.to_owned(),
+            })
+            .cloned()
+    }
+
+    fn state_duration(
+        &mut self,
+        condition: &ResolvedAutomationCondition,
+        duration_ms: u64,
+        variables: &BTreeMap<String, AutomationValue>,
+    ) -> Result<bool, AutomationEvaluationError> {
+        if !evaluate_automation_condition(condition, variables, self)? {
+            return Ok(false);
+        }
+        let milliseconds =
+            i64::try_from(duration_ms).map_err(|_| AutomationEvaluationError::TypeMismatch)?;
+        let deadline = self
+            .ports
+            .now()
+            .checked_add_signed(TimeDelta::milliseconds(milliseconds))
+            .ok_or(AutomationEvaluationError::TypeMismatch)?;
+        while let Some(change_at) = self.ports.next_change_through(deadline) {
+            self.ports.advance_to(change_at);
+            if !evaluate_automation_condition(condition, variables, self)? {
+                return Ok(false);
+            }
+        }
+        self.ports.advance_to(deadline);
+        evaluate_automation_condition(condition, variables, self)
+    }
+}
+
+fn map_evaluation_error(error: AutomationEvaluationError) -> AutomationSimulationError {
+    match error {
+        AutomationEvaluationError::MissingValue(value) => {
+            AutomationSimulationError::MissingValue(value)
+        }
+        AutomationEvaluationError::TypeMismatch => AutomationSimulationError::TypeMismatch,
+        AutomationEvaluationError::InvalidTimeWindow => AutomationSimulationError::InvalidSchedule,
+    }
 }
 
 fn details<const N: usize>(
@@ -923,13 +868,13 @@ mod tests {
 
     use chrono::TimeZone;
     use homemagic_domain::{
-        ActorId, AutomationAction, AutomationDeviceReference, AutomationDocument,
-        AutomationDocumentSchema, AutomationExpression, AutomationFailurePolicy, AutomationId,
-        AutomationProvenance, AutomationResourceBudget, AutomationRetryPolicy, AutomationSchedule,
-        AutomationTargetReference, AutomationTrigger, AutomationValueType,
-        AutomationVariableDefinition, AutomationVersion, CapabilitySnapshot, DeviceId,
-        DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot, InstallationId, IntegrationId,
-        LifecycleTrigger, OnOffCommand, RiskClass,
+        ActorId, AutomationAction, AutomationComparison, AutomationDeviceReference,
+        AutomationDocument, AutomationDocumentSchema, AutomationExpression,
+        AutomationFailurePolicy, AutomationId, AutomationProvenance, AutomationResourceBudget,
+        AutomationRetryPolicy, AutomationSchedule, AutomationTargetReference, AutomationTrigger,
+        AutomationValueType, AutomationVariableDefinition, AutomationVersion, CapabilitySnapshot,
+        DeviceId, DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot, InstallationId,
+        IntegrationId, LifecycleTrigger, OnOffCommand, RiskClass,
     };
 
     use super::*;

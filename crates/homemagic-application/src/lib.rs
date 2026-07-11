@@ -2,6 +2,7 @@
 
 mod authentication;
 mod automation_compiler;
+mod automation_evaluator;
 mod automation_repository;
 mod automation_scheduler;
 mod automation_simulator;
@@ -31,6 +32,10 @@ pub use authentication::{
     AuthenticateActor,
 };
 pub use automation_compiler::{AutomationCompilationError, AutomationCompiler};
+pub use automation_evaluator::{
+    AutomationEvaluationContext, AutomationEvaluationError, evaluate_automation_condition,
+    evaluate_automation_expression,
+};
 pub use automation_repository::{
     ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationIdentityState,
     AutomationRecovery, AutomationRepository, AutomationRetention, AutomationRetentionResult,
