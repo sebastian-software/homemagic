@@ -17,8 +17,8 @@ the dependency graph and repository edits do not overlap.
 
 | Issue | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
-| [E1-001](E1-001-foundation-decisions.md) | Ready | — | Foundation ADRs |
-| [E1-002](E1-002-device-lifecycle-contracts.md) | Planned | E1-001 | Domain contracts |
+| [E1-001](E1-001-foundation-decisions.md) | Done | — | Foundation ADRs |
+| [E1-002](E1-002-device-lifecycle-contracts.md) | Ready | E1-001 | Domain contracts |
 | [E1-003](E1-003-sqlite-storage.md) | Planned | E1-001, E1-002 | Durable repositories |
 | [E1-004](E1-004-durable-reconciliation.md) | Planned | E1-003 | Load and reconcile |
 | [E1-005](E1-005-shelly-authentication.md) | Planned | E1-001, E1-002 | Credential-safe auth |
@@ -30,3 +30,4 @@ the dependency graph and repository edits do not overlap.
 ## Progress log
 
 - 2026-07-11: Dependency-ordered issue set created from EPIC-001.
+- 2026-07-11: E1-001 completed; E1-002 is ready.

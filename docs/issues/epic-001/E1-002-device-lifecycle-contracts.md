@@ -2,7 +2,7 @@
 id: E1-002
 epic: EPIC-001
 title: Define durable device lifecycle and event contracts
-status: planned
+status: ready
 priority: critical
 depends_on: [E1-001]
 adrs: [ADR-0002]

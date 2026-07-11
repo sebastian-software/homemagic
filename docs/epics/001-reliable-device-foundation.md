@@ -47,11 +47,13 @@ debug logs.
 
 ## Required decisions
 
-- [ ] E1.D1: Add an ADR for SQLite schema ownership, migration policy, and backup
-  compatibility.
-- [ ] E1.D2: Add an ADR for secret storage on macOS and Linux, including the
-  fallback used in headless environments.
-- [ ] E1.D3: Record event retention and current-state snapshot policy.
+- [x] E1.D1: Add an ADR for SQLite schema ownership, migration policy, and backup
+  compatibility. Evidence: [ADR-0007](../adr/0007-sqlite-schema-migrations-and-backups.md).
+- [x] E1.D2: Add an ADR for secret storage on macOS and Linux, including the
+  fallback used in headless environments. Evidence:
+  [ADR-0008](../adr/0008-platform-secret-stores-and-headless-vault.md).
+- [x] E1.D3: Record event retention and current-state snapshot policy. Evidence:
+  [ADR-0009](../adr/0009-current-state-and-event-retention.md).
 
 ## Workstream E1.1: Persistence foundation
 
@@ -169,3 +171,5 @@ debug logs.
 - 2026-07-11: Epic created from the verified M0 prototype.
 - 2026-07-11: Implementation started with a dependency-ordered design and nine
   repository-tracked issues. Evidence: `docs/issues/epic-001/README.md`.
+- 2026-07-11: Completed E1-001 and accepted persistence, secret-storage, and
+  retention decisions in ADR-0007 through ADR-0009.

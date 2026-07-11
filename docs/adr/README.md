@@ -19,4 +19,6 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0004: Store automations as declarative, governed documents](0004-agent-authored-automations.md)
 - [ADR-0005: Keep first-party runtime code at least 95% Rust](0005-rust-and-ffi-policy.md)
 - [ADR-0006: Use Shelly Gen2+ as the first device vertical slice](0006-shelly-first-vertical-slice.md)
-
+- [ADR-0007: Own SQLite schemas and use forward-only migrations](0007-sqlite-schema-migrations-and-backups.md)
+- [ADR-0008: Store device credentials behind platform secret stores](0008-platform-secret-stores-and-headless-vault.md)
+- [ADR-0009: Separate current state from bounded event retention](0009-current-state-and-event-retention.md)
