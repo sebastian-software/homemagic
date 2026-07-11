@@ -5,6 +5,7 @@ members = [
   "crates/homemagic-application",
   "crates/homemagic-domain",
   "crates/homemagic-shelly",
+  "crates/homemagic-storage",
   "crates/homemagic",
 ]
 
@@ -22,8 +23,11 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 mdns-sd = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "=0.39.0", default-features = false, features = ["backup", "bundled", "chrono", "serde_json", "uuid"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
 thiserror = "2.0"
 tokio = { version = "1.48", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tower-http = { version = "0.6", features = ["trace"] }

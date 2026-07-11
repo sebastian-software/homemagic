@@ -2,7 +2,7 @@
 id: E1-003
 epic: EPIC-001
 title: Implement SQLite storage and repository contracts
-status: ready
+status: in_progress
 priority: critical
 depends_on: [E1-001, E1-002]
 adrs: []
@@ -48,3 +48,5 @@ integration crates.
 ## Progress log
 
 - 2026-07-11: Issue created.
+- 2026-07-11: Started the storage crate, initial migration, normalized schema,
+  domain mappings, and repository contract tests.

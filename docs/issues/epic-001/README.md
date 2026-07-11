@@ -19,7 +19,7 @@ the dependency graph and repository edits do not overlap.
 | --- | --- | --- | --- |
 | [E1-001](E1-001-foundation-decisions.md) | Done | — | Foundation ADRs |
 | [E1-002](E1-002-device-lifecycle-contracts.md) | Done | E1-001 | Domain contracts |
-| [E1-003](E1-003-sqlite-storage.md) | Ready | E1-001, E1-002 | Durable repositories |
+| [E1-003](E1-003-sqlite-storage.md) | In progress | E1-001, E1-002 | Durable repositories |
 | [E1-004](E1-004-durable-reconciliation.md) | Planned | E1-003 | Load and reconcile |
 | [E1-005](E1-005-shelly-authentication.md) | Ready | E1-001, E1-002 | Credential-safe auth |
 | [E1-006](E1-006-shelly-managed-sessions.md) | Planned | E1-004, E1-005 | Live observations |

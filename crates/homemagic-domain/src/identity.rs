@@ -164,6 +164,12 @@ impl Default for SpaceId {
     }
 }
 
+impl fmt::Display for SpaceId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 /// Stable identifier for an immutable domain event.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -183,6 +189,12 @@ impl Default for EventId {
     }
 }
 
+impl fmt::Display for EventId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 /// Stable identifier for a repair record.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -199,6 +211,12 @@ impl RepairId {
 impl Default for RepairId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl fmt::Display for RepairId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
     }
 }
 

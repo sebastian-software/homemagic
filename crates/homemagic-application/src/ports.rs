@@ -1,12 +1,21 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use homemagic_domain::{CapabilityObservation, DeviceId, DeviceRecord, DomainEvent, RepairRecord};
+use homemagic_domain::{
+    CapabilityObservation, DeviceId, DeviceRecord, DomainEvent, Installation, IntegrationInstance,
+    RepairRecord, Space,
+};
 
 use crate::BoxError;
 
 /// Complete durable device-foundation projection loaded at startup.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FoundationSnapshot {
+    /// Installation configuration records.
+    pub installations: Vec<Installation>,
+    /// Configured integration instances.
+    pub integrations: Vec<IntegrationInstance>,
+    /// Semantic spaces.
+    pub spaces: Vec<Space>,
     /// Durable devices and mutable metadata.
     pub devices: Vec<DeviceRecord>,
     /// Latest capability observations.
@@ -20,6 +29,12 @@ pub struct FoundationSnapshot {
 /// One atomic repository mutation.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FoundationWrite {
+    /// Installation configuration records to insert or replace.
+    pub installations: Vec<Installation>,
+    /// Integration instances to insert or replace.
+    pub integrations: Vec<IntegrationInstance>,
+    /// Spaces to insert or replace.
+    pub spaces: Vec<Space>,
     /// Device aggregates to insert or replace.
     pub devices: Vec<DeviceRecord>,
     /// Current observations to merge by capability target.

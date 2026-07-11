@@ -5,6 +5,7 @@
 //! dependencies.
 
 mod capability;
+mod configuration;
 mod device;
 mod event;
 mod identity;
@@ -15,6 +16,7 @@ mod repair;
 pub use capability::{
     CapabilityDescriptor, CapabilityDescriptorError, CapabilitySnapshot, RiskClass,
 };
+pub use configuration::{Installation, IntegrationInstance, Space};
 pub use device::{DeviceRecord, DeviceSnapshot, EndpointSnapshot, NetworkLocation};
 pub use event::{CausationMetadata, DomainEvent, DomainEventKind};
 pub use identity::{
