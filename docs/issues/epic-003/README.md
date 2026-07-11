@@ -18,7 +18,7 @@ updated: 2026-07-11
 | [E3-002](E3-002-automation-domain.md) | Done | E3-001 | Typed IR, lifecycle, plan, and schema |
 | [E3-003](E3-003-validation-compiler.md) | Done | E3-002 | Resolver, validator, Safety Profiles, reducer |
 | [E3-004](E3-004-automation-storage.md) | Done | E3-002 | Durable versions, runs, timers, trace, retention |
-| [E3-005](E3-005-deterministic-simulator.md) | Ready | E3-003 | Virtual-time side-effect-free simulation |
+| [E3-005](E3-005-deterministic-simulator.md) | Done | E3-003 | Virtual-time side-effect-free simulation |
 | [E3-006](E3-006-runtime-scheduler.md) | Ready | E3-003, E3-004 | Durable interpreter and scheduler |
 | [E3-007](E3-007-automation-rpc.md) | Planned | E3-004, E3-005, E3-006 | Governance and authenticated RPC |
 | [E3-008](E3-008-automation-exit-audit.md) | Planned | E3-007 | Operations and exit evidence |
@@ -39,3 +39,7 @@ updated: 2026-07-11
   atomic activation/rollback, restart recovery, trace ordering, optimistic
   conflicts, and independent reference-protected retention completed; E3-006 is
   ready.
+- 2026-07-11: E3-005 data-only virtual-time simulation, typed synthetic
+  triggers/state/outcomes, deterministic schedule/DST behavior, missed/catch-up
+  semantics, complete node/failure-policy interpretation, and byte-stable trace
+  evidence completed.

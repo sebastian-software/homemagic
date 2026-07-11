@@ -92,13 +92,13 @@ requires it, and activates an immutable version.
 ## Workstream E3.3: Deterministic simulator
 
 - [ ] Introduce a clock/scheduler port with real and virtual implementations.
-- [ ] Simulate from recorded event streams without dispatching physical commands.
-- [ ] Support synthetic initial state, events, and command outcomes.
-- [ ] Produce ordered trigger, condition, branch, action, and policy trace steps.
-- [ ] Show commands that would be submitted and their risk/policy decisions.
-- [ ] Enforce deterministic ordering for equal timestamps.
-- [ ] Compare simulation results through stable snapshots.
-- [ ] Ensure simulation cannot invoke a real adapter by construction.
+- [x] Simulate from recorded event streams without dispatching physical commands.
+- [x] Support synthetic initial state, events, and command outcomes.
+- [x] Produce ordered trigger, condition, branch, action, and policy trace steps.
+- [x] Show commands that would be submitted and their risk/policy decisions.
+- [x] Enforce deterministic ordering for equal timestamps.
+- [x] Compare simulation results through stable snapshots.
+- [x] Ensure simulation cannot invoke a real adapter by construction.
 
 ## Workstream E3.4: Runtime engine
 

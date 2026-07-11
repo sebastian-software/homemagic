@@ -733,7 +733,7 @@ pub struct AutomationRegistryRevision(pub u64);
 pub struct AutomationPlanNodeId(pub u32);
 
 /// Resolved common-capability target used by a normalized plan.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct ResolvedAutomationTarget {
     /// Stable device target.
     pub device_id: DeviceId,

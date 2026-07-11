@@ -1,0 +1,22 @@
+{
+  "commands": [
+    {"attempt": 0, "node_id": 13, "state": "failed"},
+    {"attempt": 1, "node_id": 13, "state": "confirmed"}
+  ],
+  "finished_at": "2026-07-11T12:01:00.013Z",
+  "status": "completed",
+  "trace": [
+    {"kind": "trigger", "node_id": null, "occurred_at": "2026-07-11T12:01:00Z", "sequence": 0},
+    {"kind": "condition", "node_id": 14, "occurred_at": "2026-07-11T12:01:00.005Z", "sequence": 1},
+    {"kind": "command", "node_id": 13, "occurred_at": "2026-07-11T12:01:00.005Z", "sequence": 2},
+    {"kind": "command", "node_id": 13, "occurred_at": "2026-07-11T12:01:00.007Z", "sequence": 3},
+    {"kind": "branch", "node_id": 12, "occurred_at": "2026-07-11T12:01:00.007Z", "sequence": 4},
+    {"kind": "variable", "node_id": 10, "occurred_at": "2026-07-11T12:01:00.007Z", "sequence": 5},
+    {"kind": "timer", "node_id": 6, "occurred_at": "2026-07-11T12:01:00.009Z", "sequence": 6},
+    {"kind": "timer", "node_id": 7, "occurred_at": "2026-07-11T12:01:00.012Z", "sequence": 7},
+    {"kind": "timer", "node_id": 2, "occurred_at": "2026-07-11T12:01:00.013Z", "sequence": 8},
+    {"kind": "outcome", "node_id": 0, "occurred_at": "2026-07-11T12:01:00.013Z", "sequence": 9}
+  ],
+  "trace_hash": "93f235e169f0dcdd94a11ba1bde807bb1b50bec294db5590388eef82f48dcb5a",
+  "variables": {"branch": {"type": "string", "value": "then"}}
+}

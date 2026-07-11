@@ -3,6 +3,7 @@
 mod authentication;
 mod automation_compiler;
 mod automation_repository;
+mod automation_simulator;
 mod command_service;
 mod memory;
 mod policy;
@@ -33,6 +34,13 @@ pub use automation_repository::{
     AutomationActivation, AutomationDraft, AutomationIdentityState, AutomationRecovery,
     AutomationRepository, AutomationRetention, AutomationRetentionResult,
     AutomationSimulationEvidence, AutomationValidationEvidence, StoredAutomationVersion,
+};
+pub use automation_simulator::{
+    AutomationCommandEvaluationPort, AutomationImmutableStatePort, AutomationSchedulerPort,
+    AutomationSimulationError, AutomationSimulationFixture, AutomationSimulationResult,
+    AutomationSimulationStatus, AutomationSimulator, SimulatedCommandIntent,
+    SimulationCommandOutcome, SimulationObservationKey, SimulationStateChange,
+    SimulationTriggerContext, SimulationTriggerKind,
 };
 pub use command_service::{
     CommandRequest, CommandService, CommandServiceDependencies, CommandServiceError,

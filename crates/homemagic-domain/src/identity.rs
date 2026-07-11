@@ -7,6 +7,7 @@ use uuid::Uuid;
 const DEVICE_NAMESPACE: Uuid = Uuid::from_u128(0x91d0_41aa_328c_5ba1_aaf6_e116_81a1_0cc9);
 const INTEGRATION_NAMESPACE: Uuid = Uuid::from_u128(0xa75d_dbe0_0bd8_5ed4_9ff2_3af9_a4d6_eb65);
 const REPAIR_NAMESPACE: Uuid = Uuid::from_u128(0x36bf_9702_60d4_5a68_aaf7_8a85_276b_693b);
+const AUTOMATION_TRACE_NAMESPACE: Uuid = Uuid::from_u128(0x6af5_981c_1317_5fb7_aa73_7a66_7c98_7fc1);
 const LEGACY_INSTALLATION: Uuid = Uuid::from_u128(0xc776_218d_d377_5a5e_b6a7_9384_dc1c_da37);
 
 /// Stable opaque identifier for a `HomeMagic` installation.
@@ -174,6 +175,17 @@ uuid_identity!(
     AutomationTraceId,
     "Stable identity for one automation trace step."
 );
+
+impl AutomationTraceId {
+    /// Derives a deterministic trace identity from one run-local sequence.
+    #[must_use]
+    pub fn from_run_sequence(run_id: &AutomationRunId, sequence: u64) -> Self {
+        Self(Uuid::new_v5(
+            &AUTOMATION_TRACE_NAMESPACE,
+            format!("{run_id}:{sequence}").as_bytes(),
+        ))
+    }
+}
 uuid_identity!(
     AutomationApprovalId,
     "Stable identity for one immutable automation approval decision."
@@ -361,6 +373,20 @@ impl CorrelationId {
 impl Default for CorrelationId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl fmt::Display for CorrelationId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for CorrelationId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
     }
 }
 

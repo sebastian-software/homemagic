@@ -768,13 +768,20 @@ impl<'a> Compiler<'a> {
                 );
                 let targets = self.resolve_target(target, &format!("{path}/target"));
                 match (targets, value_type) {
-                    (Some(targets), Some(value_type)) => Some((
+                    (Some(targets), Some(value_type)) if targets.len() == 1 => Some((
                         ResolvedAutomationExpression::Observation {
                             targets,
                             field: field.clone(),
                         },
                         value_type,
                     )),
+                    (Some(_), Some(_)) => {
+                        self.type_mismatch(
+                            &format!("{path}/target"),
+                            "scalar observation expression must resolve to exactly one target",
+                        );
+                        None
+                    }
                     _ => None,
                 }
             }
