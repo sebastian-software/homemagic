@@ -841,7 +841,10 @@ fn map_evaluation_error(error: AutomationEvaluationError) -> AutomationSimulatio
         }
         AutomationEvaluationError::TypeMismatch => AutomationSimulationError::TypeMismatch,
         AutomationEvaluationError::InvalidTimeWindow => AutomationSimulationError::InvalidSchedule,
-        AutomationEvaluationError::DurableDurationRequired => {
+        AutomationEvaluationError::DurableDurationRequired
+        | AutomationEvaluationError::ConditionHash
+        | AutomationEvaluationError::DurationOverflow
+        | AutomationEvaluationError::DurationTimerMissing => {
             AutomationSimulationError::TypeMismatch
         }
     }

@@ -568,10 +568,101 @@ async fn runtime_wait_timeout_should_apply_failure_policy_durably() -> TestResul
             .collect::<Vec<_>>(),
         vec![
             AutomationTraceKind::Trigger,
-            AutomationTraceKind::Condition,
+            AutomationTraceKind::Timer,
             AutomationTraceKind::Timer,
             AutomationTraceKind::Outcome,
         ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn runtime_state_duration_should_mature_only_after_ready_timer_commit() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("runtime-state-duration.sqlite3"),
+    )?);
+    let stored = stored_version_for(state_duration_document());
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let occurrence = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(occurrence.clone())
+        .await?;
+    let mut pending = run(&stored, &occurrence, now);
+    pending.id = AutomationRunId::from_occurrence(&occurrence.id);
+    repository.create_automation_run(pending.clone()).await?;
+    let clock = Arc::new(ManualClock::new(now));
+    let runtime = AutomationRuntime::new(
+        repository.clone(),
+        Arc::new(MemoryFoundationRepository::default()),
+        clock.clone(),
+    );
+
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Waiting
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Waiting
+    );
+    let started = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("state-duration run"));
+    assert_eq!(started.condition_durations.len(), 1);
+    assert_eq!(
+        started.condition_durations[0].phase,
+        homemagic_domain::AutomationConditionDurationPhase::Pending
+    );
+
+    clock.set(now + TimeDelta::milliseconds(20));
+    let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
+    assert_eq!(
+        scheduler.tick(clock.now(), clock.now()).await?.timers_ready,
+        1
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Waiting
+    );
+    let mature = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("mature state-duration run"));
+    assert_eq!(
+        mature.condition_durations[0].phase,
+        homemagic_domain::AutomationConditionDurationPhase::Mature
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Advanced
+    );
+    assert_eq!(
+        runtime.step(&pending.id).await?,
+        AutomationRuntimeStep::Completed
+    );
+
+    let completed = repository
+        .automation_run(&pending.id)
+        .await?
+        .unwrap_or_else(|| panic!("completed state-duration run"));
+    assert_eq!(completed.state, AutomationRunState::Completed);
+    assert!(completed.condition_durations.is_empty());
+    assert!(
+        repository
+            .recoverable_automation_work(10)
+            .await?
+            .timers
+            .is_empty()
     );
     Ok(())
 }
@@ -792,6 +883,20 @@ fn parallel_document() -> AutomationDocument {
             vec![AutomationAction::Delay { duration_ms: 1 }],
         ],
         maximum_parallel: 2,
+    }];
+    document
+}
+
+fn state_duration_document() -> AutomationDocument {
+    let mut document = document();
+    "Durable state duration".clone_into(&mut document.name);
+    document.actions = vec![AutomationAction::Wait {
+        condition: AutomationCondition::StateDuration {
+            condition: Box::new(AutomationCondition::Literal { value: true }),
+            duration_ms: 10,
+        },
+        timeout_ms: 100,
+        on_timeout: AutomationFailurePolicy::StopRun,
     }];
     document
 }

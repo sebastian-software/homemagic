@@ -76,3 +76,7 @@ updated: 2026-07-12
   Delay, wait-timeout, command-retry, and state-duration IDs can no longer
   collide at the same node/instant; storage keeps the role immutable and
   runtime recovery uses kind-safe lookups.
+- 2026-07-12: Implemented ADR-0024 continuous-condition intervals in the shared
+  runtime evaluator. SQLite evidence persists pending, consumes a ready timer
+  into mature, then advances and clears the interval; a pure reset test proves
+  a false nested value invalidates the matching canonical condition hash.

@@ -85,8 +85,12 @@ condition leaves the run untouched. Once the scheduler marks the timer ready,
 the executor consumes it in the same transaction that applies the compiled
 timeout failure policy. Workers never sleep or hold mutable device state.
 
-Nested continuous state-duration conditions still require their own durable
-stability timer and are rejected explicitly rather than approximated.
+ADR-0024 persists nested continuous state-duration intervals by canonical
+condition hash. First-true evaluation creates a scoped stability timer; ready
+consumption changes the interval from pending to mature before the condition
+can resolve true. A later false inner value removes the matching interval and
+cancels its timer. Multiple clauses mature in shared evaluator order, while the
+wait timeout continues independently.
 
 ## Scoped timer recovery
 

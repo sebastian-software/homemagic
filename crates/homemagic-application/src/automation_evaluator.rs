@@ -56,6 +56,15 @@ pub enum AutomationEvaluationError {
     /// The host must represent continuous duration as durable waiting state.
     #[error("automation evaluation requires a durable duration wait")]
     DurableDurationRequired,
+    /// A durable condition contract could not be canonically hashed.
+    #[error("automation evaluation condition hashing failed")]
+    ConditionHash,
+    /// A duration could not be represented by the runtime clock.
+    #[error("automation evaluation duration is outside supported bounds")]
+    DurationOverflow,
+    /// Persisted continuous-condition state referenced no matching timer.
+    #[error("automation evaluation duration timer is unavailable")]
+    DurationTimerMissing,
 }
 
 /// Evaluates one compiled expression against immutable inputs.

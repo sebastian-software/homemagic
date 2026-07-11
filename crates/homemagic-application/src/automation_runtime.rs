@@ -1,16 +1,18 @@
 //! Restart-safe interpretation of immutable active automation plans.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    AutomationCommandAttempt, AutomationCommandAttemptPhase, AutomationPlanFailurePolicy,
+    AutomationCommandAttempt, AutomationCommandAttemptPhase, AutomationConditionDuration,
+    AutomationConditionDurationPhase, AutomationContentHash, AutomationPlanFailurePolicy,
     AutomationPlanNodeId, AutomationPlanNodeKind, AutomationRetryPolicy, AutomationRun,
     AutomationRunContinuation, AutomationRunContinuationKind, AutomationRunId, AutomationRunState,
     AutomationTimer, AutomationTimerId, AutomationTimerKind, AutomationTimerState,
     AutomationTraceId, AutomationTraceKind, AutomationTraceStep, AutomationValue, CommandAggregate,
     CommandId, CommandState, IdempotencyKey, ResolvedAutomationCondition, ResolvedAutomationTarget,
+    canonical_automation_hash,
 };
 use thiserror::Error;
 
@@ -94,6 +96,30 @@ struct CommandRetryPlan {
     target_indices: Vec<u16>,
     command_ids: Vec<CommandId>,
     ready_at: DateTime<Utc>,
+}
+
+enum RuntimeDurationRequest {
+    Start {
+        duration: AutomationConditionDuration,
+        timer: AutomationTimer,
+    },
+    Pending,
+    Mature {
+        condition_hash: AutomationContentHash,
+        timer: AutomationTimer,
+    },
+}
+
+struct PreparedRuntimeCondition {
+    value: bool,
+    durations: Vec<AutomationConditionDuration>,
+    reset_timers: Vec<AutomationTimer>,
+    active_timers: Vec<AutomationTimer>,
+}
+
+enum RuntimeConditionResult {
+    Resolved(PreparedRuntimeCondition),
+    Waiting,
 }
 
 /// Durable single-step automation interpreter.
@@ -241,10 +267,7 @@ impl AutomationRuntime {
                     .load()
                     .await
                     .map_err(AutomationRuntimeError::Foundation)?;
-                let context = RuntimeEvaluationContext {
-                    now: self.clock.now(),
-                    snapshot: &snapshot,
-                };
+                let context = RuntimeEvaluationContext::stateless(self.clock.now(), &snapshot);
                 let value = evaluate_automation_expression(value, &run.variables, &context)
                     .map_err(AutomationRuntimeError::Evaluation)?;
                 let mut next_run = checkpoint(&run, self.clock.now());
@@ -271,20 +294,21 @@ impl AutomationRuntime {
                 else_node,
                 join,
             } => {
-                let snapshot = self
-                    .foundation
-                    .load()
-                    .await
-                    .map_err(AutomationRuntimeError::Foundation)?;
-                let mut context = RuntimeEvaluationContext {
-                    now: self.clock.now(),
-                    snapshot: &snapshot,
+                let RuntimeConditionResult::Resolved(prepared) = self
+                    .evaluate_runtime_condition(&run, node_id, condition, sequence)
+                    .await?
+                else {
+                    return Ok(AutomationRuntimeStep::Waiting);
                 };
-                let selected =
-                    evaluate_automation_condition(condition, &run.variables, &mut context)
-                        .map_err(AutomationRuntimeError::Evaluation)?;
+                let selected = prepared.value;
                 let mut next_run = checkpoint(&run, self.clock.now());
+                next_run.state = AutomationRunState::Running;
                 next_run.node_id = if selected { *then_node } else { *else_node }.or(*join);
+                next_run
+                    .condition_durations
+                    .retain(|duration| duration.node_id != node_id);
+                let mut transition_timers = prepared.reset_timers;
+                transition_timers.extend(prepared.active_timers.into_iter().map(cancel_timer));
                 let step = trace_step(
                     &next_run,
                     sequence,
@@ -293,8 +317,14 @@ impl AutomationRuntime {
                     details([("then", AutomationValue::Boolean(selected))]),
                     self.clock.now(),
                 );
-                self.commit(next_run, run.revision, vec![step], vec![], vec![])
-                    .await?;
+                self.commit(
+                    next_run,
+                    run.revision,
+                    vec![step],
+                    vec![],
+                    transition_timers,
+                )
+                .await?;
                 Ok(AutomationRuntimeStep::Advanced)
             }
             AutomationPlanNodeKind::Join { next } => {
@@ -484,7 +514,121 @@ impl AutomationRuntime {
     }
 
     #[expect(
+        clippy::too_many_lines,
+        reason = "one condition step keeps timer loading and its single atomic mutation together"
+    )]
+    async fn evaluate_runtime_condition(
+        &self,
+        run: &AutomationRun,
+        node_id: AutomationPlanNodeId,
+        condition: &ResolvedAutomationCondition,
+        sequence: u64,
+    ) -> Result<RuntimeConditionResult, AutomationRuntimeError> {
+        let snapshot = self
+            .foundation
+            .load()
+            .await
+            .map_err(AutomationRuntimeError::Foundation)?;
+        let mut timers = BTreeMap::new();
+        for duration in run.condition_durations.iter().filter(|duration| {
+            duration.node_id == node_id
+                && duration.phase == AutomationConditionDurationPhase::Pending
+        }) {
+            let timer = self
+                .repository
+                .automation_timer(&duration.timer_id)
+                .await
+                .map_err(AutomationRuntimeError::Repository)?
+                .ok_or(AutomationRuntimeError::InvalidPlan)?;
+            timers.insert(timer.id.clone(), timer);
+        }
+        let mut context = RuntimeEvaluationContext {
+            now: self.clock.now(),
+            snapshot: &snapshot,
+            run_id: Some(&run.id),
+            node_id: Some(node_id),
+            durations: &run.condition_durations,
+            timers: Some(&timers),
+            request: None,
+            invalid_durations: BTreeSet::new(),
+        };
+        let evaluated = evaluate_automation_condition(condition, &run.variables, &mut context);
+        let invalid = context.invalid_durations;
+        let request = context.request;
+        let mut durations = run.condition_durations.clone();
+        durations.retain(|duration| !invalid.contains(&duration.condition_hash));
+        let mut reset_timers = timers
+            .values()
+            .filter(|timer| {
+                run.condition_durations.iter().any(|duration| {
+                    duration.timer_id == timer.id && invalid.contains(&duration.condition_hash)
+                })
+            })
+            .cloned()
+            .map(cancel_timer)
+            .collect::<Vec<_>>();
+        let active_timers = timers
+            .values()
+            .filter(|timer| !reset_timers.iter().any(|reset| reset.id == timer.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        match evaluated {
+            Ok(value) => Ok(RuntimeConditionResult::Resolved(PreparedRuntimeCondition {
+                value,
+                durations,
+                reset_timers,
+                active_timers,
+            })),
+            Err(AutomationEvaluationError::DurableDurationRequired) => {
+                let request = request.ok_or(AutomationRuntimeError::InvalidPlan)?;
+                if matches!(request, RuntimeDurationRequest::Pending) && reset_timers.is_empty() {
+                    return Ok(RuntimeConditionResult::Waiting);
+                }
+                let mut next = checkpoint(run, self.clock.now());
+                next.state = AutomationRunState::Waiting;
+                next.condition_durations = durations;
+                let mut create_timers = Vec::new();
+                let event = match request {
+                    RuntimeDurationRequest::Start { duration, timer } => {
+                        next.condition_durations.push(duration);
+                        create_timers.push(timer);
+                        "state_duration_started"
+                    }
+                    RuntimeDurationRequest::Pending => "state_duration_reset",
+                    RuntimeDurationRequest::Mature {
+                        condition_hash,
+                        mut timer,
+                    } => {
+                        let duration = next
+                            .condition_durations
+                            .iter_mut()
+                            .find(|duration| duration.condition_hash == condition_hash)
+                            .ok_or(AutomationRuntimeError::InvalidPlan)?;
+                        duration.phase = AutomationConditionDurationPhase::Mature;
+                        timer.state = AutomationTimerState::Consumed;
+                        reset_timers.push(timer);
+                        "state_duration_matured"
+                    }
+                };
+                let trace = trace_step(
+                    &next,
+                    sequence,
+                    Some(node_id),
+                    AutomationTraceKind::Timer,
+                    details([("event", AutomationValue::String(event.to_owned()))]),
+                    self.clock.now(),
+                );
+                self.commit(next, run.revision, vec![trace], create_timers, reset_timers)
+                    .await?;
+                Ok(RuntimeConditionResult::Waiting)
+            }
+            Err(error) => Err(AutomationRuntimeError::Evaluation(error)),
+        }
+    }
+
+    #[expect(
         clippy::too_many_arguments,
+        clippy::too_many_lines,
         reason = "the durable wait step keeps its complete compiled timeout contract explicit"
     )]
     async fn step_wait(
@@ -497,23 +641,7 @@ impl AutomationRuntime {
         following: Option<AutomationPlanNodeId>,
         sequence: u64,
     ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
-        let snapshot = self
-            .foundation
-            .load()
-            .await
-            .map_err(AutomationRuntimeError::Foundation)?;
-        let mut context = RuntimeEvaluationContext {
-            now: self.clock.now(),
-            snapshot: &snapshot,
-        };
-        let satisfied = evaluate_automation_condition(condition, &run.variables, &mut context)
-            .map_err(AutomationRuntimeError::Evaluation)?;
         if run.state == AutomationRunState::Running {
-            if satisfied {
-                return self
-                    .complete_wait(run, node_id, following, sequence, None)
-                    .await;
-            }
             let milliseconds =
                 i64::try_from(timeout_ms).map_err(|_| AutomationRuntimeError::DurationOverflow)?;
             let ready_at = self
@@ -540,14 +668,20 @@ impl AutomationRuntime {
                 &next,
                 sequence,
                 Some(node_id),
-                AutomationTraceKind::Condition,
-                details([("result", AutomationValue::Boolean(false))]),
+                AutomationTraceKind::Timer,
+                details([("event", AutomationValue::String("wait_started".to_owned()))]),
                 self.clock.now(),
             );
             self.commit(next, run.revision, vec![trace], vec![timer], vec![])
                 .await?;
             return Ok(AutomationRuntimeStep::Waiting);
         }
+        let RuntimeConditionResult::Resolved(prepared) = self
+            .evaluate_runtime_condition(&run, node_id, condition, sequence)
+            .await?
+        else {
+            return Ok(AutomationRuntimeStep::Waiting);
+        };
         let recovery = self
             .repository
             .recoverable_automation_work(RECOVERY_PAGE)
@@ -560,18 +694,60 @@ impl AutomationRuntime {
         }) else {
             return Err(AutomationRuntimeError::InvalidPlan);
         };
-        if satisfied {
+        if prepared.value {
             timer.state = AutomationTimerState::Cancelled;
-            return self
-                .complete_wait(run, node_id, following, sequence, Some(timer))
-                .await;
+            let mut next = checkpoint(&run, self.clock.now());
+            next.state = AutomationRunState::Running;
+            next.node_id = following;
+            next.condition_durations
+                .retain(|duration| duration.node_id != node_id);
+            let mut transition_timers = prepared.reset_timers;
+            transition_timers.extend(prepared.active_timers.into_iter().map(cancel_timer));
+            transition_timers.push(timer);
+            let trace = trace_step(
+                &next,
+                sequence,
+                Some(node_id),
+                AutomationTraceKind::Condition,
+                details([("result", AutomationValue::Boolean(true))]),
+                self.clock.now(),
+            );
+            self.commit(next, run.revision, vec![trace], vec![], transition_timers)
+                .await?;
+            return Ok(AutomationRuntimeStep::Advanced);
         }
         if timer.state != AutomationTimerState::Ready {
+            if prepared.reset_timers.is_empty() && prepared.durations == run.condition_durations {
+                return Ok(AutomationRuntimeStep::Waiting);
+            }
+            let mut next = checkpoint(&run, self.clock.now());
+            next.condition_durations = prepared.durations;
+            let trace = trace_step(
+                &next,
+                sequence,
+                Some(node_id),
+                AutomationTraceKind::Condition,
+                details([("result", AutomationValue::Boolean(false))]),
+                self.clock.now(),
+            );
+            self.commit(
+                next,
+                run.revision,
+                vec![trace],
+                vec![],
+                prepared.reset_timers,
+            )
+            .await?;
             return Ok(AutomationRuntimeStep::Waiting);
         }
         timer.state = AutomationTimerState::Consumed;
         let mut next = checkpoint(&run, self.clock.now());
+        next.condition_durations
+            .retain(|duration| duration.node_id != node_id);
         let outcome = apply_failure(&mut next, on_timeout, following);
+        let mut transition_timers = prepared.reset_timers;
+        transition_timers.extend(prepared.active_timers.into_iter().map(cancel_timer));
+        transition_timers.push(timer);
         let trace = trace_step(
             &next,
             sequence,
@@ -580,39 +756,9 @@ impl AutomationRuntime {
             details([("event", AutomationValue::String("wait_timeout".to_owned()))]),
             self.clock.now(),
         );
-        self.commit(next, run.revision, vec![trace], vec![], vec![timer])
+        self.commit(next, run.revision, vec![trace], vec![], transition_timers)
             .await?;
         Ok(outcome)
-    }
-
-    async fn complete_wait(
-        &self,
-        run: AutomationRun,
-        node_id: AutomationPlanNodeId,
-        following: Option<AutomationPlanNodeId>,
-        sequence: u64,
-        timer: Option<AutomationTimer>,
-    ) -> Result<AutomationRuntimeStep, AutomationRuntimeError> {
-        let mut next = checkpoint(&run, self.clock.now());
-        next.state = AutomationRunState::Running;
-        next.node_id = following;
-        let trace = trace_step(
-            &next,
-            sequence,
-            Some(node_id),
-            AutomationTraceKind::Condition,
-            details([("result", AutomationValue::Boolean(true))]),
-            self.clock.now(),
-        );
-        self.commit(
-            next,
-            run.revision,
-            vec![trace],
-            vec![],
-            timer.into_iter().collect(),
-        )
-        .await?;
-        Ok(AutomationRuntimeStep::Advanced)
     }
 
     async fn step_command(
@@ -1059,6 +1205,16 @@ fn retry_plan(
     }))
 }
 
+fn cancel_timer(mut timer: AutomationTimer) -> AutomationTimer {
+    if matches!(
+        timer.state,
+        AutomationTimerState::Pending | AutomationTimerState::Ready
+    ) {
+        timer.state = AutomationTimerState::Cancelled;
+    }
+    timer
+}
+
 fn checkpoint(run: &AutomationRun, now: DateTime<Utc>) -> AutomationRun {
     let mut next = run.clone();
     next.revision = next.revision.saturating_add(1);
@@ -1133,6 +1289,27 @@ fn details<const N: usize>(
 struct RuntimeEvaluationContext<'a> {
     now: DateTime<Utc>,
     snapshot: &'a FoundationSnapshot,
+    run_id: Option<&'a AutomationRunId>,
+    node_id: Option<AutomationPlanNodeId>,
+    durations: &'a [AutomationConditionDuration],
+    timers: Option<&'a BTreeMap<AutomationTimerId, AutomationTimer>>,
+    request: Option<RuntimeDurationRequest>,
+    invalid_durations: BTreeSet<AutomationContentHash>,
+}
+
+impl<'a> RuntimeEvaluationContext<'a> {
+    fn stateless(now: DateTime<Utc>, snapshot: &'a FoundationSnapshot) -> Self {
+        Self {
+            now,
+            snapshot,
+            run_id: None,
+            node_id: None,
+            durations: &[],
+            timers: None,
+            request: None,
+            invalid_durations: BTreeSet::new(),
+        }
+    }
 }
 
 impl AutomationEvaluationContext for RuntimeEvaluationContext<'_> {
@@ -1159,10 +1336,78 @@ impl AutomationEvaluationContext for RuntimeEvaluationContext<'_> {
 
     fn state_duration(
         &mut self,
-        _condition: &ResolvedAutomationCondition,
-        _duration_ms: u64,
-        _variables: &BTreeMap<String, AutomationValue>,
+        condition: &ResolvedAutomationCondition,
+        duration_ms: u64,
+        variables: &BTreeMap<String, AutomationValue>,
     ) -> Result<bool, AutomationEvaluationError> {
+        let node_id = self
+            .node_id
+            .ok_or(AutomationEvaluationError::DurableDurationRequired)?;
+        let run_id = self
+            .run_id
+            .ok_or(AutomationEvaluationError::DurableDurationRequired)?;
+        let condition_hash = canonical_automation_hash(&(condition, duration_ms))
+            .map_err(|_| AutomationEvaluationError::ConditionHash)?;
+        if !evaluate_automation_condition(condition, variables, self)? {
+            self.invalid_durations.insert(condition_hash);
+            return Ok(false);
+        }
+        if let Some(duration) = self
+            .durations
+            .iter()
+            .find(|duration| duration.condition_hash == condition_hash)
+        {
+            return match duration.phase {
+                AutomationConditionDurationPhase::Mature => Ok(true),
+                AutomationConditionDurationPhase::Pending => {
+                    let timer = self
+                        .timers
+                        .and_then(|timers| timers.get(&duration.timer_id))
+                        .ok_or(AutomationEvaluationError::DurationTimerMissing)?;
+                    self.request = Some(match timer.state {
+                        AutomationTimerState::Pending => RuntimeDurationRequest::Pending,
+                        AutomationTimerState::Ready => RuntimeDurationRequest::Mature {
+                            condition_hash,
+                            timer: timer.clone(),
+                        },
+                        AutomationTimerState::Consumed | AutomationTimerState::Cancelled => {
+                            return Err(AutomationEvaluationError::DurationTimerMissing);
+                        }
+                    });
+                    Err(AutomationEvaluationError::DurableDurationRequired)
+                }
+            };
+        }
+        let milliseconds =
+            i64::try_from(duration_ms).map_err(|_| AutomationEvaluationError::DurationOverflow)?;
+        let ready_at = self
+            .now
+            .checked_add_signed(TimeDelta::milliseconds(milliseconds))
+            .ok_or(AutomationEvaluationError::DurationOverflow)?;
+        let timer_id = AutomationTimerId::from_scoped_key(
+            run_id,
+            node_id.0,
+            AutomationTimerKind::StateDuration.scope_key(),
+            ready_at.timestamp_millis(),
+        );
+        self.request = Some(RuntimeDurationRequest::Start {
+            duration: AutomationConditionDuration {
+                node_id,
+                condition_hash,
+                duration_ms,
+                ready_at,
+                timer_id: timer_id.clone(),
+                phase: AutomationConditionDurationPhase::Pending,
+            },
+            timer: AutomationTimer {
+                id: timer_id,
+                run_id: run_id.clone(),
+                node_id,
+                kind: AutomationTimerKind::StateDuration,
+                ready_at,
+                state: AutomationTimerState::Pending,
+            },
+        });
         Err(AutomationEvaluationError::DurableDurationRequired)
     }
 }
@@ -1191,9 +1436,9 @@ fn command_state_name(state: CommandState) -> String {
 mod tests {
     use chrono::TimeZone;
     use homemagic_domain::{
-        ActorId, CapabilityDescriptor, CommandEnvelope, CommandErrorCode, CommandFailure,
-        CommandPayload, CorrelationId, EndpointId, InstallationId, IntegrationId, OnOffCommand,
-        RiskClass,
+        ActorId, AutomationComparison, CapabilityDescriptor, CommandEnvelope, CommandErrorCode,
+        CommandFailure, CommandPayload, CorrelationId, EndpointId, InstallationId, IntegrationId,
+        OnOffCommand, ResolvedAutomationExpression, RiskClass,
     };
 
     use super::*;
@@ -1254,6 +1499,77 @@ mod tests {
         .unwrap_or_else(|error| panic!("retry plan: {error}"));
 
         assert!(retry.is_none());
+    }
+
+    #[test]
+    fn duration_evaluation_should_reset_pending_interval_when_inner_value_turns_false() {
+        let at = Utc
+            .with_ymd_and_hms(2026, 7, 12, 12, 0, 0)
+            .single()
+            .unwrap_or_else(|| panic!("fixture instant"));
+        let inner = ResolvedAutomationCondition::Compare {
+            left: ResolvedAutomationExpression::Variable {
+                name: "active".to_owned(),
+            },
+            operator: AutomationComparison::Equal,
+            right: ResolvedAutomationExpression::Literal {
+                value: AutomationValue::Boolean(true),
+            },
+        };
+        let duration_ms = 10;
+        let hash = canonical_automation_hash(&(&inner, duration_ms))
+            .unwrap_or_else(|error| panic!("condition hash: {error}"));
+        let run_id = AutomationRunId::new();
+        let node_id = AutomationPlanNodeId(4);
+        let ready_at = at + TimeDelta::milliseconds(10);
+        let timer_id = AutomationTimerId::from_scoped_key(
+            &run_id,
+            node_id.0,
+            AutomationTimerKind::StateDuration.scope_key(),
+            ready_at.timestamp_millis(),
+        );
+        let durations = vec![AutomationConditionDuration {
+            node_id,
+            condition_hash: hash.clone(),
+            duration_ms,
+            ready_at,
+            timer_id: timer_id.clone(),
+            phase: AutomationConditionDurationPhase::Pending,
+        }];
+        let timers = BTreeMap::from([(
+            timer_id.clone(),
+            AutomationTimer {
+                id: timer_id,
+                run_id: run_id.clone(),
+                node_id,
+                kind: AutomationTimerKind::StateDuration,
+                ready_at,
+                state: AutomationTimerState::Pending,
+            },
+        )]);
+        let snapshot = FoundationSnapshot::default();
+        let mut context = RuntimeEvaluationContext {
+            now: at,
+            snapshot: &snapshot,
+            run_id: Some(&run_id),
+            node_id: Some(node_id),
+            durations: &durations,
+            timers: Some(&timers),
+            request: None,
+            invalid_durations: BTreeSet::new(),
+        };
+        let variables = BTreeMap::from([("active".to_owned(), AutomationValue::Boolean(false))]);
+        let condition = ResolvedAutomationCondition::StateDuration {
+            condition: Box::new(inner),
+            duration_ms,
+        };
+
+        let result = evaluate_automation_condition(&condition, &variables, &mut context)
+            .unwrap_or_else(|error| panic!("condition evaluation: {error}"));
+
+        assert!(!result);
+        assert_eq!(context.invalid_durations, BTreeSet::from([hash]));
+        assert!(context.request.is_none());
     }
 
     fn command(
