@@ -5,15 +5,15 @@ mod ports;
 mod reconciliation;
 mod registry;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use homemagic_domain::{
-    AvailabilityState, CausationMetadata, CorrelationId, DeviceId, DeviceLifecycle,
-    DiscoveryCandidate, DomainEvent, DomainEventKind, EventId, FreshnessPolicy, FreshnessState,
-    LifecycleTrigger, RepairId, RepairRecord,
+    AvailabilityState, CapabilityObservation, CausationMetadata, CorrelationId, DeviceId,
+    DeviceLifecycle, DeviceRecord, DiscoveryCandidate, DomainEvent, DomainEventKind, EventId,
+    FreshnessPolicy, FreshnessState, LifecycleTrigger, RepairId, RepairRecord, SpaceId,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -168,6 +168,47 @@ pub struct IntegrationRefresh {
     pub repairs: usize,
 }
 
+/// Human-facing metadata replacement addressed by stable device identity.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DeviceMetadataUpdate {
+    /// Replacement display name when present.
+    pub name: Option<String>,
+    /// Replacement alias set when present.
+    pub aliases: Option<BTreeSet<String>>,
+    /// Replacement semantic-space assignments when present.
+    pub spaces: Option<BTreeSet<SpaceId>>,
+    /// Stable user or agent actor identifier.
+    pub actor: Option<String>,
+}
+
+/// Structured connection status included in one device detail read.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConnectionSummary {
+    /// Current explicit availability state.
+    pub availability: AvailabilityState,
+    /// Stable non-sensitive availability reason.
+    pub reason: Option<String>,
+    /// Calculated freshness at read time.
+    pub freshness: FreshnessState,
+    /// Last discovery observation.
+    pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    /// Last successful state observation.
+    pub last_success: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Durable device detail projection for RPC and MCP adapters.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeviceDetails {
+    /// Durable aggregate including lifecycle and mutable metadata.
+    pub device: DeviceRecord,
+    /// Explicit connection and freshness summary.
+    pub connection: ConnectionSummary,
+    /// Latest durable capability observations for this device.
+    pub observations: Vec<CapabilityObservation>,
+    /// Current retained repair records for this device.
+    pub repairs: Vec<RepairRecord>,
+}
+
 /// Application service failure.
 #[derive(Debug, Error)]
 pub enum ApplicationError {
@@ -196,6 +237,25 @@ pub enum ApplicationError {
     /// Requested device does not exist.
     #[error("device `{0}` was not found")]
     DeviceNotFound(DeviceId),
+    /// Requested semantic space does not exist.
+    #[error("space `{0}` was not found")]
+    SpaceNotFound(SpaceId),
+    /// Human-facing metadata failed stable validation.
+    #[error("invalid device metadata field `{field}`: {reason}")]
+    InvalidMetadata {
+        /// Stable field name.
+        field: &'static str,
+        /// Stable validation reason.
+        reason: &'static str,
+    },
+    /// Requested event cursor predates retained history.
+    #[error("event cursor `{requested}` expired; earliest available cursor is `{earliest}`")]
+    CursorExpired {
+        /// Requested last-processed cursor.
+        requested: u64,
+        /// Earliest retained cursor.
+        earliest: u64,
+    },
     /// Managed integration session lifecycle failed.
     #[error("managed session `{operation}` failed: {source}")]
     Session {
@@ -215,6 +275,7 @@ pub struct HomeMagicApplication {
     event_sink: Arc<dyn DomainEventSink>,
     repairs: Arc<RwLock<BTreeMap<RepairId, RepairRecord>>>,
     sessions: Option<Arc<dyn IntegrationSessionPort>>,
+    freshness_policy: FreshnessPolicy,
 }
 
 impl HomeMagicApplication {
@@ -231,6 +292,7 @@ impl HomeMagicApplication {
             event_sink: Arc::new(NoopDomainEventSink),
             repairs: Arc::default(),
             sessions: None,
+            freshness_policy: FreshnessPolicy::default(),
         }
     }
 
@@ -265,6 +327,7 @@ impl HomeMagicApplication {
             event_sink,
             repairs: Arc::new(RwLock::new(repairs)),
             sessions: None,
+            freshness_policy: FreshnessPolicy::default(),
         })
     }
 
@@ -272,6 +335,13 @@ impl HomeMagicApplication {
     #[must_use]
     pub fn with_sessions(mut self, sessions: Arc<dyn IntegrationSessionPort>) -> Self {
         self.sessions = Some(sessions);
+        self
+    }
+
+    /// Uses the same freshness thresholds for scheduling and read projections.
+    #[must_use]
+    pub const fn with_freshness_policy(mut self, policy: FreshnessPolicy) -> Self {
+        self.freshness_policy = policy;
         self
     }
 
@@ -284,6 +354,178 @@ impl HomeMagicApplication {
     /// Returns current structured repair records.
     pub async fn repairs(&self) -> Vec<RepairRecord> {
         self.repairs.read().await.values().cloned().collect()
+    }
+
+    /// Returns secret-safe repository and event-cursor health.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository health-query failure.
+    pub async fn repository_health(&self) -> Result<RepositoryHealth, ApplicationError> {
+        self.repository
+            .health()
+            .await
+            .map_err(|source| ApplicationError::Repository {
+                operation: "health",
+                source,
+            })
+    }
+
+    /// Reads one bounded durable event page and rejects expired cursors.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository read failure or [`ApplicationError::CursorExpired`].
+    pub async fn events_after(
+        &self,
+        cursor: u64,
+        limit: usize,
+    ) -> Result<EventPage, ApplicationError> {
+        let page = self
+            .repository
+            .events_after(cursor, limit.clamp(1, 128))
+            .await
+            .map_err(|source| ApplicationError::Repository {
+                operation: "events_after",
+                source,
+            })?;
+        if let Some(earliest) = page.earliest_cursor
+            && cursor.saturating_add(1) < earliest
+        {
+            return Err(ApplicationError::CursorExpired {
+                requested: cursor,
+                earliest,
+            });
+        }
+        Ok(page)
+    }
+
+    /// Returns one durable device aggregate with observations and repairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplicationError::DeviceNotFound`] or a repository read failure.
+    pub async fn device_details(
+        &self,
+        id: &DeviceId,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<DeviceDetails, ApplicationError> {
+        let device = self
+            .registry
+            .get_record(id)
+            .await
+            .ok_or_else(|| ApplicationError::DeviceNotFound(id.clone()))?;
+        let snapshot =
+            self.repository
+                .load()
+                .await
+                .map_err(|source| ApplicationError::Repository {
+                    operation: "device_details",
+                    source,
+                })?;
+        let connection = ConnectionSummary {
+            availability: device.availability.state,
+            reason: device.availability.reason.clone(),
+            freshness: device.freshness_at(self.freshness_policy, now),
+            last_seen: Some(device.timestamps.last_seen),
+            last_success: device.timestamps.last_success,
+        };
+        Ok(DeviceDetails {
+            observations: snapshot
+                .observations
+                .into_iter()
+                .filter(|observation| observation.device_id == *id)
+                .collect(),
+            repairs: snapshot
+                .repairs
+                .into_iter()
+                .filter(|repair| repair.device_id.as_ref() == Some(id))
+                .collect(),
+            device,
+            connection,
+        })
+    }
+
+    /// Replaces selected human-facing metadata without changing stable identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-record, validation, persistence, or event-delivery error.
+    pub async fn update_device_metadata(
+        &self,
+        id: &DeviceId,
+        update: DeviceMetadataUpdate,
+    ) -> Result<DeviceRecord, ApplicationError> {
+        let mut device = self
+            .registry
+            .get_record(id)
+            .await
+            .ok_or_else(|| ApplicationError::DeviceNotFound(id.clone()))?;
+        let mut fields = Vec::new();
+        if let Some(name) = update.name {
+            let name = validated_name(&name)?;
+            if device.snapshot.name != name {
+                device.snapshot.name = name;
+                fields.push("name".to_owned());
+            }
+        }
+        if let Some(aliases) = update.aliases {
+            let aliases = validated_aliases(aliases)?;
+            if device.aliases != aliases {
+                device.aliases = aliases;
+                fields.push("aliases".to_owned());
+            }
+        }
+        if let Some(spaces) = update.spaces {
+            let snapshot =
+                self.repository
+                    .load()
+                    .await
+                    .map_err(|source| ApplicationError::Repository {
+                        operation: "validate_spaces",
+                        source,
+                    })?;
+            for space in &spaces {
+                if !snapshot.spaces.iter().any(|known| known.id == *space) {
+                    return Err(ApplicationError::SpaceNotFound(space.clone()));
+                }
+            }
+            if device.spaces != spaces {
+                device.spaces = spaces;
+                fields.push("spaces".to_owned());
+            }
+        }
+        if fields.is_empty() {
+            return Ok(device);
+        }
+        let event = DomainEvent {
+            id: EventId::new(),
+            device_id: id.clone(),
+            occurred_at: chrono::Utc::now(),
+            causation: CausationMetadata {
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                actor: update.actor,
+            },
+            kind: DomainEventKind::MetadataChanged { fields },
+        };
+        self.repository
+            .apply(FoundationWrite {
+                devices: vec![device.clone()],
+                events: vec![event.clone()],
+                ..FoundationWrite::default()
+            })
+            .await
+            .map_err(|source| ApplicationError::Repository {
+                operation: "update_device_metadata",
+                source,
+            })?;
+        self.registry.upsert_all([device.clone()]).await;
+        self.event_sink
+            .publish(&[event])
+            .await
+            .map_err(ApplicationError::EventDelivery)?;
+        Ok(device)
     }
 
     /// Refreshes every configured integration and durably reconciles candidates.
@@ -588,6 +830,51 @@ impl HomeMagicApplication {
     }
 }
 
+fn validated_name(name: &str) -> Result<String, ApplicationError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ApplicationError::InvalidMetadata {
+            field: "name",
+            reason: "empty",
+        });
+    }
+    if name.chars().count() > 128 {
+        return Err(ApplicationError::InvalidMetadata {
+            field: "name",
+            reason: "too_long",
+        });
+    }
+    Ok(name.to_owned())
+}
+
+fn validated_aliases(aliases: BTreeSet<String>) -> Result<BTreeSet<String>, ApplicationError> {
+    if aliases.len() > 32 {
+        return Err(ApplicationError::InvalidMetadata {
+            field: "aliases",
+            reason: "too_many",
+        });
+    }
+    aliases
+        .into_iter()
+        .map(|alias| {
+            let alias = alias.trim();
+            if alias.is_empty() {
+                return Err(ApplicationError::InvalidMetadata {
+                    field: "aliases",
+                    reason: "empty",
+                });
+            }
+            if alias.chars().count() > 128 {
+                return Err(ApplicationError::InvalidMetadata {
+                    field: "aliases",
+                    reason: "too_long",
+                });
+            }
+            Ok(alias.to_owned())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -596,7 +883,7 @@ mod tests {
     use homemagic_domain::{
         CapabilityDescriptor, CapabilityObservation, DeviceRecord, DeviceSnapshot,
         DiscoveryCandidate, EndpointId, InstallationId, IntegrationId, ObservationSource,
-        ObservationSourceKind, ObservedValue, RiskClass,
+        ObservationSourceKind, ObservedValue, RiskClass, Space,
     };
     use tokio::sync::Mutex;
 
@@ -890,6 +1177,60 @@ mod tests {
             application.registry().records().await[0].availability.state,
             AvailabilityState::Sleeping
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn metadata_update_should_preserve_stable_identity_and_persist_event()
+    -> Result<(), BoxError> {
+        let repository = Arc::new(MemoryFoundationRepository::default());
+        let record = record();
+        let before = record.snapshot.clone();
+        let space = Space {
+            id: SpaceId::new(),
+            installation_id: record.installation_id.clone(),
+            parent_id: None,
+            name: "Kitchen".to_owned(),
+            aliases: BTreeSet::new(),
+        };
+        repository
+            .apply(FoundationWrite {
+                spaces: vec![space.clone()],
+                devices: vec![record],
+                ..FoundationWrite::default()
+            })
+            .await?;
+        let application = HomeMagicApplication::from_repository(
+            repository.clone(),
+            Arc::new(NoopDomainEventSink),
+            [],
+        )
+        .await?;
+
+        let updated = application
+            .update_device_metadata(
+                &before.id,
+                DeviceMetadataUpdate {
+                    name: Some("  Kitchen light  ".to_owned()),
+                    aliases: Some(BTreeSet::from(["Main light".to_owned()])),
+                    spaces: Some(BTreeSet::from([space.id])),
+                    actor: Some("agent:test".to_owned()),
+                },
+            )
+            .await?;
+        let durable = repository.load().await?;
+        let events = repository.events_after(0, 10).await?;
+
+        assert_eq!(updated.snapshot.id, before.id);
+        assert_eq!(updated.snapshot.native_id, before.native_id);
+        assert_eq!(updated.snapshot.endpoints, before.endpoints);
+        assert_eq!(updated.capability_descriptors, BTreeMap::new());
+        assert_eq!(updated.snapshot.name, "Kitchen light");
+        assert_eq!(durable.devices, vec![updated]);
+        assert!(matches!(
+            events.events[0].event.kind,
+            DomainEventKind::MetadataChanged { .. }
+        ));
         Ok(())
     }
 

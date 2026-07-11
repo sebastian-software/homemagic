@@ -75,4 +75,9 @@ pub enum DomainEventKind {
         /// Stable repair identifier.
         repair_id: RepairId,
     },
+    /// Human-facing device metadata changed without changing stable identity.
+    MetadataChanged {
+        /// Stable field names changed by this operation.
+        fields: Vec<String>,
+    },
 }

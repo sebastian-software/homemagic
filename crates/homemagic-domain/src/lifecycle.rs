@@ -202,6 +202,15 @@ pub struct FreshnessPolicy {
     offline_after_seconds: i64,
 }
 
+impl Default for FreshnessPolicy {
+    fn default() -> Self {
+        Self {
+            stale_after_seconds: 120,
+            offline_after_seconds: 300,
+        }
+    }
+}
+
 impl FreshnessPolicy {
     /// Creates a policy whose offline threshold is later than its stale threshold.
     ///
