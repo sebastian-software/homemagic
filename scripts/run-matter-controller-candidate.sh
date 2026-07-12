@@ -6,7 +6,10 @@ report_path="${2:-matter-controller-candidate-report.json}"
 expected_architecture="${3:-$(uname -m)}"
 manifest="config/matter-controller-candidates.json"
 
-test "$candidate_id" = "rust-matc"
+case "$candidate_id" in
+  rust-matc|rs-matter) ;;
+  *) echo "unsupported candidate: $candidate_id" >&2; exit 2 ;;
+esac
 test "$(uname -m)" = "$expected_architecture"
 
 repository="$(jq -r --arg id "$candidate_id" '.candidates[] | select(.id == $id) | .repository' "$manifest")"
@@ -23,31 +26,56 @@ git -C "$workspace/source" checkout --quiet --detach FETCH_HEAD
 test "$(git -C "$workspace/source" rev-parse HEAD)" = "$revision"
 
 export CARGO_TARGET_DIR="$workspace/target"
-cargo test --quiet --manifest-path "$workspace/source/Cargo.toml" --locked
-cargo test --quiet --manifest-path "$workspace/source/Cargo.toml" --locked --all-features
-cargo build --quiet --manifest-path "$workspace/source/Cargo.toml" --locked --release --example simple-devman
 
-rust_bytes="$(find "$workspace/source/src" -type f -name '*.rs' -exec wc -c {} + | awk 'END {print $1 + 0}')"
-other_code_bytes="$(find "$workspace/source/src" -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' -o -name '*.py' -o -name '*.js' -o -name '*.ts' \) -exec wc -c {} + | awk 'END {print $1 + 0}')"
+lockfile_origin="candidate"
+if ! test -f "$workspace/source/Cargo.lock"; then
+  cargo generate-lockfile --manifest-path "$workspace/source/Cargo.toml"
+  lockfile_origin="generated_from_manifest_ranges"
+fi
+lockfile_sha256="$(shasum -a 256 "$workspace/source/Cargo.lock" | awk '{print $1}')"
+
+if test "$candidate_id" = "rust-matc"; then
+  cargo test --quiet --manifest-path "$workspace/source/Cargo.toml" --locked
+  cargo test --quiet --manifest-path "$workspace/source/Cargo.toml" --locked --all-features
+  cargo build --quiet --manifest-path "$workspace/source/Cargo.toml" --locked --release --example simple-devman
+  binary="$workspace/target/release/examples/simple-devman"
+  release_target="simple-devman example"
+  test_profile="default and all features"
+  all_features_outcome="pass"
+else
+  cargo test --quiet --manifest-path "$workspace/source/Cargo.toml" --workspace --locked
+  if cargo check --quiet --manifest-path "$workspace/source/Cargo.toml" --package rs-matter --locked --all-features; then
+    all_features_outcome="pass"
+  else
+    all_features_outcome="fail"
+  fi
+  cargo build --quiet --manifest-path "$workspace/source/Cargo.toml" --locked --release --package rs-matter-examples --bin commissioner_tests
+  cargo build --quiet --manifest-path "$workspace/source/Cargo.toml" --locked --release --package rs-matter-examples --bin onoff_light
+  binary="$workspace/target/release/commissioner_tests"
+  release_target="commissioner_tests and onoff_light binaries"
+  test_profile="default workspace"
+fi
+
+rust_bytes="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f -name '*.rs' -exec wc -c {} + | awk 'END {print $1 + 0}')"
+other_code_bytes="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' -o -name '*.py' -o -name '*.js' -o -name '*.ts' \) -exec wc -c {} + | awk 'END {print $1 + 0}')"
 total_code_bytes="$((rust_bytes + other_code_bytes))"
 rust_share_basis_points="$((rust_bytes * 10000 / total_code_bytes))"
-unsafe_blocks="$( { rg --count-matches '\bunsafe\s+(fn|impl|trait|extern)|\bunsafe\s*\{' "$workspace/source/src" -g '*.rs' || true; } | awk -F: '{sum += $NF} END {print sum + 0}')"
-native_files="$(find "$workspace/source/src" -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' \) | wc -l | tr -d ' ')"
-default_dependencies="$(cargo tree --manifest-path "$workspace/source/Cargo.toml" --locked -e normal --prefix none | sort -u | wc -l | tr -d ' ')"
-all_feature_dependencies="$(cargo tree --manifest-path "$workspace/source/Cargo.toml" --locked --all-features -e normal --prefix none | sort -u | wc -l | tr -d ' ')"
-all_feature_tree="$(cargo tree --manifest-path "$workspace/source/Cargo.toml" --locked --all-features -e normal --prefix none)"
-if test "$(uname -s)" = "Darwin"; then
-  transitive_native_packages='["btleplug", "objc-sys", "objc2", "objc2-core-bluetooth", "objc2-foundation"]'
-  for package in btleplug objc-sys objc2 objc2-core-bluetooth objc2-foundation; do
-    grep -q "^$package " <<<"$all_feature_tree"
-  done
+unsafe_blocks="$( { rg --count-matches '\bunsafe\s+(fn|impl|trait|extern)|\bunsafe\s*\{' "$workspace/source" -g '*.rs' -g '!target/**' || true; } | awk -F: '{sum += $NF} END {print sum + 0}')"
+native_files="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' \) -print | wc -l | tr -d ' ')"
+default_tree="$(cargo tree --manifest-path "$workspace/source/Cargo.toml" --locked --workspace -e normal --prefix none)"
+default_dependencies="$(sort -u <<<"$default_tree" | wc -l | tr -d ' ')"
+if test "$candidate_id" = "rust-matc"; then
+  all_feature_tree="$(cargo tree --manifest-path "$workspace/source/Cargo.toml" --locked --all-features -e normal --prefix none)"
+  all_feature_dependencies="$(sort -u <<<"$all_feature_tree" | wc -l | tr -d ' ')"
+  if test "$(uname -s)" = "Darwin"; then
+    transitive_native_packages='["btleplug", "objc-sys", "objc2", "objc2-core-bluetooth", "objc2-foundation"]'
+  else
+    transitive_native_packages='["btleplug", "dbus", "libdbus-sys"]'
+  fi
 else
-  transitive_native_packages='["btleplug", "dbus", "libdbus-sys"]'
-  for package in btleplug dbus libdbus-sys; do
-    grep -q "^$package " <<<"$all_feature_tree"
-  done
+  all_feature_dependencies=null
+  transitive_native_packages='[]'
 fi
-binary="$workspace/target/release/examples/simple-devman"
 binary_bytes="$(wc -c < "$binary" | tr -d ' ')"
 binary_format="$(file -b "$binary")"
 
@@ -62,6 +90,11 @@ jq -n \
   --arg kernel "$(uname -r)" \
   --arg rustc "$(rustc --version)" \
   --arg cargo "$(cargo --version)" \
+  --arg lockfile_origin "$lockfile_origin" \
+  --arg lockfile_sha256 "$lockfile_sha256" \
+  --arg release_target "$release_target" \
+  --arg test_profile "$test_profile" \
+  --arg all_features_outcome "$all_features_outcome" \
   --arg binary_format "$binary_format" \
   --argjson rust_bytes "$rust_bytes" \
   --argjson other_code_bytes "$other_code_bytes" \
@@ -77,7 +110,8 @@ jq -n \
     candidate: $candidate,
     source: { repository: $repository, revision: $revision },
     host: { captured_at: $captured_at, os: $os, architecture: $architecture, kernel: $kernel, rustc: $rustc, cargo: $cargo },
-    commands: { default_tests: "pass", all_feature_tests: "pass", release_example: "pass" },
+    resolution: { lockfile_origin: $lockfile_origin, lockfile_sha256: $lockfile_sha256 },
+    commands: { tests: "pass", test_profile: $test_profile, all_features: $all_features_outcome, release_build: "pass", release_target: $release_target },
     footprint: {
       repository_rust_bytes: $rust_bytes,
       repository_other_code_bytes: $other_code_bytes,
@@ -90,7 +124,7 @@ jq -n \
       all_feature_transitive_native_packages: $transitive_native_packages,
       release_example_bytes: $binary_bytes,
       release_example_format: $binary_format,
-      optional_native_boundary: "ble feature through btleplug platform backends"
+      native_boundary_note: (if $candidate == "rust-matc" then "optional ble feature through btleplug platform backends" else "default workspace build; optional platform features were not selected" end)
     }
   }' > "$report_path"
 

@@ -28,7 +28,7 @@ gh api repos/OWNER/REPOSITORY/releases/latest
 | Candidate | Pinned source | License | Current role | Screen result |
 | --- | --- | --- | --- | --- |
 | [`tom-code/rust-matc`](https://github.com/tom-code/rust-matc) | `c829d2a1b570b2f2433607a3f4731074b73fb367` | BSD-2-Clause | Native Rust controller library; README claims PASE, CASE, commissioning, read/write, invoke, and subscriptions | Advance to full native spike |
-| [`project-chip/rs-matter`](https://github.com/project-chip/rs-matter) | `42d3c2211239f5f388ac7f7449c82bb3347912f5` | Apache-2.0 | Active native Rust device/server implementation operated by external controllers | Reject as controller candidate; retain as independent device/reference fixture candidate |
+| [`project-chip/rs-matter`](https://github.com/project-chip/rs-matter) | `42d3c2211239f5f388ac7f7449c82bb3347912f5` | Apache-2.0 | Native Rust device stack plus a newly added controller/commissioner path | Advance to full native spike; retain its device role only as a reference for other candidates |
 | [`estincelle/chip-tool-rs`](https://github.com/estincelle/chip-tool-rs) | `524a4de506d2ac6d3a3451c0c670775df10565b6` | No detected repository license | Rust chip-tool experiment for rs-matter controller testing | Reject mandatory license/provenance gate |
 | [`matter-js/matter.js`](https://github.com/matter-js/matter.js) | `b539372ff41fea24344760d69172508e9df931a2` | Apache-2.0 | Maintained TypeScript controller/device stack; latest release `v0.17.4` | Contingency sidecar only under ADR-0005 |
 | [`project-chip/connectedhomeip`](https://github.com/project-chip/connectedhomeip) | release `v1.5.1.0` | Apache-2.0 | Official C++ SDK and controller/reference tooling | Contingency narrow FFI or isolated sidecar only under ADR-0005 |
@@ -43,7 +43,7 @@ must name the certified product and scope; a reusable library inherits none.
 | Candidate | Capability and provenance | Maintenance and security | Conformance statement |
 | --- | --- | --- | --- |
 | `rust-matc` | [README at pin](https://github.com/tom-code/rust-matc/blob/c829d2a1b570b2f2433607a3f4731074b73fb367/README.md), [manifest](https://github.com/tom-code/rust-matc/blob/c829d2a1b570b2f2433607a3f4731074b73fb367/Cargo.toml), [license](https://github.com/tom-code/rust-matc/blob/c829d2a1b570b2f2433607a3f4731074b73fb367/LICENSE) | [commit history](https://github.com/tom-code/rust-matc/commits/c829d2a1b570b2f2433607a3f4731074b73fb367); no repository security policy or GitHub release exists at the snapshot | No certification or conformance claim found; self-tests are candidate evidence only |
-| `rs-matter` | [README status at pin](https://github.com/project-chip/rs-matter/blob/42d3c2211239f5f388ac7f7449c82bb3347912f5/README.md), [Apache license](https://github.com/project-chip/rs-matter/blob/42d3c2211239f5f388ac7f7449c82bb3347912f5/LICENSE) | [security policy](https://github.com/project-chip/rs-matter/blob/42d3c2211239f5f388ac7f7449c82bb3347912f5/SECURITY.md), [v0.2.0](https://crates.io/crates/rs-matter/0.2.0) | ConnectedHomeIP YAML integration is test evidence, not inherited certification |
+| `rs-matter` | [commissioner module at pin](https://github.com/project-chip/rs-matter/blob/42d3c2211239f5f388ac7f7449c82bb3347912f5/rs-matter/src/onboard.rs), [controller example](https://github.com/project-chip/rs-matter/blob/42d3c2211239f5f388ac7f7449c82bb3347912f5/examples/src/bin/commissioner_tests.rs), [Apache license](https://github.com/project-chip/rs-matter/blob/42d3c2211239f5f388ac7f7449c82bb3347912f5/LICENSE) | [security policy](https://github.com/project-chip/rs-matter/blob/42d3c2211239f5f388ac7f7449c82bb3347912f5/SECURITY.md), [v0.2.0](https://crates.io/crates/rs-matter/0.2.0) | ConnectedHomeIP integration is test evidence, not inherited certification; the source explicitly lacks production device-attestation verification |
 | `chip-tool-rs` | [repository at pin](https://github.com/estincelle/chip-tool-rs/tree/524a4de506d2ac6d3a3451c0c670775df10565b6) | No detected license, security policy, or release | Rejected before conformance scoring |
 | `matter.js` | [controller-capable repository](https://github.com/matter-js/matter.js/tree/b539372ff41fea24344760d69172508e9df931a2), [v0.17.4](https://github.com/matter-js/matter.js/releases/tag/v0.17.4) | [security policy](https://github.com/matter-js/matter.js/security/policy), active project-chip organization | Project functional claims are not product certification |
 | `python-matter-server` | [archived repository](https://github.com/matter-js/python-matter-server/tree/4c820ed12bac349dda372031e9757c67b9fd9048) | GitHub archive state at snapshot; latest release `8.1.2` | Rejected before conformance scoring |
@@ -136,7 +136,11 @@ Scores are assigned only after all mandatory gates pass. Category points equal
 
 ## Next evidence
 
-The first full spike is `rust-matc`. `rs-matter` supplies a credible independent
-Rust device fixture but cannot score as a controller. Non-Rust contingencies are
-measured only if the native candidate fails a mandatory gate; they cannot win by
-weighted score while bypassing ADR-0005.
+Both `rust-matc` and `rs-matter` advance to native spikes. The initial screen
+misclassified `rs-matter` from its device-oriented README; source inspection at
+the same pin found the public `onboard::Commissioner`, generic Interaction Model
+client transactions, and a controller example. That correction is deliberately
+recorded rather than hidden. Each implementation's device fixture is independent
+evidence only for the other candidate, never for itself. Non-Rust contingencies
+are measured only if both native candidates fail a mandatory gate; they cannot
+win by weighted score while bypassing ADR-0005.

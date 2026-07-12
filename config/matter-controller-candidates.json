@@ -15,8 +15,8 @@
       "repository": "https://github.com/project-chip/rs-matter.git",
       "revision": "42d3c2211239f5f388ac7f7449c82bb3347912f5",
       "license": "Apache-2.0",
-      "role": "independent_device_reference",
-      "disposition": "reject_controller_role"
+      "role": "native_controller_and_independent_device_reference",
+      "disposition": "full_spike"
     },
     {
       "id": "chip-tool-rs",

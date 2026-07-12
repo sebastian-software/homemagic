@@ -3,7 +3,7 @@ id: E4-008-02
 epic: EPIC-004
 parent: E4-008
 title: Build and audit native Rust controller candidates
-status: done
+status: in_progress
 priority: critical
 depends_on: [E4-008-01]
 adrs: [ADR-0005, ADR-0038]
@@ -21,8 +21,8 @@ and packaging measurements.
 
 ## Verification
 
-- [x] Default and all-feature builds are reproducible on both hosts.
-- [x] First-party and transitive native footprints are reported separately.
+- [ ] Default and all-feature outcomes are reproducible on both hosts.
+- [ ] First-party and transitive native footprints are reported separately.
 - [x] Production manifests remain free of candidate dependencies.
 
 ## Progress log
@@ -40,3 +40,7 @@ and packaging measurements.
 - 2026-07-12: Public repository CI run `29210237059` passed the committed
   reports, production-manifest guard, full workspace, migrations, disclosure,
   and both simulator architectures. This issue is done; E4-008-03 is ready.
+- 2026-07-12: Reopened after source inspection identified the pinned
+  `rs-matter` commissioner as a second credible native controller candidate.
+  Its default workspace, commissioner, and device builds pass locally; the
+  two-host workflow and exact footprint reports remain pending.

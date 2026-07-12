@@ -13,16 +13,26 @@ permissions:
   contents: read
 
 jobs:
-  rust-matc:
-    name: rust-matc (${{ matrix.label }})
+  native-candidate:
+    name: ${{ matrix.candidate }} (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - candidate: rust-matc
+            runner: ubuntu-latest
             architecture: x86_64
             label: Linux x86_64
-          - runner: macos-14
+          - candidate: rust-matc
+            runner: macos-14
+            architecture: arm64
+            label: macOS ARM64
+          - candidate: rs-matter
+            runner: ubuntu-latest
+            architecture: x86_64
+            label: Linux x86_64
+          - candidate: rs-matter
+            runner: macos-14
             architecture: arm64
             label: macOS ARM64
     runs-on: ${{ matrix.runner }}
@@ -41,11 +51,11 @@ jobs:
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
 
       - name: Run pinned candidate audit
-        run: ./scripts/run-matter-controller-candidate.sh rust-matc report.json "${{ matrix.architecture }}"
+        run: ./scripts/run-matter-controller-candidate.sh "${{ matrix.candidate }}" report.json "${{ matrix.architecture }}"
 
       - name: Upload candidate report
         uses: actions/upload-artifact@v6
         with:
-          name: rust-matc-${{ matrix.architecture }}
+          name: ${{ matrix.candidate }}-${{ matrix.architecture }}
           path: report.json
           if-no-files-found: error
