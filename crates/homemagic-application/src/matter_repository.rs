@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
     AccessControlCommand, ActorId, CommandAggregate, CommandAuditRecord, CommandId, DeviceId,
-    EndpointId, InstallationId, MatterControllerError, MatterEndpointNumber, MatterFabricId,
-    MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId, MatterOperationPhase,
-    MatterProjectedState, MatterProjectionId, MatterSubscriptionId, MatterUnlockAuthorizationId,
-    RepairId,
+    DeviceRecord, EndpointId, InstallationId, IntegrationInstance, MatterControllerError,
+    MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor, MatterNodeId, MatterOperation,
+    MatterOperationId, MatterOperationPhase, MatterProjectedState, MatterProjectionId,
+    MatterSubscriptionId, MatterUnlockAuthorizationId, RepairId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -171,6 +171,27 @@ pub struct MatterOperationNodeResult {
     pub device_id: DeviceId,
     /// Time the result became durable and visible.
     pub created_at: DateTime<Utc>,
+}
+
+/// One atomic successful commissioning projection commit.
+#[derive(Clone, Debug)]
+pub struct MatterCommissioningCommit {
+    /// Stable fabric integration instance.
+    pub integration: IntegrationInstance,
+    /// Enrolled common device snapshot.
+    pub device: DeviceRecord,
+    /// Authoritative controller node descriptor.
+    pub node: StoredMatterNode,
+    /// Enabled common capability projections.
+    pub projections: Vec<StoredMatterProjection>,
+    /// Established logical subscription covering projected report paths.
+    pub subscription: StoredMatterSubscription,
+    /// Immutable operation-to-node result.
+    pub result: MatterOperationNodeResult,
+    /// Commissioning operation already transitioned to completed in memory.
+    pub operation: MatterOperation,
+    /// Terminal immutable progress fact.
+    pub progress: MatterOperationProgress,
 }
 
 /// Status of a durable Matter repair record.
@@ -457,6 +478,13 @@ pub trait MatterRepository: Send + Sync {
         &self,
         operation_id: &MatterOperationId,
     ) -> Result<Option<MatterOperationNodeResult>, BoxError>;
+
+    /// Atomically exposes one fully projected successful commissioning result.
+    async fn commit_matter_commissioning(
+        &self,
+        commit: MatterCommissioningCommit,
+        expected_operation_revision: u64,
+    ) -> Result<(), BoxError>;
 
     /// Atomically replaces an operation and appends its progress fact.
     async fn transition_matter_operation(

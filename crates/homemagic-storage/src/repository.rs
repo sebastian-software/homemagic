@@ -310,7 +310,7 @@ fn upsert_installation(
     Ok(())
 }
 
-fn upsert_integration(
+pub(crate) fn upsert_integration(
     transaction: &Transaction<'_>,
     integration: &IntegrationInstance,
 ) -> Result<(), StorageError> {
@@ -348,7 +348,10 @@ fn upsert_space(transaction: &Transaction<'_>, space: &Space) -> Result<(), Stor
     Ok(())
 }
 
-fn upsert_device(transaction: &Transaction<'_>, device: &DeviceRecord) -> Result<(), StorageError> {
+pub(crate) fn upsert_device(
+    transaction: &Transaction<'_>,
+    device: &DeviceRecord,
+) -> Result<(), StorageError> {
     let device_id = device.snapshot.id.to_string();
     transaction.execute(
         "INSERT INTO devices(

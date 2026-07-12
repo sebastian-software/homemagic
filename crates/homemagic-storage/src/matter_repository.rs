@@ -4,12 +4,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_application::{
-    BoxError, MatterDesiredCommandSlot, MatterDesiredSlotOutcome, MatterDesiredStateWrite,
-    MatterDispatchWrite, MatterFabricStage, MatterOperationBinding, MatterOperationCreateOutcome,
-    MatterOperationNodeResult, MatterOperationProgress, MatterRecovery, MatterRepairRecord,
-    MatterRepository, MatterRetention, MatterRetentionResult, MatterUnlockAuthorization,
-    MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode, StoredMatterProjection,
-    StoredMatterSubscription,
+    BoxError, MatterCommissioningCommit, MatterDesiredCommandSlot, MatterDesiredSlotOutcome,
+    MatterDesiredStateWrite, MatterDispatchWrite, MatterFabricStage, MatterOperationBinding,
+    MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
+    MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention, MatterRetentionResult,
+    MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode,
+    StoredMatterProjection, StoredMatterSubscription,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CommandAction, CommandAggregate,
@@ -21,6 +21,7 @@ use homemagic_domain::{
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::command_repository::transition_command;
+use crate::repository::{upsert_device, upsert_integration};
 use crate::{SharedConnection, SqliteRepository, StorageError, decode, encode, enum_name};
 
 const MAX_QUERY_PAGE: usize = 1_000;
@@ -235,6 +236,18 @@ impl MatterRepository for SqliteRepository {
                  WHERE operation_id = ?1",
                 &operation_id,
             )
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn commit_matter_commissioning(
+        &self,
+        commit: MatterCommissioningCommit,
+        expected_operation_revision: u64,
+    ) -> Result<(), BoxError> {
+        run_write(&self.connection, move |transaction| {
+            commit_commissioning(transaction, &commit, expected_operation_revision)
         })
         .await
         .map_err(boxed)
@@ -487,6 +500,68 @@ where
     })
     .await
     .map_err(|error| StorageError::Worker(error.to_string()))?
+}
+
+fn commit_commissioning(
+    transaction: &Transaction<'_>,
+    commit: &MatterCommissioningCommit,
+    expected_operation_revision: u64,
+) -> Result<(), StorageError> {
+    let descriptor = &commit.node.descriptor;
+    let coherent = commit.operation.kind == homemagic_domain::MatterOperationKind::CommissionNode
+        && commit.operation.phase == homemagic_domain::MatterOperationPhase::Completed
+        && commit.progress.operation_id == commit.operation.id
+        && commit.progress.revision == commit.operation.revision
+        && commit.progress.phase == commit.operation.phase
+        && commit.result.operation_id == commit.operation.id
+        && commit.result.fabric_id == *descriptor.fabric_id()
+        && commit.result.node_id == descriptor.node_id()
+        && commit.result.device_id == commit.node.device_id
+        && commit.device.snapshot.id == commit.node.device_id
+        && commit.device.integration_id == commit.integration.id
+        && commit.device.installation_id == commit.node.installation_id
+        && commit.integration.installation_id == commit.node.installation_id
+        && commit.subscription.fabric_id == *descriptor.fabric_id()
+        && commit.subscription.node_id == descriptor.node_id()
+        && commit.projections.iter().all(|projection| {
+            projection.installation_id == commit.node.installation_id
+                && projection.fabric_id == *descriptor.fabric_id()
+                && projection.node_id == descriptor.node_id()
+                && projection.device_id == commit.node.device_id
+        });
+    if !coherent {
+        return Err(StorageError::InvalidMatter(
+            "commissioning projection commit is inconsistent",
+        ));
+    }
+
+    upsert_integration(transaction, &commit.integration)?;
+    upsert_device(transaction, &commit.device)?;
+    store_node(transaction, &commit.node, None)?;
+    for projection in &commit.projections {
+        store_projection(transaction, projection, None)?;
+    }
+    store_subscription(transaction, &commit.subscription, None)?;
+    transaction.execute(
+        "INSERT INTO matter_operation_node_results(
+            operation_id, fabric_id, node_id, device_id, created_at, payload_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            commit.result.operation_id.to_string(),
+            commit.result.fabric_id.to_string(),
+            to_i64(commit.result.node_id.get())?,
+            commit.result.device_id.to_string(),
+            commit.result.created_at,
+            encode(&commit.result)?,
+        ],
+    )?;
+    transition_operation(
+        transaction,
+        &commit.operation,
+        expected_operation_revision,
+        &commit.progress,
+        None,
+    )
 }
 
 fn store_fabric_stage(

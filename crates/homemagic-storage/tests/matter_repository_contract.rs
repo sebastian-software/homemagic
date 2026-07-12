@@ -43,8 +43,8 @@ use homemagic_domain::{
     RepairId, RiskClass, SecretRef,
 };
 use homemagic_matter::{
-    DeterministicMatterSimulator, MatterCommandAdapter, SIMULATOR_LIGHT_SETUP, SimulatorFault,
-    SimulatorOperation,
+    DeterministicMatterSimulator, MatterCommandAdapter, SIMULATOR_LIGHT_SETUP,
+    SIMULATOR_LOCK_SETUP, SimulatorFault, SimulatorOperation,
 };
 use homemagic_storage::SqliteRepository;
 use rusqlite::Connection;
@@ -263,6 +263,7 @@ impl FabricWorkflowFixture {
                     actions: BTreeSet::from([
                         CommandAction::MatterRead,
                         CommandAction::MatterCreateFabric,
+                        CommandAction::MatterCommissionNode,
                         CommandAction::MatterExportFabric,
                         CommandAction::MatterRestoreFabric,
                     ]),
@@ -289,6 +290,14 @@ impl FabricWorkflowFixture {
             self.repository.clone(),
             controller,
             self.secrets.clone(),
+        )
+    }
+
+    fn node_workflow(&self, controller: Arc<dyn MatterController>) -> MatterNodeWorkflowService {
+        MatterNodeWorkflowService::new(
+            MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
+            self.repository.clone(),
+            controller,
         )
     }
 }
@@ -1004,6 +1013,190 @@ async fn commissioning_start_should_reject_inactive_fabric() -> TestResult {
         result,
         Err(MatterNodeWorkflowError::FabricNotActive)
     ));
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the cross-fixture contract verifies one shared atomic commissioning workflow"
+)]
+async fn commissioning_should_atomically_project_light_and_lock_and_survive_reopen() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let fabric_workflow = fixture.workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("node-projection-fabric")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("fabric create operation missing".into());
+    };
+    let _created = fabric_workflow
+        .run_create(&fixture.actor, &create.id, now)
+        .await?;
+    let node_workflow = fixture.node_workflow(controller);
+    let cases = [
+        ("project-light", SIMULATOR_LIGHT_SETUP, 0x1001_u64),
+        ("project-lock", SIMULATOR_LOCK_SETUP, 0x2001_u64),
+    ];
+    let mut results = Vec::new();
+    for (key, setup, expected_node) in cases {
+        let MatterOperationCreateOutcome::Created(operation) = node_workflow
+            .start_commission(&fixture.actor, IdempotencyKey::new(key)?, now)
+            .await?
+        else {
+            return Err("commissioning operation missing".into());
+        };
+        let MatterWorkflowOutcome::Completed {
+            operation: completed,
+            value,
+        } = node_workflow
+            .run_commission(
+                &fixture.actor,
+                &operation.id,
+                MatterCommissioningInput::new(SecretValue::new(setup)),
+                now,
+            )
+            .await?
+        else {
+            return Err("commissioning did not complete".into());
+        };
+        assert_eq!(completed.phase, MatterOperationPhase::Completed);
+        assert_eq!(value.node_id.get(), expected_node);
+        results.push(value);
+    }
+    let MatterOperationCreateOutcome::Created(duplicate) = node_workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new("project-light-duplicate")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("duplicate commissioning operation missing".into());
+    };
+    let MatterWorkflowOutcome::Terminal(duplicate) = node_workflow
+        .run_commission(
+            &fixture.actor,
+            &duplicate.id,
+            MatterCommissioningInput::new(SecretValue::new(SIMULATOR_LIGHT_SETUP)),
+            now,
+        )
+        .await?
+    else {
+        return Err("duplicate commissioning did not fail durably".into());
+    };
+    let snapshot = fixture.repository.load().await?;
+    let light_projection = MatterProjectionId::from_key(
+        &results[0].fabric_id,
+        results[0].node_id.get(),
+        1,
+        "on_off",
+        1,
+    );
+    let lock_projection = MatterProjectionId::from_key(
+        &results[1].fabric_id,
+        results[1].node_id.get(),
+        1,
+        "access_control",
+        1,
+    );
+    let light = fixture
+        .repository
+        .matter_projection(&light_projection)
+        .await?
+        .ok_or("light projection missing")?;
+    let lock = fixture
+        .repository
+        .matter_projection(&lock_projection)
+        .await?
+        .ok_or("lock projection missing")?;
+    let expected_results = results.clone();
+    drop(node_workflow);
+    drop(fabric_workflow);
+    drop(fixture.repository);
+    let reopened = SqliteRepository::open(&fixture.path)?;
+    let reopened_results = vec![
+        reopened
+            .matter_operation_node_result(&expected_results[0].operation_id)
+            .await?
+            .ok_or("light result missing after reopen")?,
+        reopened
+            .matter_operation_node_result(&expected_results[1].operation_id)
+            .await?
+            .ok_or("lock result missing after reopen")?,
+    ];
+
+    assert_eq!(snapshot.devices.len(), 2);
+    assert_eq!(duplicate.phase, MatterOperationPhase::Failed);
+    assert!(light.state.reported().is_some());
+    assert!(lock.state.reported().is_some());
+    assert_eq!(reopened_results, expected_results);
+    Ok(())
+}
+
+#[tokio::test]
+async fn commissioning_projection_failure_should_roll_back_every_visible_node_fact() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let fabric_workflow = fixture.workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("atomic-failure-fabric")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("fabric create operation missing".into());
+    };
+    let _created = fabric_workflow
+        .run_create(&fixture.actor, &create.id, now)
+        .await?;
+    let node_workflow = fixture.node_workflow(controller);
+    let MatterOperationCreateOutcome::Created(operation) = node_workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new("atomic-failure-light")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("commissioning operation missing".into());
+    };
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch(
+        "CREATE TRIGGER fail_commissioning_projection
+         BEFORE INSERT ON matter_projections
+         BEGIN
+           SELECT RAISE(ABORT, 'injected projection failure');
+         END;",
+    )?;
+    drop(connection);
+
+    let result = node_workflow
+        .run_commission(
+            &fixture.actor,
+            &operation.id,
+            MatterCommissioningInput::new(SecretValue::new(SIMULATOR_LIGHT_SETUP)),
+            now,
+        )
+        .await;
+    let snapshot = fixture.repository.load().await?;
+    let durable_result = fixture
+        .repository
+        .matter_operation_node_result(&operation.id)
+        .await?;
+
+    assert!(result.is_err());
+    assert!(snapshot.devices.is_empty());
+    assert_eq!(durable_result, None);
     Ok(())
 }
 
