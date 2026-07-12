@@ -3,7 +3,7 @@ id: E4-007-04
 epic: EPIC-004
 parent: E4-007
 title: Expose bounded diagnostics and subscription repair
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-01, E4-007-03]
 adrs: [ADR-0033, ADR-0034]
@@ -38,3 +38,8 @@ raw protocol mutation access.
 - [ ] Pagination, redaction, retry exhaustion, restart, and repaired-gap tests
   pass.
 - [ ] Diagnostic secret-canary scans remain clean.
+
+## Progress log
+
+- 2026-07-12: E4-007-03 completed with public cross-platform CI. This issue is
+  ready.

@@ -3,7 +3,7 @@ id: E4-007-03-05
 epic: EPIC-004
 parent: E4-007-03
 title: Remove nodes without hiding partial cleanup
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-03-03, E4-007-03-04]
 adrs: [ADR-0014, ADR-0033, ADR-0037, ADR-0040]
@@ -46,7 +46,7 @@ incomplete outcome stays queryable and repairable.
 - [x] Partial cleanup remains listable after database reopen.
 - [x] Strict workspace Clippy and targeted removal contracts pass locally.
 - [x] Full local workspace, migration, boundary, and secret-scan gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -59,3 +59,6 @@ incomplete outcome stays queryable and repairable.
 - 2026-07-12: All 44 Matter repository contracts, the complete all-feature
   workspace suite, strict Clippy, Matter boundary checks, and secret scans pass
   locally. Commit, push, and public CI remain pending.
+- 2026-07-12: Commits `175a874` and `8a69663` were pushed to `main`. Public CI
+  run `29205464608` passed Linux x86_64 quality and simulator hashes on Linux
+  x86_64 and macOS ARM64. This child issue is done.

@@ -3,7 +3,7 @@ id: E4-007-03
 epic: EPIC-004
 parent: E4-007
 title: Orchestrate commissioning and node removal durably
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-01, E4-007-02]
 adrs: [ADR-0033, ADR-0034, ADR-0037, ADR-0040]
@@ -21,7 +21,7 @@ updated: 2026-07-12
 | [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Done | Atomic node, projection, subscription, and operation-result commit |
 | [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Done | Best-effort cancellation and phase-by-phase restart reconciliation |
 | [E4-007-03-04](E4-007-03-04-node-inventory.md) | Done | Authenticated bounded durable node inventory |
-| [E4-007-03-05](E4-007-03-05-node-removal.md) | In progress | Idempotent removal with visible partial cleanup |
+| [E4-007-03-05](E4-007-03-05-node-removal.md) | Done | Idempotent removal with visible partial cleanup |
 
 ## Outcome
 
@@ -31,25 +31,25 @@ visible and repairable.
 
 ## Tasks
 
-- [ ] Implement commissioning start, get, list, and eligible cancellation.
-- [ ] Consume setup payload only at the sensitive controller boundary.
-- [ ] Persist node identity and projected capabilities before completion.
-- [ ] Implement node list/get and removal orchestration.
-- [ ] Resume or classify every nonterminal phase on restart.
-- [ ] Record partial cleanup as repair-required instead of hiding the node.
+- [x] Implement commissioning start, get, list, and eligible cancellation.
+- [x] Consume setup payload only at the sensitive controller boundary.
+- [x] Persist node identity and projected capabilities before completion.
+- [x] Implement node list/get and removal orchestration.
+- [x] Resume or classify every nonterminal phase on restart.
+- [x] Record partial cleanup as repair-required instead of hiding the node.
 
 ## Acceptance criteria
 
-- [ ] Every simulated lifecycle restart ends completed, failed, cancelled, or
+- [x] Every simulated lifecycle restart ends completed, failed, cancelled, or
   repair-required.
-- [ ] Setup codes never enter durable ordinary fields.
-- [ ] Removal cannot silently discard unresolved fabric or projection state.
+- [x] Setup codes never enter durable ordinary fields.
+- [x] Removal cannot silently discard unresolved fabric or projection state.
 
 ## Verification
 
-- [ ] Phase-by-phase restart and cancellation matrices pass.
-- [ ] Duplicate commissioning and removal requests remain idempotent.
-- [ ] Partial cleanup stays queryable after reopen.
+- [x] Phase-by-phase restart and cancellation matrices pass.
+- [x] Duplicate commissioning and removal requests remain idempotent.
+- [x] Partial cleanup stays queryable after reopen.
 
 ## Progress log
 
@@ -80,3 +80,5 @@ visible and repairable.
 - 2026-07-12: E4-007-03-05 node removal, atomic tombstoning, partial repair,
   and restart recovery are implemented. All local CI-equivalent gates pass;
   commit, push, and public CI remain pending.
+- 2026-07-12: Public CI run `29205464608` verified E4-007-03-05 on Linux x86_64
+  and macOS ARM64. All five child issues are done; this parent issue is done.
