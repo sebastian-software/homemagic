@@ -3,6 +3,7 @@ set -euo pipefail
 
 report_path="${1:-matter-js-official-reference-report.json}"
 expected_architecture="${2:-$(uname -m)}"
+operational_address_fallback="${3:-false}"
 candidate_manifest="config/matter-js-candidate.json"
 controller_manifest="config/matter-controller-candidates.json"
 
@@ -111,7 +112,8 @@ test "$ready" = true
 
 (
   cd "$workspace/controller-state"
-  node "$workspace/candidate/homemagic-lifecycle.mjs" \
+  HOMEMAGIC_MATTER_OPERATIONAL_ADDRESS_FALLBACK="$operational_address_fallback" \
+    node "$workspace/candidate/homemagic-lifecycle.mjs" \
     commission "$workspace/commission.json" "::1" 55541
 )
 
@@ -136,10 +138,12 @@ jq -n \
   --arg reference_revision "$reference_revision" \
   --arg reference_release "$reference_release" \
   --arg reference_target "$target" \
+  --arg operational_address_fallback "$operational_address_fallback" \
   '{
     schema: "homemagic.matter.matter-js-official-reference-report.v1",
     candidate: {id: "matter-js", revision: $candidate_revision},
     reference: {id: "connectedhomeip-light", revision: $reference_revision, release: $reference_release, target: $reference_target},
+    diagnostic: {operational_address_fallback: ($operational_address_fallback == "1")},
     host: {captured_at: $captured_at, os: $os, architecture: $architecture, node: $node},
     commission_process: $commission[0],
     restart_process: $restart[0]

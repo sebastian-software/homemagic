@@ -49,7 +49,7 @@ jobs:
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
 
       - name: Run official independent lifecycle
-        run: ./scripts/run-matter-js-official-reference.sh report.json "${{ matrix.architecture }}"
+        run: ./scripts/run-matter-js-official-reference.sh report.json "${{ matrix.architecture }}" 1
 
       - name: Upload lifecycle report
         uses: actions/upload-artifact@v6

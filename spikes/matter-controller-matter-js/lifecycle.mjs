@@ -5,7 +5,7 @@ import "@matter/nodejs";
 import { Environment, Logger } from "@matter/main";
 import { OnOffClient } from "@matter/main/behaviors/on-off";
 import { BasicInformationCluster, GeneralCommissioning } from "@matter/main/clusters";
-import { ControllerCommissioningFlow } from "@matter/protocol";
+import { ControllerCommissioningFlow, PeerSet } from "@matter/protocol";
 import { CommissioningController } from "@project-chip/matter.js";
 import { writeFile } from "node:fs/promises";
 
@@ -13,6 +13,7 @@ Logger.level = "fatal";
 
 const [mode, reportPath, address = "::1", portText = "55540"] = process.argv.slice(2);
 const port = Number(portText);
+const operationalAddressFallback = process.env.HOMEMAGIC_MATTER_OPERATIONAL_ADDRESS_FALLBACK === "1";
 const outcomes = {
     fabric_create: "not_run",
     commission: "not_run",
@@ -43,8 +44,17 @@ const fail = async (phase, error) => {
 };
 
 class InstrumentedCommissioningFlow extends ControllerCommissioningFlow {
-    constructor(...args) {
-        super(...args);
+    constructor(interaction, ca, fabric, commissioningOptions, transitionToCase) {
+        const instrumentedTransition = async (peerAddress, supportsConcurrentConnections) => {
+            if (operationalAddressFallback) {
+                const peer = Environment.default.get(PeerSet).for(peerAddress);
+                peer.descriptor.operationalAddress = { ip: address, port, type: "udp" };
+                report.operational_address_fallback = "applied";
+                await persist();
+            }
+            return transitionToCase(peerAddress, supportsConcurrentConnections);
+        };
+        super(interaction, ca, fabric, commissioningOptions, instrumentedTransition);
         report.commissioning_stages = [];
         for (const step of this.commissioningSteps) {
             const execute = step.stepLogic;
