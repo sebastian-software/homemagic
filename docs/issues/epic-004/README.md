@@ -44,7 +44,7 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Done | E4-007-03 | Authenticated bounded read-only diagnostics |
 | [E4-007-04-02](E4-007-04-02-subscription-status.md) | Done | E4-007-04-01 | Deterministic subscription status |
 | [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Done | E4-007-04-02 | Explicit gap-read and resubscribe repair |
-| [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Ready | E4-007-04-03 | Restart and exhaustion reconciliation |
+| [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | In progress | E4-007-04-03 | Restart and exhaustion reconciliation |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
 | [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
@@ -161,3 +161,6 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   all local CI-equivalent gates pass and public CI remains pending.
 - 2026-07-12: E4-007-04-03 passed public CI run `29207047390` and is done;
   E4-007-04-04 is ready.
+- 2026-07-12: E4-007-04-04 fail-closed restart and unresolved-repair retention
+  are implemented; all local CI-equivalent gates pass and public CI remains
+  pending.

@@ -216,6 +216,30 @@ appends terminal operation progress, and opens structured repair evidence.
 Contract call counting proves one gap read and no more subscribe calls than the
 declared policy.
 
+### Repair restart reconciliation
+
+Both controller calls now have a durable pre-dispatch reservation. Entering
+`reading_gap` consumes the one fixed gap-read unit before the read. Entering or
+retrying `subscribing` consumes one subscribe-attempt unit before the subscribe
+call. A crash can therefore never reset a counter and obtain another call for
+free.
+
+The current controller contract has no bounded query that can prove the outcome
+of an interrupted gap read or subscribe dispatch. Reopening `reading_gap`, or
+reopening `subscribing` without a persisted controller failure and retry
+deadline, consequently transitions atomically to `repair_required` with an
+`outcome_indeterminate` repair record. It never blindly repeats controller I/O.
+A known failed subscribe is different: its durable future `retry_at` continues
+to return `waiting` without I/O, and at the exact deadline the next attempt is
+reserved and dispatched once.
+
+Requested operations may resume because no controller barrier has been crossed.
+Completed and repair-required operations replay their terminal result without
+I/O. Unresolved repair rows protect their terminal operation from both age- and
+count-based retention, so exhaustion and remediation survive reopen until an
+explicit later repair resolves them. None of these restart paths authorizes
+automation catch-up or replays unrelated commands.
+
 ## Verification
 
 SQLite contracts cover allowed, denied, duplicate, conflicting-key,
