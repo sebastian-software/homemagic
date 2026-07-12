@@ -44,7 +44,7 @@ node_modules_kib="$(du -sk node_modules | awk '{print $1}')"
 distribution_kib="$(du -sk packages/*/dist examples/controller/dist 2>/dev/null | awk '{sum += $1} END {print sum + 0}')"
 package_manifest_count="$(find node_modules -type f -name package.json | wc -l | tr -d ' ')"
 native_addon_count="$(find node_modules -type f -name '*.node' | wc -l | tr -d ' ')"
-typescript_lines="$(git ls-files '*.ts' '*.mts' '*.cts' | xargs wc -l | awk 'END {print $1 + 0}')"
+typescript_lines="$(git ls-files '*.ts' '*.mts' '*.cts' | xargs wc -l | awk '$2 != "total" {sum += $1} END {print sum + 0}')"
 controller_typescript_lines="$(wc -l packages/matter.js/src/CommissioningController.ts | awk '{print $1}')"
 
 jq -n \
