@@ -1,0 +1,49 @@
+name: Matter independent reference
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - config/matter-controller-candidates.json
+      - scripts/run-matter-independent-reference.sh
+      - spikes/matter-controller-rust-matc/**
+      - .github/workflows/matter-independent-reference.yml
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    name: rust-matc vs rs-matter (${{ matrix.label }})
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: x86_64
+            label: Linux x86_64
+          - runner: macos-14
+            architecture: arm64
+            label: macOS ARM64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out HomeMagic
+        uses: actions/checkout@v6
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Run independent lifecycle
+        run: ./scripts/run-matter-independent-reference.sh report.json "${{ matrix.architecture }}"
+
+      - name: Upload lifecycle report
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-matc-rs-matter-${{ matrix.architecture }}
+          path: report.json
+          if-no-files-found: error

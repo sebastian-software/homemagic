@@ -1,0 +1,77 @@
+diff --git a/examples/src/bin/onoff_light.rs b/examples/src/bin/onoff_light.rs
+index 07f9ecb..beb6ed3 100644
+--- a/examples/src/bin/onoff_light.rs
++++ b/examples/src/bin/onoff_light.rs
+@@ -21,7 +21,7 @@ use core::pin::pin;
+ 
+ use std::net::UdpSocket;
+ 
+-use embassy_futures::select::select4;
++use embassy_futures::select::select3;
+ 
+ use rand::RngCore;
+ 
+@@ -44,19 +44,19 @@ use rs_matter::persist::DirKvBlobStore;
+ use rs_matter::respond::DefaultResponder;
+ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+ use rs_matter::transport::exchange::MatterBuffers;
+-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
+ use rs_matter::utils::select::Coalesce;
+-use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
+-
+-#[path = "../common/mdns.rs"]
+-mod mdns;
++use rs_matter::{clusters, devices, root_endpoint, Matter};
+ 
+ fn main() -> Result<(), Error> {
+     env_logger::init_from_env(
+         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+     );
+ 
+-    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
++    let port = std::env::var("HOMEMAGIC_MATTER_TEST_PORT")
++        .ok()
++        .and_then(|value| value.parse::<u16>().ok())
++        .unwrap_or(55_540);
++    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, port);
+ 
+     // Persistence
+     let store = DirKvBlobStore::new_default();
+@@ -83,7 +83,7 @@ fn main() -> Result<(), Error> {
+     let on_off_handler = on_off::OnOffHandler::new_standalone(
+         Dataver::new_rand(&mut rand),
+         1,
+-        TestOnOffDeviceLogic::new(true),
++        TestOnOffDeviceLogic::new(false),
+     );
+ 
+     // Create the Data Model instance
+@@ -108,10 +108,15 @@ fn main() -> Result<(), Error> {
+     let mut im_job = pin!(im.run());
+ 
+     // Create, load and run the persister
+-    let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+-
+-    // Run the Matter and mDNS transports
+-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
++    let bind_addr = std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
++        std::net::Ipv6Addr::UNSPECIFIED,
++        port,
++        0,
++        0,
++    ));
++    let socket = async_io::Async::<UdpSocket>::bind(bind_addr)?;
++
++    // Run the Matter transport without mDNS in the isolated reference fixture.
+     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
+ 
+     if !matter.is_commissioned() {
+@@ -125,7 +130,7 @@ fn main() -> Result<(), Error> {
+     }
+ 
+     // Combine all async tasks in a single one
+-    let all = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
++    let all = select3(&mut transport, &mut respond, &mut im_job).coalesce();
+ 
+     // Run with a simple `block_on`. Any local executor would do.
+     futures_lite::future::block_on(all)

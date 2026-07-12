@@ -1,0 +1,13 @@
+[workspace]
+
+[package]
+name = "homemagic-rust-matc-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0.100"
+matc = { git = "https://github.com/tom-code/rust-matc.git", rev = "c829d2a1b570b2f2433607a3f4731074b73fb367" }
+serde_json = "1.0.145"
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "time"] }
