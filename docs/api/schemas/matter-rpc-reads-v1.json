@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homemagic.dev/schemas/matter-rpc-reads-v1.json",
+  "title": "HomeMagic Matter read RPC v1",
+  "methods": {
+    "matter.fabric.status": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "matter.operations.list": {
+      "type": "object",
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 256, "default": 50 }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "matter.operations.get": {
+      "type": "object",
+      "properties": {
+        "operation_id": { "type": "string", "minLength": 1 }
+      },
+      "required": ["operation_id"],
+      "additionalProperties": false
+    },
+    "matter.nodes.list": {
+      "type": "object",
+      "properties": {
+        "fabric_id": { "type": "string", "minLength": 1 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 256, "default": 50 }
+      },
+      "required": ["fabric_id"],
+      "additionalProperties": false
+    },
+    "matter.nodes.get": {
+      "type": "object",
+      "properties": {
+        "fabric_id": { "type": "string", "minLength": 1 },
+        "node_id": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["fabric_id", "node_id"],
+      "additionalProperties": false
+    },
+    "matter.diagnostics.get": {
+      "type": "object",
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 256, "default": 50 },
+        "evaluated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["evaluated_at"],
+      "additionalProperties": false
+    }
+  },
+  "result_envelopes": {
+    "fabric": { "type": "object", "required": ["schema", "fabric"] },
+    "operations": { "type": "object", "required": ["schema", "operations"] },
+    "operation": { "type": "object", "required": ["schema", "operation"] },
+    "nodes": { "type": "object", "required": ["schema", "nodes"] },
+    "node": { "type": "object", "required": ["schema", "node"] },
+    "diagnostics": { "type": "object", "required": ["schema", "diagnostics"] }
+  }
+}

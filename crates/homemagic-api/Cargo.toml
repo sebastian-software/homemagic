@@ -19,6 +19,7 @@ tracing.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+homemagic-matter = { path = "../homemagic-matter" }
 homemagic-storage = { path = "../homemagic-storage" }
 tempfile.workspace = true
 tokio-tungstenite.workspace = true

@@ -1120,6 +1120,7 @@ dependencies = [
  "futures-util",
  "homemagic-application",
  "homemagic-domain",
+ "homemagic-matter",
  "homemagic-storage",
  "serde",
  "serde_json",
