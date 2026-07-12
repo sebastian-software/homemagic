@@ -48,8 +48,8 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | In progress | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-007-05-01](E4-007-05-01-rpc-contracts-reads.md) | Done | E4-007-04 | Versioned Matter read RPC contracts |
 | [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | Done | E4-007-05-01 | Immediate mutations and sensitive exchange |
-| [E4-007-05-03](E4-007-05-03-operation-events.md) | In progress | E4-007-05-02 | Actor-filtered operation events |
-| [E4-007-05-04](E4-007-05-04-examples-exit.md) | Planned | E4-007-05-03 | Executable examples and Track A exit evidence |
+| [E4-007-05-03](E4-007-05-03-operation-events.md) | Done | E4-007-05-02 | Actor-filtered operation events |
+| [E4-007-05-04](E4-007-05-04-examples-exit.md) | Ready | E4-007-05-03 | Executable examples and Track A exit evidence |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
 | [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
 | [E4-010](E4-010-portability-interoperability.md) | Planned | E4-007, E4-009 | Protected fabric portability and reference interoperability |
@@ -182,3 +182,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   ready.
 - 2026-07-12: E4-007-05-03 atomic actor-scoped operation events pass all local
   CI-equivalent gates; public CI is pending.
+- 2026-07-12: E4-007-05-03 passed public CI run `29208961425`; E4-007-05-04 is
+  ready.

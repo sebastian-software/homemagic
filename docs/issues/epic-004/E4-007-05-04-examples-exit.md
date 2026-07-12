@@ -3,7 +3,7 @@ id: E4-007-05-04
 epic: EPIC-004
 parent: E4-007-05
 title: Validate Matter RPC examples and Track A exit evidence
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-05-03]
 adrs: [ADR-0003, ADR-0012, ADR-0016, ADR-0042]

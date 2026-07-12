@@ -3,7 +3,7 @@ id: E4-007-05-03
 epic: EPIC-004
 parent: E4-007-05
 title: Stream actor-filtered durable Matter operation events
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-05-02]
 adrs: [ADR-0012, ADR-0013, ADR-0032, ADR-0042]
@@ -37,7 +37,7 @@ actor from the immutable operation binding.
 
 - [x] Creation, every phase, rollback, actor isolation, cursor, lag, and reopen
   contracts pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -47,3 +47,6 @@ actor from the immutable operation binding.
   cancellation rollback, actor isolation, cursor, lag, and reopen contracts
   pass. Full local workspace tests, strict Clippy, Matter boundaries, and secret
   scans pass; public CI remains pending.
+- 2026-07-12: Public CI run `29208961425` passed Linux x86_64 Rust quality and
+  Linux x86_64/macOS ARM64 simulator verification. This issue is done;
+  E4-007-05-04 is ready.
