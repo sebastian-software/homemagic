@@ -1238,14 +1238,9 @@ async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable()
         inventory.list(&fixture.actor, &fabric_id, 0).await,
         Err(MatterNodeInventoryError::InvalidPageLimit)
     ));
-    assert!(workflow.list_nodes(&fixture.actor, 16).await?.is_empty());
     assert!(matches!(
-        workflow.list_nodes(&fixture.actor, 0).await,
-        Err(MatterNodeWorkflowError::InvalidPageLimit)
-    ));
-    assert!(matches!(
-        workflow.list_nodes(&fixture.actor, 257).await,
-        Err(MatterNodeWorkflowError::InvalidPageLimit)
+        inventory.list(&fixture.actor, &fabric_id, 257).await,
+        Err(MatterNodeInventoryError::InvalidPageLimit)
     ));
 
     let mut commissioned = Vec::new();
@@ -1273,8 +1268,8 @@ async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable()
         commissioned.push(value);
     }
 
-    let first_page = workflow.list_nodes(&fixture.actor, 1).await?;
-    let all = workflow.list_nodes(&fixture.actor, 256).await?;
+    let first_page = inventory.list(&fixture.actor, &fabric_id, 1).await?;
+    let all = inventory.list(&fixture.actor, &fabric_id, 256).await?;
     assert_eq!(first_page.len(), 1);
     assert_eq!(first_page[0].node_id.get(), 0x1001);
     assert_eq!(all.len(), 2);
@@ -1284,8 +1279,8 @@ async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable()
             && node.commissioning_operation_id.is_some()
             && !node.projection_ids.is_empty()
     }));
-    let detail = workflow
-        .get_node(&fixture.actor, MatterNodeId::new(0x1001)?)
+    let detail = inventory
+        .get(&fixture.actor, &fabric_id, MatterNodeId::new(0x1001)?)
         .await?
         .ok_or("inventory detail missing")?;
     let json = serde_json::to_string(&detail)?;
@@ -1337,10 +1332,15 @@ async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable()
             }],
         )
         .await?;
-    assert!(workflow.list_nodes(&foreign_actor, 16).await?.is_empty());
     assert!(
-        workflow
-            .get_node(&foreign_actor, MatterNodeId::new(0x1001)?)
+        inventory
+            .list(&foreign_actor, &fabric_id, 16)
+            .await?
+            .is_empty()
+    );
+    assert!(
+        inventory
+            .get(&foreign_actor, &fabric_id, MatterNodeId::new(0x1001)?)
             .await?
             .is_none()
     );
@@ -1358,19 +1358,20 @@ async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable()
         .store_actor(disabled_actor.clone(), None)
         .await?;
     assert!(matches!(
-        workflow.list_nodes(&disabled_actor, 16).await,
-        Err(MatterNodeWorkflowError::Administration(_))
+        inventory.list(&disabled_actor, &fabric_id, 16).await,
+        Err(MatterNodeInventoryError::Administration(_))
     ));
 
     let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
-    let reopened_workflow = MatterNodeWorkflowService::new(
+    let reopened_inventory = MatterNodeInventoryService::new(
         MatterAdministrationService::new(reopened.clone(), reopened.clone()),
         reopened,
-        controller,
     );
-    let reopened_all = reopened_workflow.list_nodes(&fixture.actor, 256).await?;
-    let reopened_detail = reopened_workflow
-        .get_node(&fixture.actor, commissioned[0].node_id)
+    let reopened_all = reopened_inventory
+        .list(&fixture.actor, &fabric_id, 256)
+        .await?;
+    let reopened_detail = reopened_inventory
+        .get(&fixture.actor, &fabric_id, commissioned[0].node_id)
         .await?
         .ok_or("inventory detail missing after reopen")?;
 
