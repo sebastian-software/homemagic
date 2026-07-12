@@ -741,6 +741,16 @@ async fn command_control_should_collapse_undispatched_state_and_preserve_dispatc
             ..
         }
     ));
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let restarted_control = MatterCommandDispatchControl::new(reopened.clone(), reopened);
+    assert!(matches!(
+        restarted_control.register_desired(&first, now).await?,
+        DesiredStateRegistration::Managed {
+            desired_revision: 1,
+            superseded_audit: None,
+            ..
+        }
+    ));
     assert!(matches!(
         control.register_desired(&first, now).await?,
         DesiredStateRegistration::Managed {
