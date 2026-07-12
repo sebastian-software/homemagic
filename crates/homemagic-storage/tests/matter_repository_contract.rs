@@ -12,14 +12,14 @@ use homemagic_application::{
     CommandConfirmationOutcome, CommandCreateOutcome, CommandDispatchControl, CommandDispatcher,
     CommandLimitConfig, CommandLimits, CommandRepository, CommandRequest, CommandService,
     CommandServiceDependencies, CommandServiceError, DesiredStateRegistration,
-    FoundationRepository, FoundationWrite, MatterCommandDispatchControl,
-    MatterCommissioningRequest, MatterController, MatterCreateFabricRequest,
-    MatterDesiredCommandSlot, MatterDesiredStateWrite, MatterDispatchAdmission,
-    MatterDispatchWrite, MatterFabricSecretRefs, MatterFabricState, MatterOperationProgress,
-    MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRetention,
-    MatterSupersededCommand, MatterUnlockAuthorization, MatterUnlockConsumption, SecretValue,
-    StoredMatterFabric, StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
-    StoredMatterSubscriptionState,
+    FoundationRepository, FoundationWrite, MatterAdministrationError, MatterAdministrationRequest,
+    MatterAdministrationService, MatterCommandDispatchControl, MatterCommissioningRequest,
+    MatterController, MatterCreateFabricRequest, MatterDesiredCommandSlot, MatterDesiredStateWrite,
+    MatterDispatchAdmission, MatterDispatchWrite, MatterFabricSecretRefs, MatterFabricState,
+    MatterOperationCreateOutcome, MatterOperationProgress, MatterRepairRecord, MatterRepairStatus,
+    MatterRepository, MatterRetention, MatterSupersededCommand, MatterUnlockAuthorization,
+    MatterUnlockConsumption, SecretValue, StoredMatterFabric, StoredMatterNode,
+    StoredMatterProjection, StoredMatterSubscription, StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, AuditId, CapabilityDescriptor, CapabilitySnapshot,
@@ -255,18 +255,38 @@ impl Fixture {
         repository
             .replace_actor_grants(
                 &actor.id,
-                vec![ActorGrant {
-                    id: GrantId::new(),
-                    actor_id: actor.id.clone(),
-                    actions: BTreeSet::from([CommandAction::Execute, CommandAction::ApproveUnlock]),
-                    scope: GrantScope::Capability {
-                        device_id: device_id.clone(),
-                        endpoint_id: lock_endpoint_id.clone(),
-                        schema: "access_control.v1".to_owned(),
+                vec![
+                    ActorGrant {
+                        id: GrantId::new(),
+                        actor_id: actor.id.clone(),
+                        actions: BTreeSet::from([
+                            CommandAction::Execute,
+                            CommandAction::ApproveUnlock,
+                        ]),
+                        scope: GrantScope::Capability {
+                            device_id: device_id.clone(),
+                            endpoint_id: lock_endpoint_id.clone(),
+                            schema: "access_control.v1".to_owned(),
+                        },
+                        maximum_risk: RiskClass::Security,
+                        enabled: true,
                     },
-                    maximum_risk: RiskClass::Security,
-                    enabled: true,
-                }],
+                    ActorGrant {
+                        id: GrantId::new(),
+                        actor_id: actor.id.clone(),
+                        actions: BTreeSet::from([
+                            CommandAction::MatterRead,
+                            CommandAction::MatterCommissionNode,
+                            CommandAction::MatterCancelOperation,
+                            CommandAction::MatterRemoveNode,
+                        ]),
+                        scope: GrantScope::Installation {
+                            installation_id: installation_id.clone(),
+                        },
+                        maximum_risk: RiskClass::Security,
+                        enabled: true,
+                    },
+                ],
             )
             .await?;
         let projection_id = MatterProjectionId::from_key(&fabric_id, node_id.get(), 1, "on_off", 1);
@@ -610,6 +630,283 @@ async fn matter_identity_and_incomplete_operation_should_survive_reopen() -> Tes
     assert_eq!(recovery.subscriptions, vec![subscription]);
     assert_eq!(recovery.projections, vec![projection]);
     assert_eq!(reopened_projection.device_id, expected_device);
+    Ok(())
+}
+
+#[tokio::test]
+async fn administration_admission_should_be_actor_scoped_and_idempotent() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let service = MatterAdministrationService::new(repository.clone(), repository);
+    let now = Utc::now();
+    let request = MatterAdministrationRequest {
+        kind: MatterOperationKind::CommissionNode,
+        target: MatterOperationTarget::Node {
+            fabric_id: fixture.fabric_id.clone(),
+            node_id: fixture.node_id,
+        },
+        idempotency_key: IdempotencyKey::new("commission-one")?,
+    };
+    let MatterOperationCreateOutcome::Created(created) =
+        service.admit(&fixture.actor, request.clone(), now).await?
+    else {
+        return Err("first administration request was not created".into());
+    };
+    let equivalent = service
+        .admit(&fixture.actor, request, now + TimeDelta::milliseconds(1))
+        .await?;
+    let conflict = service
+        .admit(
+            &fixture.actor,
+            MatterAdministrationRequest {
+                kind: MatterOperationKind::RemoveNode,
+                target: MatterOperationTarget::Node {
+                    fabric_id: fixture.fabric_id.clone(),
+                    node_id: fixture.node_id,
+                },
+                idempotency_key: IdempotencyKey::new("commission-one")?,
+            },
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?;
+    let listed = service.list(&fixture.actor, 10).await?;
+    let owned = service.get(&fixture.actor, &created.id).await?;
+    let other_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: fixture.installation_id.clone(),
+        kind: homemagic_domain::ActorKind::User,
+        name: "Other operator".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(other_actor.clone(), None)
+        .await?;
+    fixture
+        .repository
+        .replace_actor_grants(
+            &other_actor.id,
+            vec![ActorGrant {
+                id: GrantId::new(),
+                actor_id: other_actor.id.clone(),
+                actions: BTreeSet::from([CommandAction::MatterRead]),
+                scope: GrantScope::Installation {
+                    installation_id: fixture.installation_id.clone(),
+                },
+                maximum_risk: RiskClass::Security,
+                enabled: true,
+            }],
+        )
+        .await?;
+    let hidden = service.get(&other_actor, &created.id).await?;
+
+    assert!(matches!(
+        equivalent,
+        MatterOperationCreateOutcome::ExistingEquivalent(ref operation)
+            if operation.id == created.id
+    ));
+    assert_eq!(
+        conflict,
+        MatterOperationCreateOutcome::Conflict(created.id.clone())
+    );
+    assert_eq!(listed, vec![created.clone()]);
+    assert_eq!(owned, Some(created));
+    assert_eq!(hidden, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn administration_admission_should_fail_without_exact_installation_grant() -> TestResult {
+    let fixture = Fixture::new().await?;
+    fixture
+        .repository
+        .replace_actor_grants(
+            &fixture.actor.id,
+            vec![ActorGrant {
+                id: GrantId::new(),
+                actor_id: fixture.actor.id.clone(),
+                actions: BTreeSet::from([CommandAction::MatterCommissionNode]),
+                scope: GrantScope::Device {
+                    device_id: fixture.device_id.clone(),
+                },
+                maximum_risk: RiskClass::Security,
+                enabled: true,
+            }],
+        )
+        .await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let service = MatterAdministrationService::new(repository.clone(), repository);
+    let result = service
+        .admit(
+            &fixture.actor,
+            MatterAdministrationRequest {
+                kind: MatterOperationKind::CommissionNode,
+                target: MatterOperationTarget::Node {
+                    fabric_id: fixture.fabric_id,
+                    node_id: fixture.node_id,
+                },
+                idempotency_key: IdempotencyKey::new("denied-commission")?,
+            },
+            Utc::now(),
+        )
+        .await;
+
+    assert!(matches!(result, Err(MatterAdministrationError::Denied)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn administration_admission_should_reject_kind_target_mismatch() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let service = MatterAdministrationService::new(repository.clone(), repository);
+    let result = service
+        .admit(
+            &fixture.actor,
+            MatterAdministrationRequest {
+                kind: MatterOperationKind::CreateFabric,
+                target: MatterOperationTarget::Node {
+                    fabric_id: fixture.fabric_id,
+                    node_id: fixture.node_id,
+                },
+                idempotency_key: IdempotencyKey::new("invalid-create-target")?,
+            },
+            Utc::now(),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(MatterAdministrationError::InvalidTarget)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn requested_commissioning_cancellation_should_survive_reopen() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let service = MatterAdministrationService::new(repository.clone(), repository);
+    let now = Utc::now();
+    let MatterOperationCreateOutcome::Created(operation) = service
+        .admit(
+            &fixture.actor,
+            MatterAdministrationRequest {
+                kind: MatterOperationKind::CommissionNode,
+                target: MatterOperationTarget::Node {
+                    fabric_id: fixture.fabric_id.clone(),
+                    node_id: fixture.node_id,
+                },
+                idempotency_key: IdempotencyKey::new("cancel-commission")?,
+            },
+            now,
+        )
+        .await?
+    else {
+        return Err("commissioning operation was not created".into());
+    };
+    let cancelled = service
+        .cancel_requested(
+            &fixture.actor,
+            &operation.id,
+            now + TimeDelta::milliseconds(1),
+        )
+        .await?;
+    drop(service);
+    drop(fixture.repository);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let restarted = MatterAdministrationService::new(reopened.clone(), reopened);
+    let durable = restarted.get(&fixture.actor, &operation.id).await?;
+
+    assert_eq!(cancelled.phase, MatterOperationPhase::Cancelled);
+    assert_eq!(durable, Some(cancelled));
+    assert!(matches!(
+        restarted
+            .cancel_requested(
+                &fixture.actor,
+                &operation.id,
+                now + TimeDelta::milliseconds(2),
+            )
+            .await,
+        Err(MatterAdministrationError::NotCancellable)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn controller_failures_should_be_normalized_with_repair_evidence() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let service = MatterAdministrationService::new(repository.clone(), repository);
+    let now = Utc::now();
+    let request = |key: &str| -> TestResult<MatterAdministrationRequest> {
+        Ok(MatterAdministrationRequest {
+            kind: MatterOperationKind::CommissionNode,
+            target: MatterOperationTarget::Node {
+                fabric_id: fixture.fabric_id.clone(),
+                node_id: fixture.node_id,
+            },
+            idempotency_key: IdempotencyKey::new(key)?,
+        })
+    };
+    let MatterOperationCreateOutcome::Created(failing) = service
+        .admit(&fixture.actor, request("terminal-failure")?, now)
+        .await?
+    else {
+        return Err("terminal failure operation was not created".into());
+    };
+    let MatterOperationCreateOutcome::Created(repairing) = service
+        .admit(
+            &fixture.actor,
+            request("repair-failure")?,
+            now + TimeDelta::milliseconds(1),
+        )
+        .await?
+    else {
+        return Err("repair operation was not created".into());
+    };
+    let failed = service
+        .record_controller_failure(
+            &fixture.actor,
+            &failing.id,
+            MatterControllerError::new(
+                MatterControllerErrorCategory::Validation,
+                MatterControllerErrorCode::InvalidRequest,
+                MatterRetryability::Never,
+                None,
+                None,
+            ),
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?;
+    let repair_required = service
+        .record_controller_failure(
+            &fixture.actor,
+            &repairing.id,
+            MatterControllerError::new(
+                MatterControllerErrorCategory::Persistence,
+                MatterControllerErrorCode::OutcomeIndeterminate,
+                MatterRetryability::AfterRepair,
+                None,
+                Some(homemagic_domain::MatterRepairAction::ReviewPartialCleanup),
+            ),
+            now + TimeDelta::milliseconds(3),
+        )
+        .await?;
+    let recovery = fixture
+        .repository
+        .recover_matter(
+            &fixture.installation_id,
+            now + TimeDelta::milliseconds(4),
+            10,
+        )
+        .await?;
+
+    assert_eq!(failed.phase, MatterOperationPhase::Failed);
+    assert_eq!(repair_required.phase, MatterOperationPhase::RepairRequired);
+    assert_eq!(recovery.repairs.len(), 1);
+    assert_eq!(recovery.repairs[0].operation_id, repairing.id);
     Ok(())
 }
 

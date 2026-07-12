@@ -11,6 +11,7 @@ mod automation_runtime;
 mod automation_scheduler;
 mod automation_simulator;
 mod command_service;
+mod matter_administration;
 mod matter_commands;
 mod matter_controller;
 mod matter_projection;
@@ -79,6 +80,7 @@ pub use command_service::{
     CommandRequest, CommandService, CommandServiceDependencies, CommandServiceError,
     DomainEventCommandAuditSink, NoopCommandAuditSink,
 };
+pub use matter_administration::*;
 pub use matter_commands::*;
 pub use matter_controller::*;
 pub use matter_projection::*;

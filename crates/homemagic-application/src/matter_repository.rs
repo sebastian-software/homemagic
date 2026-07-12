@@ -11,7 +11,10 @@ use homemagic_domain::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{BoxError, CanonicalRequestHash, MatterFabricSecretRefs, MatterFabricState};
+use crate::{
+    BoxError, CanonicalRequestHash, MatterFabricSecretRefs, MatterFabricState,
+    MatterOperationBinding, MatterOperationCreateOutcome,
+};
 
 /// Durable fabric metadata containing references, never secret values.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -362,6 +365,27 @@ pub trait MatterRepository: Send + Sync {
         operation: MatterOperation,
         progress: MatterOperationProgress,
     ) -> Result<(), BoxError>;
+
+    /// Atomically creates one actor-bound idempotent administration operation.
+    async fn create_matter_administration_operation(
+        &self,
+        operation: MatterOperation,
+        binding: MatterOperationBinding,
+        progress: MatterOperationProgress,
+    ) -> Result<MatterOperationCreateOutcome, BoxError>;
+
+    /// Loads one administration operation and its immutable actor binding.
+    async fn matter_administration_operation(
+        &self,
+        operation_id: &MatterOperationId,
+    ) -> Result<Option<(MatterOperation, MatterOperationBinding)>, BoxError>;
+
+    /// Loads a bounded newest-first operation page owned by one actor.
+    async fn actor_matter_administration_operations(
+        &self,
+        actor_id: &ActorId,
+        limit: usize,
+    ) -> Result<Vec<MatterOperation>, BoxError>;
 
     /// Atomically replaces an operation and appends its progress fact.
     async fn transition_matter_operation(

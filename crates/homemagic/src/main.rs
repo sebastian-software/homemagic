@@ -51,6 +51,33 @@ enum GrantRisk {
     Mechanical,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum MatterGrantAction {
+    Read,
+    CreateFabric,
+    CommissionNode,
+    CancelOperation,
+    RemoveNode,
+    ExportFabric,
+    RestoreFabric,
+    RepairSubscription,
+}
+
+impl From<MatterGrantAction> for CommandAction {
+    fn from(value: MatterGrantAction) -> Self {
+        match value {
+            MatterGrantAction::Read => Self::MatterRead,
+            MatterGrantAction::CreateFabric => Self::MatterCreateFabric,
+            MatterGrantAction::CommissionNode => Self::MatterCommissionNode,
+            MatterGrantAction::CancelOperation => Self::MatterCancelOperation,
+            MatterGrantAction::RemoveNode => Self::MatterRemoveNode,
+            MatterGrantAction::ExportFabric => Self::MatterExportFabric,
+            MatterGrantAction::RestoreFabric => Self::MatterRestoreFabric,
+            MatterGrantAction::RepairSubscription => Self::MatterRepairSubscription,
+        }
+    }
+}
+
 impl From<GrantRisk> for RiskClass {
     fn from(value: GrantRisk) -> Self {
         match value {
@@ -155,6 +182,17 @@ enum Command {
         /// Maximum allowed risk; security grants require a narrower future command.
         #[arg(long, value_enum, default_value_t = GrantRisk::Comfort)]
         maximum_risk: GrantRisk,
+    },
+    /// Replace one actor's exact installation-scoped Matter administration actions.
+    ActorGrantMatterAdministration {
+        /// Durable database that owns the actor and installation.
+        #[arg(long, default_value = "homemagic.sqlite3", env = "HOMEMAGIC_DATABASE")]
+        database: PathBuf,
+        /// Actor receiving the selected actions.
+        actor_id: ActorId,
+        /// Independently grantable Matter administration action; repeat as needed.
+        #[arg(long, value_enum, required = true)]
+        action: Vec<MatterGrantAction>,
     },
     /// Start the `HomeMagic` JSON-RPC server.
     Serve {
@@ -261,6 +299,11 @@ async fn main() -> Result<()> {
             device_query,
             maximum_risk,
         } => actor_grant_device_execute(&database, &actor_id, &device_query, maximum_risk).await,
+        Command::ActorGrantMatterAdministration {
+            database,
+            actor_id,
+            action,
+        } => actor_grant_matter_administration(&database, &actor_id, &action).await,
         Command::Serve {
             bind,
             discovery_seconds,
@@ -404,6 +447,81 @@ async fn actor_grant_device_execute(
         }))?
     );
     Ok(())
+}
+
+async fn actor_grant_matter_administration(
+    database: &Path,
+    actor_id: &ActorId,
+    actions: &[MatterGrantAction],
+) -> Result<()> {
+    if actions.is_empty() {
+        anyhow::bail!("at least one Matter administration action is required");
+    }
+    let repository = Arc::new(
+        SqliteRepository::open(database)
+            .with_context(|| format!("failed to open database at {}", database.display()))?,
+    );
+    let mut security = repository
+        .actor_security(actor_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?
+        .context("actor does not exist")?;
+    let selected = actions
+        .iter()
+        .copied()
+        .map(CommandAction::from)
+        .collect::<BTreeSet<_>>();
+    for grant in &mut security.grants {
+        if matches!(
+            &grant.scope,
+            GrantScope::Installation { installation_id }
+                if installation_id == &security.actor.installation_id
+        ) {
+            grant
+                .actions
+                .retain(|action| !is_matter_administration_action(*action));
+        }
+    }
+    security.grants.retain(|grant| !grant.actions.is_empty());
+    security.grants.push(ActorGrant {
+        id: GrantId::new(),
+        actor_id: actor_id.clone(),
+        actions: selected.clone(),
+        scope: GrantScope::Installation {
+            installation_id: security.actor.installation_id.clone(),
+        },
+        maximum_risk: RiskClass::Security,
+        enabled: true,
+    });
+    repository
+        .replace_actor_grants(actor_id, security.grants)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "status": "granted",
+            "actor_id": actor_id,
+            "scope": "installation",
+            "actions": selected,
+            "maximum_risk": RiskClass::Security
+        }))?
+    );
+    Ok(())
+}
+
+const fn is_matter_administration_action(action: CommandAction) -> bool {
+    matches!(
+        action,
+        CommandAction::MatterRead
+            | CommandAction::MatterCreateFabric
+            | CommandAction::MatterCommissionNode
+            | CommandAction::MatterCancelOperation
+            | CommandAction::MatterRemoveNode
+            | CommandAction::MatterExportFabric
+            | CommandAction::MatterRestoreFabric
+            | CommandAction::MatterRepairSubscription
+    )
 }
 
 fn select_installation(
@@ -1099,6 +1217,48 @@ mod tests {
                     GrantScope::Device { device_id: granted } if granted == &device_id
                 )
         }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn matter_administration_grant_should_replace_only_selected_actions() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("matter-grant.sqlite3");
+        let repository = Arc::new(SqliteRepository::open(&path)?);
+        let integration = bootstrap_shelly(&repository).await?;
+        let (actor, _) = ActorAuthentication::new(repository.clone())
+            .bootstrap(integration.installation_id.clone(), "Matter operator")
+            .await?;
+        drop(repository);
+
+        actor_grant_matter_administration(
+            &path,
+            &actor.id,
+            &[MatterGrantAction::Read, MatterGrantAction::CommissionNode],
+        )
+        .await?;
+        actor_grant_matter_administration(&path, &actor.id, &[MatterGrantAction::Read]).await?;
+
+        let reopened = SqliteRepository::open(path)?;
+        let security = reopened
+            .actor_security(&actor.id)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .context("actor security missing")?;
+        let actions = security
+            .grants
+            .iter()
+            .filter(|grant| {
+                matches!(
+                    &grant.scope,
+                    GrantScope::Installation { installation_id }
+                        if installation_id == &integration.installation_id
+                )
+            })
+            .flat_map(|grant| grant.actions.iter().copied())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(actions, BTreeSet::from([CommandAction::MatterRead]));
         Ok(())
     }
 

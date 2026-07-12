@@ -476,6 +476,22 @@ pub enum CommandAction {
     ReadAudit,
     /// Interactively authorize one exact pending unlock command.
     ApproveUnlock,
+    /// Read bounded Matter administration and operation state.
+    MatterRead,
+    /// Create and load a Matter fabric.
+    MatterCreateFabric,
+    /// Commission one node into a Matter fabric.
+    MatterCommissionNode,
+    /// Cancel one eligible Matter operation.
+    MatterCancelOperation,
+    /// Remove one node from a Matter fabric.
+    MatterRemoveNode,
+    /// Export one protected Matter fabric envelope.
+    MatterExportFabric,
+    /// Restore one protected Matter fabric envelope.
+    MatterRestoreFabric,
+    /// Repair one logical Matter subscription.
+    MatterRepairSubscription,
 }
 
 /// Grant scope; security policy may reject broad scopes despite a match.

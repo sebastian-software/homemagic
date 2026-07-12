@@ -5,16 +5,17 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_application::{
     BoxError, MatterDesiredCommandSlot, MatterDesiredSlotOutcome, MatterDesiredStateWrite,
-    MatterDispatchWrite, MatterOperationProgress, MatterRecovery, MatterRepairRecord,
-    MatterRepository, MatterRetention, MatterRetentionResult, MatterUnlockAuthorization,
-    MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode, StoredMatterProjection,
-    StoredMatterSubscription,
+    MatterDispatchWrite, MatterOperationBinding, MatterOperationCreateOutcome,
+    MatterOperationProgress, MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention,
+    MatterRetentionResult, MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric,
+    StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
 };
 use homemagic_domain::{
-    AccessControlCommand, Actor, ActorGrant, ActorKind, CommandAction, CommandAggregate,
+    AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CommandAction, CommandAggregate,
     CommandAuditRecord, CommandId, CommandPayload, CommandState, GrantScope, InstallationId,
-    MatterConvergence, MatterFabricId, MatterOperation, MatterOperationTarget, MatterProjectionId,
-    MatterStateFreshness, MatterStateValue, MatterUnlockAuthorizationId, RiskClass,
+    MatterConvergence, MatterFabricId, MatterOperation, MatterOperationId, MatterOperationTarget,
+    MatterProjectionId, MatterStateFreshness, MatterStateValue, MatterUnlockAuthorizationId,
+    RiskClass,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
@@ -137,6 +138,52 @@ impl MatterRepository for SqliteRepository {
     ) -> Result<(), BoxError> {
         run_write(&self.connection, move |transaction| {
             create_operation(transaction, &operation, &progress)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn create_matter_administration_operation(
+        &self,
+        operation: MatterOperation,
+        binding: MatterOperationBinding,
+        progress: MatterOperationProgress,
+    ) -> Result<MatterOperationCreateOutcome, BoxError> {
+        run_write(&self.connection, move |transaction| {
+            create_administration_operation(transaction, &operation, &binding, &progress)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn matter_administration_operation(
+        &self,
+        operation_id: &MatterOperationId,
+    ) -> Result<Option<(MatterOperation, MatterOperationBinding)>, BoxError> {
+        let operation_id = operation_id.to_string();
+        run_read(&self.connection, move |connection| {
+            load_administration_operation(connection, &operation_id)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn actor_matter_administration_operations(
+        &self,
+        actor_id: &ActorId,
+        limit: usize,
+    ) -> Result<Vec<MatterOperation>, BoxError> {
+        let actor_id = actor_id.to_string();
+        run_read(&self.connection, move |connection| {
+            let limit = bounded_limit(limit)?;
+            load_payloads(
+                connection,
+                "SELECT o.payload_json FROM matter_operations o
+                 JOIN matter_operation_bindings b ON b.operation_id = o.id
+                 WHERE b.actor_id = ?1
+                 ORDER BY o.updated_at DESC, o.id DESC LIMIT ?2",
+                params![actor_id, limit],
+            )
         })
         .await
         .map_err(boxed)
@@ -641,6 +688,93 @@ fn create_operation(
         ],
     )?;
     insert_progress(transaction, progress)
+}
+
+fn create_administration_operation(
+    transaction: &Transaction<'_>,
+    operation: &MatterOperation,
+    binding: &MatterOperationBinding,
+    progress: &MatterOperationProgress,
+) -> Result<MatterOperationCreateOutcome, StorageError> {
+    if binding.operation_id != operation.id
+        || binding.policy_version == 0
+        || binding.action != MatterOperationBinding::action_for_kind(operation.kind)
+    {
+        return Err(StorageError::InvalidMatter(
+            "invalid Matter operation actor binding",
+        ));
+    }
+    let installation_id = installation_for_fabric(transaction, operation_fabric_id(operation))?;
+    if binding.installation_id.to_string() != installation_id {
+        return Err(StorageError::InvalidMatter(
+            "Matter operation installation binding mismatch",
+        ));
+    }
+    let existing = transaction
+        .query_row(
+            "SELECT operation_id, request_hash FROM matter_operation_bindings
+             WHERE actor_id = ?1 AND idempotency_key = ?2",
+            params![
+                binding.actor_id.to_string(),
+                binding.idempotency_key.as_str()
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((operation_id, request_hash)) = existing {
+        let existing = load_payload(
+            transaction,
+            "SELECT payload_json FROM matter_operations WHERE id = ?1",
+            &operation_id,
+        )?
+        .ok_or(StorageError::InvalidMatter(
+            "Matter operation binding references missing operation",
+        ))?;
+        return if request_hash == binding.request_hash.as_str() {
+            Ok(MatterOperationCreateOutcome::ExistingEquivalent(existing))
+        } else {
+            let operation_id = operation_id
+                .parse()
+                .map_err(|_| StorageError::InvalidMatter("invalid Matter operation ID"))?;
+            Ok(MatterOperationCreateOutcome::Conflict(operation_id))
+        };
+    }
+    create_operation(transaction, operation, progress)?;
+    transaction.execute(
+        "INSERT INTO matter_operation_bindings(
+            operation_id, actor_id, installation_id, action, idempotency_key,
+            request_hash, policy_version, payload_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            binding.operation_id.to_string(),
+            binding.actor_id.to_string(),
+            binding.installation_id.to_string(),
+            enum_name(&binding.action)?,
+            binding.idempotency_key.as_str(),
+            binding.request_hash.as_str(),
+            i64::from(binding.policy_version),
+            encode(binding)?,
+        ],
+    )?;
+    Ok(MatterOperationCreateOutcome::Created(operation.clone()))
+}
+
+fn load_administration_operation(
+    connection: &Connection,
+    operation_id: &str,
+) -> Result<Option<(MatterOperation, MatterOperationBinding)>, StorageError> {
+    connection
+        .query_row(
+            "SELECT o.payload_json, b.payload_json
+             FROM matter_operations o
+             JOIN matter_operation_bindings b ON b.operation_id = o.id
+             WHERE o.id = ?1",
+            [operation_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .map(|(operation, binding)| Ok((decode(&operation)?, decode(&binding)?)))
+        .transpose()
 }
 
 fn transition_operation(
