@@ -3,7 +3,7 @@ id: E4-007-04
 epic: EPIC-004
 parent: E4-007
 title: Expose bounded diagnostics and subscription repair
-status: ready
+status: in_progress
 priority: high
 depends_on: [E4-007-01, E4-007-03]
 adrs: [ADR-0033, ADR-0034, ADR-0041]
@@ -17,7 +17,7 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Ready | Authenticated bounded read-only diagnostics |
+| [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | In progress | Authenticated bounded read-only diagnostics |
 | [E4-007-04-02](E4-007-04-02-subscription-status.md) | Planned | Deterministic freshness, budgets, and guidance |
 | [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Planned | Explicit gap-read and resubscribe workflow |
 | [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Planned | Restart, exhaustion, retention, and exit evidence |
@@ -55,3 +55,5 @@ raw protocol mutation access.
 - 2026-07-12: Decomposed into four dependency-ordered slices. ADR-0041 fixes
   the read-only diagnostics versus explicit repair boundary; E4-007-04-01 is
   ready.
+- 2026-07-12: E4-007-04-01 is implemented and local CI-equivalent gates pass;
+  controller call-count evidence and public CI remain pending.

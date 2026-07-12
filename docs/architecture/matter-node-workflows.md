@@ -147,6 +147,27 @@ unknown evidence requires repair. From `cleaning_secrets`, only the atomic local
 cleanup is resumed. Replaying a completed operation returns immediately without
 calling the controller.
 
+## Read-only diagnostics
+
+`MatterDiagnosticsService` implements ADR-0041 as a separate read-only
+application boundary. It reloads the actor and exact installation-scoped
+`matter_read` grant on every request, accepts only page sizes from 1 through
+256, and has no controller mutation dependency. Its only live call is one
+bounded `fabric_status` read.
+
+The `matter.diagnostics.v1` document combines secret-free durable fabric health,
+normalized controller availability and node count, common-device-keyed node and
+endpoint counts, capability schema names, subscription freshness and explicit
+repair eligibility, newest actor-owned operation phases, and an aggregate open
+repair count. Operational node IDs, protocol endpoint IDs, operation targets,
+network material, setup input, secret references, controller implementation
+names, and raw SDK objects are intentionally absent.
+
+Freshness is evaluated at an explicit caller-supplied time. A subscription is
+repair-eligible only when its durable state is not `established` or its report
+deadline has elapsed. Diagnostics never start repair implicitly; the explicit
+repair children of E4-007-04 own the separate mutation boundary.
+
 ## Verification
 
 SQLite contracts cover allowed, denied, duplicate, conflicting-key,
