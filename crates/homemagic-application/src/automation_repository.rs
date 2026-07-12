@@ -248,6 +248,13 @@ pub trait AutomationRepository: Send + Sync {
         automation_id: &AutomationId,
     ) -> Result<Option<AutomationIdentityState>, BoxError>;
 
+    /// Advances an operational identity through its explicit state machine.
+    async fn transition_automation_identity(
+        &self,
+        identity: AutomationIdentityState,
+        expected_revision: u64,
+    ) -> Result<AutomationIdentityState, BoxError>;
+
     /// Lists bounded active identities paired with exact immutable versions.
     async fn active_automation_versions(
         &self,

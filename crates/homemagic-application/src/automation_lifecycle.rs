@@ -6,8 +6,9 @@ use std::sync::Arc;
 use homemagic_domain::{
     Actor, AutomationApprovalId, AutomationApprovalRecord, AutomationApprovalRequirement,
     AutomationApprovalState, AutomationDocument, AutomationId, AutomationOccurrenceId,
-    AutomationRun, AutomationRunId, AutomationTraceStep, AutomationValue, AutomationVersion,
-    AutomationVersionState, CorrelationId,
+    AutomationOperationalState, AutomationRun, AutomationRunId, AutomationRunState,
+    AutomationTimerState, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
+    AutomationValue, AutomationVersion, AutomationVersionState, CorrelationId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -453,6 +454,178 @@ impl AutomationLifecycleService {
             })
             .await
             .map_err(AutomationLifecycleError::Repository)
+    }
+
+    /// Rolls back by atomically activating one older exact ready version.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same access, evidence, and conflict failures as activation.
+    pub async fn rollback(
+        &self,
+        actor: &Actor,
+        automation_id: &AutomationId,
+        version: AutomationVersion,
+        expected_revision: u64,
+    ) -> Result<crate::AutomationIdentityState, AutomationLifecycleError> {
+        self.activate(actor, automation_id, version, expected_revision)
+            .await
+    }
+
+    /// Disables trigger admission while retaining the rollback pointer.
+    ///
+    /// # Errors
+    ///
+    /// Returns access, lifecycle, conflict, or repository failures.
+    pub async fn disable(
+        &self,
+        actor: &Actor,
+        automation_id: &AutomationId,
+        expected_revision: u64,
+    ) -> Result<crate::AutomationIdentityState, AutomationLifecycleError> {
+        self.transition_operational(
+            actor,
+            automation_id,
+            expected_revision,
+            AutomationOperationalState::Disabled,
+        )
+        .await
+    }
+
+    /// Permanently retires one automation identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns access, lifecycle, conflict, or repository failures.
+    pub async fn retire(
+        &self,
+        actor: &Actor,
+        automation_id: &AutomationId,
+        expected_revision: u64,
+    ) -> Result<crate::AutomationIdentityState, AutomationLifecycleError> {
+        self.transition_operational(
+            actor,
+            automation_id,
+            expected_revision,
+            AutomationOperationalState::Retired,
+        )
+        .await
+    }
+
+    async fn transition_operational(
+        &self,
+        actor: &Actor,
+        automation_id: &AutomationId,
+        expected_revision: u64,
+        state: AutomationOperationalState,
+    ) -> Result<crate::AutomationIdentityState, AutomationLifecycleError> {
+        let mut identity = self
+            .repository
+            .automation_identity(automation_id)
+            .await
+            .map_err(AutomationLifecycleError::Repository)?
+            .ok_or(AutomationLifecycleError::NotFound)?;
+        if let Some(version) = identity.active_version {
+            self.version(actor, automation_id, version).await?;
+        } else {
+            self.draft(actor, automation_id).await?;
+        }
+        if identity.revision != expected_revision || !identity.state.allows_transition_to(state) {
+            return Err(AutomationLifecycleError::InvalidState);
+        }
+        identity.state = state;
+        identity.revision = identity.revision.saturating_add(1);
+        identity.updated_at = self.clock.now();
+        self.repository
+            .transition_automation_identity(identity, expected_revision)
+            .await
+            .map_err(AutomationLifecycleError::Repository)
+    }
+
+    /// Cancels one non-terminal actor-owned run with atomic trace and timer cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found, access, lifecycle, or repository failures.
+    pub async fn cancel_run(
+        &self,
+        actor: &Actor,
+        run_id: &AutomationRunId,
+    ) -> Result<AutomationRun, AutomationLifecycleError> {
+        let run = self.run(actor, run_id).await?;
+        if run.state.is_terminal() {
+            return Err(AutomationLifecycleError::InvalidState);
+        }
+        let recovery = self
+            .repository
+            .recoverable_automation_work(1_000)
+            .await
+            .map_err(AutomationLifecycleError::Repository)?;
+        let sequence = self.next_trace_sequence(run_id).await?;
+        let mut next = run.clone();
+        next.state = AutomationRunState::Cancelled;
+        next.revision = next.revision.saturating_add(1);
+        next.updated_at = self.clock.now();
+        let transition_timers = recovery
+            .timers
+            .into_iter()
+            .filter(|timer| timer.run_id == *run_id)
+            .filter(|timer| {
+                matches!(
+                    timer.state,
+                    AutomationTimerState::Pending | AutomationTimerState::Ready
+                )
+            })
+            .map(|mut timer| {
+                timer.state = AutomationTimerState::Cancelled;
+                timer
+            })
+            .collect();
+        self.repository
+            .commit_automation_step(crate::AutomationStepWrite {
+                run: next.clone(),
+                expected_run_revision: run.revision,
+                trace: vec![AutomationTraceStep {
+                    id: AutomationTraceId::from_run_sequence(run_id, sequence),
+                    run_id: run_id.clone(),
+                    sequence,
+                    node_id: run.node_id,
+                    kind: AutomationTraceKind::Outcome,
+                    details: BTreeMap::from([(
+                        "reason".to_owned(),
+                        AutomationValue::String("actor_cancelled".to_owned()),
+                    )]),
+                    occurred_at: self.clock.now(),
+                    correlation_id: run.correlation_id,
+                    causation_event_id: None,
+                }],
+                create_timers: Vec::new(),
+                transition_timers,
+            })
+            .await
+            .map_err(AutomationLifecycleError::Repository)?;
+        Ok(next)
+    }
+
+    async fn next_trace_sequence(
+        &self,
+        run_id: &AutomationRunId,
+    ) -> Result<u64, AutomationLifecycleError> {
+        let mut after = None;
+        loop {
+            let page = self
+                .repository
+                .automation_trace(run_id, after, 100)
+                .await
+                .map_err(AutomationLifecycleError::Repository)?;
+            let Some(last) = page.last() else {
+                return Ok(after.map_or(0, |sequence| sequence.saturating_add(1)));
+            };
+            after = Some(last.sequence);
+            if page.len() < 100 {
+                return Ok(last.sequence.saturating_add(1));
+            }
+        }
     }
 }
 

@@ -155,6 +155,18 @@ impl AutomationRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn transition_automation_identity(
+        &self,
+        identity: AutomationIdentityState,
+        expected_revision: u64,
+    ) -> Result<AutomationIdentityState, homemagic_application::BoxError> {
+        run_write(&self.connection, move |transaction| {
+            transition_identity(transaction, &identity, expected_revision)
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn active_automation_versions(
         &self,
         limit: usize,
@@ -702,6 +714,11 @@ fn activate(
     let mut identity = load_identity(transaction, &activation.automation_id)?.ok_or(
         StorageError::InvalidAutomation("automation identity missing"),
     )?;
+    if identity.state == AutomationOperationalState::Retired {
+        return Err(StorageError::InvalidAutomation(
+            "retired automation cannot activate",
+        ));
+    }
     if identity.revision != activation.expected_revision {
         return Err(StorageError::AutomationIdentityConflict {
             expected: activation.expected_revision,
@@ -726,6 +743,44 @@ fn activate(
         ],
     )?;
     Ok(identity)
+}
+
+fn transition_identity(
+    transaction: &Transaction<'_>,
+    identity: &AutomationIdentityState,
+    expected_revision: u64,
+) -> Result<AutomationIdentityState, StorageError> {
+    let current = load_identity(transaction, &identity.id)?.ok_or(
+        StorageError::InvalidAutomation("automation identity missing"),
+    )?;
+    if current.revision != expected_revision {
+        return Err(StorageError::AutomationIdentityConflict {
+            expected: expected_revision,
+            found: current.revision,
+        });
+    }
+    if identity.revision != expected_revision.saturating_add(1)
+        || !current.state.allows_transition_to(identity.state)
+        || current.active_version != identity.active_version
+        || current.created_at != identity.created_at
+    {
+        return Err(StorageError::InvalidAutomation(
+            "invalid automation identity transition",
+        ));
+    }
+    transaction.execute(
+        "UPDATE automation_identities SET operational_state = ?2, revision = ?3,
+                                          updated_at = ?4, payload_json = ?5
+         WHERE id = ?1",
+        params![
+            identity.id.to_string(),
+            enum_name(&identity.state)?,
+            signed(identity.revision)?,
+            identity.updated_at,
+            encode(identity)?
+        ],
+    )?;
+    Ok(identity.clone())
 }
 
 fn has_exact_approval(

@@ -553,6 +553,12 @@ struct AutomationActivateParams {
 }
 
 #[derive(Deserialize)]
+struct AutomationOperationalParams {
+    automation_id: AutomationId,
+    expected_revision: u64,
+}
+
+#[derive(Deserialize)]
 struct AutomationCatchUpParams {
     automation_id: AutomationId,
     scheduled_for: chrono::DateTime<chrono::Utc>,
@@ -680,6 +686,15 @@ async fn dispatch_with_services(
         "automations.activate" => {
             automation_activate(automations, actor, request.id, request.params).await
         }
+        "automations.rollback" => {
+            automation_rollback(automations, actor, request.id, request.params).await
+        }
+        "automations.disable" => {
+            automation_operational(automations, actor, request.id, request.params, false).await
+        }
+        "automations.retire" => {
+            automation_operational(automations, actor, request.id, request.params, true).await
+        }
         "automations.catch_up" => {
             automation_catch_up(automation_scheduler, actor, request.id, request.params).await
         }
@@ -691,6 +706,9 @@ async fn dispatch_with_services(
         }
         "automations.runs.trace" => {
             automation_trace(automations, actor, request.id, request.params).await
+        }
+        "automations.runs.cancel" => {
+            automation_run_cancel(automations, actor, request.id, request.params).await
         }
         "devices.refresh" => match application.refresh().await {
             Ok(integrations) => {
@@ -1011,6 +1029,84 @@ async fn automation_activate(
         .await
     {
         Ok(identity) => RpcResponse::success(id, json!({"automation": identity})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_rollback(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationActivateParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .rollback(
+            actor,
+            &params.automation_id,
+            params.version,
+            params.expected_revision,
+        )
+        .await
+    {
+        Ok(identity) => RpcResponse::success(id, json!({"automation": identity})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_operational(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+    retire: bool,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationOperationalParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    let result = if retire {
+        service
+            .retire(actor, &params.automation_id, params.expected_revision)
+            .await
+    } else {
+        service
+            .disable(actor, &params.automation_id, params.expected_revision)
+            .await
+    };
+    match result {
+        Ok(identity) => RpcResponse::success(id, json!({"automation": identity})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_run_cancel(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationRunIdParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.cancel_run(actor, &params.run_id).await {
+        Ok(run) => RpcResponse::success(id, json!({"run": run})),
         Err(error) => automation_error(id, error),
     }
 }

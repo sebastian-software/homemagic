@@ -107,6 +107,93 @@ async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version()
         .activate(&actor, &document.id, document.version, 0)
         .await?;
     assert_eq!(identity.active_version, Some(document.version));
+    let disabled = service.disable(&actor, &document.id, 1).await?;
+    assert_eq!(
+        disabled.state,
+        homemagic_domain::AutomationOperationalState::Disabled
+    );
+    let rolled_back = service
+        .rollback(&actor, &document.id, document.version, 2)
+        .await?;
+    assert_eq!(
+        rolled_back.state,
+        homemagic_domain::AutomationOperationalState::Active
+    );
+    let retired = service.retire(&actor, &document.id, 3).await?;
+    assert_eq!(
+        retired.state,
+        homemagic_domain::AutomationOperationalState::Retired
+    );
+    assert!(
+        service
+            .activate(&actor, &document.id, document.version, 4)
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn lifecycle_run_cancel_should_atomically_cancel_timer_and_append_outcome() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("lifecycle-cancel.sqlite3"),
+    )?);
+    let stored = stored_version();
+    repository.store_automation_version(stored.clone()).await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let actor = Actor {
+        id: stored.document.provenance.author_id.clone(),
+        installation_id: InstallationId::new(),
+        name: "Run owner".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    let accepted = occurrence(&stored, now);
+    repository
+        .create_automation_occurrence(accepted.clone())
+        .await?;
+    let mut run = run(&stored, &accepted, now);
+    run.id = AutomationRunId::from_occurrence(&accepted.id);
+    repository.create_automation_run(run.clone()).await?;
+    let timer = AutomationTimer {
+        id: AutomationTimerId::from_key(
+            &run.id,
+            0,
+            (now + TimeDelta::seconds(5)).timestamp_millis(),
+        ),
+        run_id: run.id.clone(),
+        node_id: AutomationPlanNodeId(0),
+        kind: homemagic_domain::AutomationTimerKind::Delay,
+        ready_at: now + TimeDelta::seconds(5),
+        state: AutomationTimerState::Pending,
+    };
+    repository.create_automation_timer(timer.clone()).await?;
+    let service = AutomationLifecycleService::new(
+        repository.clone(),
+        Arc::new(MemoryFoundationRepository::default()),
+        Arc::new(FixedClock(now)),
+    );
+
+    let cancelled = service.cancel_run(&actor, &run.id).await?;
+
+    assert_eq!(cancelled.state, AutomationRunState::Cancelled);
+    assert_eq!(
+        repository
+            .automation_timer(&timer.id)
+            .await?
+            .map(|timer| timer.state),
+        Some(AutomationTimerState::Cancelled)
+    );
+    assert_eq!(
+        service
+            .trace(&actor, &run.id, None, 10)
+            .await?
+            .last()
+            .map(|step| step.kind),
+        Some(AutomationTraceKind::Outcome)
+    );
+    assert!(service.cancel_run(&actor, &run.id).await.is_err());
     Ok(())
 }
 
