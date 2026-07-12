@@ -20,7 +20,7 @@ and no production compatibility claim.
 
 ## Tasks
 
-- [ ] Add secret-safe commissioning-stage instrumentation around matter.js and
+- [x] Add secret-safe commissioning-stage instrumentation around matter.js and
   record the last completed Matter stage before the independent timeout.
 - [ ] Build a pinned official ConnectedHomeIP on-network all-clusters/light
   device as a second independent fixture on both hosts.
@@ -53,3 +53,7 @@ and no production compatibility claim.
   and persists only step number, static step name, status, and error class. A
   two-host official ConnectedHomeIP light workflow is running as the second
   independent fixture; setup values remain absent from reports and normal logs.
+- 2026-07-12: Public run `29213726913` records the same boundary on both hosts:
+  steps through attestation, certificates/NOC, and access control complete;
+  commissioning stalls at `18.1 Reconnect`, the first operational CASE
+  connection.

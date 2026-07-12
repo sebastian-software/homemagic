@@ -10,7 +10,7 @@
   },
   "last_reference_observation": "arm_fail_safe_received",
   "host": {
-    "captured_at": "2026-07-12T23:29:42Z",
+    "captured_at": "2026-07-12T23:44:42Z",
     "os": "Darwin",
     "architecture": "arm64",
     "node": "v24.18.0",
@@ -35,7 +35,17 @@
       "phase": "commission",
       "name": "TimeoutError",
       "message": "Lifecycle process exceeded the 180 second evidence budget"
-    }
+    },
+    "commissioning_stages": [
+      {"step": "0.1", "name": "GetInitialData", "status": "completed"},
+      {"step": "7.1", "name": "GeneralCommissioning.ArmFailsafe", "status": "completed"},
+      {"step": "8.1", "name": "GeneralCommissioning.ConfigureRegulatoryInformation", "status": "completed"},
+      {"step": "8.2", "name": "TimeSynchronization.SynchronizeTime", "status": "completed"},
+      {"step": "10.1", "name": "OperationalCredentials.DeviceAttestation", "status": "completed"},
+      {"step": "11.1", "name": "OperationalCredentials.Certificates", "status": "completed"},
+      {"step": "15.1", "name": "AccessControl", "status": "completed"},
+      {"step": "18.1", "name": "Reconnect", "status": "started"}
+    ]
   },
   "restart_process": {
     "schema": "homemagic.matter.matter-js-independent-reference.v1",

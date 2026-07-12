@@ -63,6 +63,10 @@ Both final reports have the same outcome:
 
 The spike disables `connectNodeAfterCommissioning`, proving the timeout is in
 commissioning itself rather than the later automatic connect/subscription path.
+Secret-safe stage tracing narrows both hosts to step `18.1 Reconnect`: initial
+data, fail-safe, regulatory configuration, time synchronization, device
+attestation, certificates/NOC, and access control all complete before the first
+operational CASE reconnect stalls.
 The workflow exits successfully because its job is to persist partial evidence,
 not to turn candidate failure into missing evidence.
 
