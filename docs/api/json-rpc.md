@@ -185,14 +185,19 @@ version numbers and exact compiler evidence.
 The first lifecycle slice exposes:
 
 - `automations.drafts.put` with `document` and optional `expected_revision`;
-- `automations.drafts.get` with `automation_id`;
+- `automations.drafts.get` with `automation_id`, and `automations.drafts.list`
+  with a bounded `limit`;
 - `automations.validate` with `automation_id`;
-- `automations.versions.get` with `automation_id` and `version`;
+- `automations.versions.get` with `automation_id` and `version`, and
+  `automations.versions.list` with `automation_id` and bounded `limit`;
 - `automations.simulate` with the exact version and synthetic `input` history;
 - `automations.approve` / `automations.reject` with optional `rationale`;
 - `automations.activate` with exact version and `expected_revision`;
 - `automations.catch_up` with one exact `scheduled_for` instant and
   actor-scoped `idempotency_key`.
+- `automations.runs.get`, `automations.runs.list`, and
+  `automations.runs.trace`; trace uses optional run-local `after_sequence` and
+  bounded `limit`.
 
 Simulation never accepts a plan, run ID, occurrence ID, correlation ID, or
 dispatcher from the caller. Those values are derived by the lifecycle service.

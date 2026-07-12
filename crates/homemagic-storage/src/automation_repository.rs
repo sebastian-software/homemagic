@@ -48,6 +48,22 @@ impl AutomationRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn automation_drafts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AutomationDraft>, homemagic_application::BoxError> {
+        run_read(&self.connection, move |connection| {
+            load_payload_page(
+                connection,
+                "SELECT payload_json FROM automation_drafts
+                 ORDER BY updated_at DESC, automation_id DESC LIMIT ?1",
+                [signed(limit.min(MAX_QUERY_PAGE) as u64)?],
+            )
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn store_automation_version(
         &self,
         version: StoredAutomationVersion,
@@ -67,6 +83,27 @@ impl AutomationRepository for SqliteRepository {
         let automation_id = automation_id.clone();
         run_read(&self.connection, move |connection| {
             load_version(connection, &automation_id, version)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn automation_versions(
+        &self,
+        automation_id: &AutomationId,
+        limit: usize,
+    ) -> Result<Vec<StoredAutomationVersion>, homemagic_application::BoxError> {
+        let automation_id = automation_id.clone();
+        run_read(&self.connection, move |connection| {
+            load_payload_page(
+                connection,
+                "SELECT payload_json FROM automation_versions
+                 WHERE automation_id = ?1 ORDER BY version DESC LIMIT ?2",
+                params![
+                    automation_id.to_string(),
+                    signed(limit.min(MAX_QUERY_PAGE) as u64)?
+                ],
+            )
         })
         .await
         .map_err(boxed)
@@ -210,6 +247,33 @@ impl AutomationRepository for SqliteRepository {
                 "SELECT payload_json FROM automation_runs WHERE id = ?1",
                 &run_id.to_string(),
             )
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn automation_runs(
+        &self,
+        automation_id: Option<&AutomationId>,
+        limit: usize,
+    ) -> Result<Vec<AutomationRun>, homemagic_application::BoxError> {
+        let automation_id = automation_id.cloned();
+        run_read(&self.connection, move |connection| {
+            let limit = signed(limit.min(MAX_QUERY_PAGE) as u64)?;
+            match automation_id {
+                Some(automation_id) => load_payload_page(
+                    connection,
+                    "SELECT payload_json FROM automation_runs
+                     WHERE automation_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2",
+                    params![automation_id.to_string(), limit],
+                ),
+                None => load_payload_page(
+                    connection,
+                    "SELECT payload_json FROM automation_runs
+                     ORDER BY created_at DESC, id DESC LIMIT ?1",
+                    [limit],
+                ),
+            }
         })
         .await
         .map_err(boxed)

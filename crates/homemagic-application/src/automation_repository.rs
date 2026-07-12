@@ -200,6 +200,9 @@ pub trait AutomationRepository: Send + Sync {
         automation_id: &AutomationId,
     ) -> Result<Option<AutomationDraft>, BoxError>;
 
+    /// Lists bounded drafts in newest-update order.
+    async fn automation_drafts(&self, limit: usize) -> Result<Vec<AutomationDraft>, BoxError>;
+
     /// Inserts one immutable version and its exact validation evidence.
     async fn store_automation_version(
         &self,
@@ -212,6 +215,13 @@ pub trait AutomationRepository: Send + Sync {
         automation_id: &AutomationId,
         version: AutomationVersion,
     ) -> Result<Option<StoredAutomationVersion>, BoxError>;
+
+    /// Lists bounded immutable versions newest-first for one identity.
+    async fn automation_versions(
+        &self,
+        automation_id: &AutomationId,
+        limit: usize,
+    ) -> Result<Vec<StoredAutomationVersion>, BoxError>;
 
     /// Advances governance evidence without changing immutable content.
     async fn transition_automation_version(
@@ -281,6 +291,13 @@ pub trait AutomationRepository: Send + Sync {
         &self,
         run_id: &AutomationRunId,
     ) -> Result<Option<AutomationRun>, BoxError>;
+
+    /// Lists bounded runs newest-first, optionally for one automation.
+    async fn automation_runs(
+        &self,
+        automation_id: Option<&AutomationId>,
+        limit: usize,
+    ) -> Result<Vec<AutomationRun>, BoxError>;
 
     /// Replaces one run using its optimistic revision.
     async fn transition_automation_run(

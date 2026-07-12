@@ -14,8 +14,8 @@ updated: 2026-07-12
 
 ## Tasks
 
-- [ ] Add authenticated draft, update, get, list, and versions methods.
-- [ ] Add validate and deterministic simulate methods.
+- [x] Add authenticated draft, update, get, list, and versions methods.
+- [x] Add validate and deterministic simulate methods.
 - [ ] Add approve/reject and exact-evidence activation gates.
 - [ ] Add atomic activate, rollback, disable, and retire methods.
 - [ ] Add run list/get, trace cursor, cancel, and explicit catch-up methods.
@@ -45,3 +45,7 @@ updated: 2026-07-12
   same lifecycle and scheduler instances as the engine. RPC/internal parity
   evidence proves an extra untrusted `actor_id` cannot override the bearer
   actor, and stable error mappings omit repository and simulation internals.
+- 2026-07-12: Added bounded newest-first repository and lifecycle queries for
+  actor-owned drafts, immutable versions, and runs plus run-local trace cursor
+  reads. JSON-RPC now exposes draft/version lists and run get/list/trace without
+  cross-actor visibility; query limits clamp to 1..100.

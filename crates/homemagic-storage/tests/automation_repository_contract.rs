@@ -57,6 +57,7 @@ async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version()
 
     let draft = service.put_draft(&actor, document.clone(), None).await?;
     assert_eq!(draft.revision, 0);
+    assert_eq!(service.drafts(&actor, 10).await?, vec![draft.clone()]);
     assert!(
         service
             .put_draft(&actor, document.clone(), None)
@@ -98,6 +99,10 @@ async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version()
         AutomationSimulationStatus::Completed
     );
     assert_eq!(simulated.version.state, AutomationVersionState::Ready);
+    assert_eq!(
+        service.versions(&actor, &document.id, 10).await?,
+        vec![simulated.version.clone()]
+    );
     let identity = service
         .activate(&actor, &document.id, document.version, 0)
         .await?;

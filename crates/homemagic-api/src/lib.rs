@@ -17,9 +17,9 @@ use homemagic_application::{
     CommandService, CommandServiceError, DeviceMetadataUpdate, HomeMagicApplication,
 };
 use homemagic_domain::{
-    Actor, AutomationDocument, AutomationId, AutomationVersion, AvailabilityState, CommandId,
-    CommandPayload, CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId, EventId,
-    ExpectedObservation, FreshnessState, IdempotencyKey, RepairId, RepairStatus, SpaceId,
+    Actor, AutomationDocument, AutomationId, AutomationRunId, AutomationVersion, AvailabilityState,
+    CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId,
+    EventId, ExpectedObservation, FreshnessState, IdempotencyKey, RepairId, RepairStatus, SpaceId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -559,6 +559,39 @@ struct AutomationCatchUpParams {
     idempotency_key: IdempotencyKey,
 }
 
+#[derive(Default, Deserialize)]
+struct AutomationListParams {
+    #[serde(default = "default_command_limit")]
+    limit: usize,
+}
+
+#[derive(Deserialize)]
+struct AutomationVersionsListParams {
+    automation_id: AutomationId,
+    #[serde(default = "default_command_limit")]
+    limit: usize,
+}
+
+#[derive(Deserialize)]
+struct AutomationRunIdParams {
+    run_id: AutomationRunId,
+}
+
+#[derive(Default, Deserialize)]
+struct AutomationRunListParams {
+    automation_id: Option<AutomationId>,
+    #[serde(default = "default_command_limit")]
+    limit: usize,
+}
+
+#[derive(Deserialize)]
+struct AutomationTraceParams {
+    run_id: AutomationRunId,
+    after_sequence: Option<u64>,
+    #[serde(default = "default_command_limit")]
+    limit: usize,
+}
+
 const fn default_command_limit() -> usize {
     50
 }
@@ -623,11 +656,17 @@ async fn dispatch_with_services(
         "automations.drafts.get" => {
             automation_draft_get(automations, actor, request.id, request.params).await
         }
+        "automations.drafts.list" => {
+            automation_drafts_list(automations, actor, request.id, request.params).await
+        }
         "automations.validate" => {
             automation_validate(automations, actor, request.id, request.params).await
         }
         "automations.versions.get" => {
             automation_version_get(automations, actor, request.id, request.params).await
+        }
+        "automations.versions.list" => {
+            automation_versions_list(automations, actor, request.id, request.params).await
         }
         "automations.simulate" => {
             automation_simulate(automations, actor, request.id, request.params).await
@@ -643,6 +682,15 @@ async fn dispatch_with_services(
         }
         "automations.catch_up" => {
             automation_catch_up(automation_scheduler, actor, request.id, request.params).await
+        }
+        "automations.runs.get" => {
+            automation_run_get(automations, actor, request.id, request.params).await
+        }
+        "automations.runs.list" => {
+            automation_runs_list(automations, actor, request.id, request.params).await
+        }
+        "automations.runs.trace" => {
+            automation_trace(automations, actor, request.id, request.params).await
         }
         "devices.refresh" => match application.refresh().await {
             Ok(integrations) => {
@@ -734,6 +782,26 @@ async fn automation_draft_get(
     }
 }
 
+async fn automation_drafts_list(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationListParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.drafts(actor, params.limit).await {
+        Ok(drafts) => RpcResponse::success(id, json!({"drafts": drafts})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
 async fn automation_validate(
     automations: Option<&AutomationLifecycleService>,
     actor: &Actor,
@@ -773,6 +841,95 @@ async fn automation_version_get(
         .await
     {
         Ok(version) => RpcResponse::success(id, json!({"version": version})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_versions_list(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationVersionsListParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .versions(actor, &params.automation_id, params.limit)
+        .await
+    {
+        Ok(versions) => RpcResponse::success(id, json!({"versions": versions})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_run_get(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationRunIdParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.run(actor, &params.run_id).await {
+        Ok(run) => RpcResponse::success(id, json!({"run": run})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_runs_list(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationRunListParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .runs(actor, params.automation_id.as_ref(), params.limit)
+        .await
+    {
+        Ok(runs) => RpcResponse::success(id, json!({"runs": runs})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_trace(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationTraceParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .trace(actor, &params.run_id, params.after_sequence, params.limit)
+        .await
+    {
+        Ok(trace) => RpcResponse::success(id, json!({"trace": trace})),
         Err(error) => automation_error(id, error),
     }
 }
@@ -1852,6 +2009,21 @@ mod tests {
             .unwrap_or_else(|error| panic!("internal draft: {error}"));
 
         assert_eq!(response.result, Some(json!({"draft": internal})));
+        let listed = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &owner,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(3),
+                method: "automations.drafts.list".to_owned(),
+                params: json!({"limit": 10}),
+            },
+        )
+        .await;
+        assert_eq!(listed.result, Some(json!({"drafts": [internal]})));
         let stranger = Actor {
             id: ActorId::new(),
             ..owner

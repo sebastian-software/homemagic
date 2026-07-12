@@ -6,7 +6,8 @@ use std::sync::Arc;
 use homemagic_domain::{
     Actor, AutomationApprovalId, AutomationApprovalRecord, AutomationApprovalRequirement,
     AutomationApprovalState, AutomationDocument, AutomationId, AutomationOccurrenceId,
-    AutomationRunId, AutomationValue, AutomationVersion, AutomationVersionState, CorrelationId,
+    AutomationRun, AutomationRunId, AutomationTraceStep, AutomationValue, AutomationVersion,
+    AutomationVersionState, CorrelationId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -140,6 +141,26 @@ impl AutomationLifecycleService {
         Ok(draft)
     }
 
+    /// Lists actor-owned drafts with a bounded newest-first result.
+    ///
+    /// # Errors
+    ///
+    /// Returns repository failures.
+    pub async fn drafts(
+        &self,
+        actor: &Actor,
+        limit: usize,
+    ) -> Result<Vec<AutomationDraft>, AutomationLifecycleError> {
+        Ok(self
+            .repository
+            .automation_drafts(limit.clamp(1, 100))
+            .await
+            .map_err(AutomationLifecycleError::Repository)?
+            .into_iter()
+            .filter(|draft| draft.document.provenance.author_id == actor.id)
+            .collect())
+    }
+
     /// Compiles and persists exact validation evidence for the current draft.
     ///
     /// # Errors
@@ -261,6 +282,99 @@ impl AutomationLifecycleService {
             .ok_or(AutomationLifecycleError::NotFound)?;
         ensure_owner(actor, &stored.document)?;
         Ok(stored)
+    }
+
+    /// Lists actor-owned immutable versions newest-first.
+    ///
+    /// # Errors
+    ///
+    /// Returns authorization or repository failures.
+    pub async fn versions(
+        &self,
+        actor: &Actor,
+        automation_id: &AutomationId,
+        limit: usize,
+    ) -> Result<Vec<StoredAutomationVersion>, AutomationLifecycleError> {
+        let versions = self
+            .repository
+            .automation_versions(automation_id, limit.clamp(1, 100))
+            .await
+            .map_err(AutomationLifecycleError::Repository)?;
+        if versions
+            .iter()
+            .any(|version| version.document.provenance.author_id != actor.id)
+        {
+            return Err(AutomationLifecycleError::NotAuthorized);
+        }
+        Ok(versions)
+    }
+
+    /// Loads one actor-owned run.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found, authorization, or repository failures.
+    pub async fn run(
+        &self,
+        actor: &Actor,
+        run_id: &AutomationRunId,
+    ) -> Result<AutomationRun, AutomationLifecycleError> {
+        let run = self
+            .repository
+            .automation_run(run_id)
+            .await
+            .map_err(AutomationLifecycleError::Repository)?
+            .ok_or(AutomationLifecycleError::NotFound)?;
+        self.version(actor, &run.automation_id, run.version).await?;
+        Ok(run)
+    }
+
+    /// Lists actor-owned runs newest-first with an optional automation filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns authorization or repository failures.
+    pub async fn runs(
+        &self,
+        actor: &Actor,
+        automation_id: Option<&AutomationId>,
+        limit: usize,
+    ) -> Result<Vec<AutomationRun>, AutomationLifecycleError> {
+        let runs = self
+            .repository
+            .automation_runs(automation_id, limit.clamp(1, 100))
+            .await
+            .map_err(AutomationLifecycleError::Repository)?;
+        let mut owned = Vec::with_capacity(runs.len());
+        for run in runs {
+            match self.version(actor, &run.automation_id, run.version).await {
+                Ok(_) => owned.push(run),
+                Err(
+                    AutomationLifecycleError::NotAuthorized | AutomationLifecycleError::NotFound,
+                ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(owned)
+    }
+
+    /// Reads an actor-owned run trace after an optional run-local cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found, authorization, or repository failures.
+    pub async fn trace(
+        &self,
+        actor: &Actor,
+        run_id: &AutomationRunId,
+        after_sequence: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<AutomationTraceStep>, AutomationLifecycleError> {
+        self.run(actor, run_id).await?;
+        self.repository
+            .automation_trace(run_id, after_sequence, limit.clamp(1, 100))
+            .await
+            .map_err(AutomationLifecycleError::Repository)
     }
 
     /// Approves or rejects one exact awaiting version.
