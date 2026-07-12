@@ -72,6 +72,27 @@ impl CommandRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn command_request_hash(
+        &self,
+        command_id: &CommandId,
+    ) -> Result<Option<CanonicalRequestHash>, BoxError> {
+        let command_id = command_id.clone();
+        run_read(&self.connection, move |connection| {
+            connection
+                .query_row(
+                    "SELECT request_hash FROM commands WHERE id = ?1",
+                    [command_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(CanonicalRequestHash::new)
+                .transpose()
+                .map_err(|_| StorageError::InvalidCommand("invalid canonical request hash"))
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn actor_commands(
         &self,
         actor_id: &ActorId,

@@ -11,20 +11,22 @@ use homemagic_application::{
     CommandCreateOutcome, CommandDispatchControl, CommandDispatcher, CommandRepository,
     DesiredStateRegistration, FoundationRepository, FoundationWrite, MatterCommandDispatchControl,
     MatterCommissioningRequest, MatterController, MatterCreateFabricRequest,
-    MatterDesiredCommandSlot, MatterDispatchAdmission, MatterDispatchWrite, MatterFabricSecretRefs,
-    MatterFabricState, MatterOperationProgress, MatterRepairRecord, MatterRepairStatus,
-    MatterRepository, MatterRetention, MatterSupersededCommand, MatterUnlockAuthorization,
-    MatterUnlockConsumption, SecretValue, StoredMatterFabric, StoredMatterNode,
-    StoredMatterProjection, StoredMatterSubscription, StoredMatterSubscriptionState,
+    MatterDesiredCommandSlot, MatterDesiredStateWrite, MatterDispatchAdmission,
+    MatterDispatchWrite, MatterFabricSecretRefs, MatterFabricState, MatterOperationProgress,
+    MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRetention,
+    MatterSupersededCommand, MatterUnlockAuthorization, MatterUnlockConsumption, SecretValue,
+    StoredMatterFabric, StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
+    StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
-    Actor, AuditId, CapabilityDescriptor, CapabilitySnapshot, CommandAggregate, CommandAuditRecord,
-    CommandEnvelope, CommandErrorCode, CommandFailure, CommandId, CommandPayload, CommandState,
-    CorrelationId, DeviceId, DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot,
-    IdempotencyKey, Installation, InstallationId, IntegrationId, IntegrationInstance,
-    MatterClusterDescriptor, MatterControllerError, MatterControllerErrorCategory,
-    MatterControllerErrorCode, MatterConvergence, MatterDescriptorRevision, MatterDesiredState,
-    MatterDeviceType, MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId,
+    AccessControlCommand, Actor, ActorGrant, AuditId, CapabilityDescriptor, CapabilitySnapshot,
+    CommandAction, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode,
+    CommandFailure, CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceRecord,
+    DeviceSnapshot, EndpointId, EndpointSnapshot, GrantId, GrantScope, IdempotencyKey,
+    Installation, InstallationId, IntegrationId, IntegrationInstance, MatterClusterDescriptor,
+    MatterControllerError, MatterControllerErrorCategory, MatterControllerErrorCode,
+    MatterConvergence, MatterDescriptorRevision, MatterDesiredState, MatterDeviceType,
+    MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId, MatterLockState,
     MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId, MatterOperationKind,
     MatterOperationPhase, MatterOperationTarget, MatterProjectedState, MatterProjectionId,
     MatterRetryability, MatterStateFreshness, MatterStateRevision, MatterStateValue,
@@ -61,6 +63,8 @@ struct Fixture {
     fabric_id: MatterFabricId,
     node_id: MatterNodeId,
     projection_id: MatterProjectionId,
+    lock_endpoint_id: EndpointId,
+    lock_projection_id: MatterProjectionId,
 }
 
 impl Fixture {
@@ -77,6 +81,7 @@ impl Fixture {
         let integration_id = IntegrationId::from_native(&installation_id, "matter", "local");
         let device_id = DeviceId::from_integration(&integration_id, "fabric-node-4097");
         let endpoint_id = EndpointId::new("matter:1");
+        let lock_endpoint_id = EndpointId::new("matter:2");
         repository
             .apply(FoundationWrite {
                 installations: vec![Installation {
@@ -97,6 +102,7 @@ impl Fixture {
                     integration_id,
                     device_id.clone(),
                     endpoint_id.clone(),
+                    lock_endpoint_id.clone(),
                     now,
                 )],
                 ..FoundationWrite::default()
@@ -142,12 +148,20 @@ impl Fixture {
         let descriptor = MatterNodeDescriptor::new(
             fabric_id.clone(),
             node_id,
-            vec![MatterEndpointDescriptor::new(
-                MatterEndpointNumber::new(1),
-                vec![MatterDeviceType::new(0x0100, 1)?],
-                vec![MatterClusterDescriptor::new(0x0006, 1, 0, vec![0, 1])?],
-                Vec::new(),
-            )?],
+            vec![
+                MatterEndpointDescriptor::new(
+                    MatterEndpointNumber::new(1),
+                    vec![MatterDeviceType::new(0x0100, 1)?],
+                    vec![MatterClusterDescriptor::new(0x0006, 1, 0, vec![0, 1])?],
+                    Vec::new(),
+                )?,
+                MatterEndpointDescriptor::new(
+                    MatterEndpointNumber::new(2),
+                    vec![MatterDeviceType::new(0x000a, 1)?],
+                    vec![MatterClusterDescriptor::new(0x0101, 1, 0, vec![0])?],
+                    Vec::new(),
+                )?,
+            ],
             MatterDescriptorRevision::new(1)?,
         )?;
         repository
@@ -160,6 +174,52 @@ impl Fixture {
                     updated_at: now,
                 },
                 None,
+            )
+            .await?;
+        let lock_projection_id =
+            MatterProjectionId::from_key(&fabric_id, node_id.get(), 2, "access_control", 1);
+        repository
+            .store_matter_projection(
+                StoredMatterProjection {
+                    installation_id: installation_id.clone(),
+                    fabric_id: fabric_id.clone(),
+                    node_id,
+                    endpoint_number: MatterEndpointNumber::new(2),
+                    projection_id: lock_projection_id.clone(),
+                    device_id: device_id.clone(),
+                    endpoint_id: lock_endpoint_id.clone(),
+                    capability_schema: "access_control.v1".to_owned(),
+                    projection_revision: 1,
+                    state: MatterProjectedState::new(
+                        lock_projection_id.clone(),
+                        None,
+                        None,
+                        None,
+                        MatterStateFreshness::Fresh,
+                        MatterConvergence::NoDesiredState,
+                        None,
+                    )?,
+                    revision: 1,
+                    updated_at: now,
+                },
+                None,
+            )
+            .await?;
+        repository
+            .replace_actor_grants(
+                &actor.id,
+                vec![ActorGrant {
+                    id: GrantId::new(),
+                    actor_id: actor.id.clone(),
+                    actions: BTreeSet::from([CommandAction::ApproveUnlock]),
+                    scope: GrantScope::Capability {
+                        device_id: device_id.clone(),
+                        endpoint_id: lock_endpoint_id.clone(),
+                        schema: "access_control.v1".to_owned(),
+                    },
+                    maximum_risk: RiskClass::Security,
+                    enabled: true,
+                }],
             )
             .await?;
         let projection_id = MatterProjectionId::from_key(&fabric_id, node_id.get(), 1, "on_off", 1);
@@ -201,6 +261,8 @@ impl Fixture {
             fabric_id,
             node_id,
             projection_id,
+            lock_endpoint_id,
+            lock_projection_id,
         })
     }
 
@@ -232,6 +294,70 @@ impl Fixture {
         assert_eq!(outcome, CommandCreateOutcome::Created(command.clone()));
         Ok(command)
     }
+
+    async fn create_unlock_command(&self, key: &str) -> TestResult<CommandAggregate> {
+        let now = Utc::now();
+        let command = CommandAggregate::received(CommandEnvelope {
+            id: CommandId::new(),
+            actor_id: self.actor.id.clone(),
+            device_id: self.device_id.clone(),
+            endpoint_id: self.lock_endpoint_id.clone(),
+            capability: CapabilityDescriptor::new("access_control", 1, RiskClass::Security)?,
+            payload: CommandPayload::AccessControl(AccessControlCommand::Unlock),
+            idempotency_key: IdempotencyKey::new(key)?,
+            deadline: now + TimeDelta::minutes(1),
+            expected: None,
+            dry_run: false,
+            correlation_id: CorrelationId::new(),
+            causation_event_id: None,
+            automation_causation: None,
+            received_at: now,
+        });
+        let outcome = self
+            .repository
+            .create_command(
+                command.clone(),
+                CanonicalRequestHash::new("b".repeat(64))?,
+                audit(&command, None),
+            )
+            .await?;
+        assert_eq!(outcome, CommandCreateOutcome::Created(command.clone()));
+        let command = validate_command(&self.repository, command, now).await?;
+        let mut projection = self
+            .repository
+            .matter_projection(&self.lock_projection_id)
+            .await?
+            .ok_or("lock projection missing")?;
+        projection.state = MatterProjectedState::new(
+            self.lock_projection_id.clone(),
+            Some(MatterDesiredState::new(
+                MatterStateRevision::new(1)?,
+                MatterStateValue::Lock(MatterLockState::Unlocked),
+                now,
+            )?),
+            None,
+            None,
+            MatterStateFreshness::Fresh,
+            MatterConvergence::Pending,
+            None,
+        )?;
+        projection.revision += 1;
+        projection.updated_at = now;
+        self.repository
+            .replace_matter_desired_state(MatterDesiredStateWrite {
+                slot: MatterDesiredCommandSlot {
+                    projection_id: self.lock_projection_id.clone(),
+                    desired_revision: 1,
+                    command_id: command.envelope.id.clone(),
+                    dispatched_at: None,
+                    updated_at: now,
+                },
+                projection,
+                superseded: None,
+            })
+            .await?;
+        Ok(command)
+    }
 }
 
 fn device(
@@ -239,6 +365,7 @@ fn device(
     integration_id: IntegrationId,
     device_id: DeviceId,
     endpoint_id: EndpointId,
+    lock_endpoint_id: EndpointId,
     now: DateTime<Utc>,
 ) -> DeviceRecord {
     DeviceRecord::candidate(
@@ -252,14 +379,21 @@ fn device(
             manufacturer: "Fixture".to_owned(),
             model: "OnOff".to_owned(),
             network: Vec::new(),
-            endpoints: vec![EndpointSnapshot {
-                id: endpoint_id,
-                name: Some("Light".to_owned()),
-                capabilities: vec![CapabilitySnapshot::OnOff {
-                    on: false,
-                    risk: RiskClass::Comfort,
-                }],
-            }],
+            endpoints: vec![
+                EndpointSnapshot {
+                    id: endpoint_id,
+                    name: Some("Light".to_owned()),
+                    capabilities: vec![CapabilitySnapshot::OnOff {
+                        on: false,
+                        risk: RiskClass::Comfort,
+                    }],
+                },
+                EndpointSnapshot {
+                    id: lock_endpoint_id,
+                    name: Some("Lock".to_owned()),
+                    capabilities: vec![CapabilitySnapshot::AccessControl { locked: Some(true) }],
+                },
+            ],
             observed_at: now,
             vendor_data: BTreeMap::new(),
         },
@@ -292,6 +426,32 @@ fn allow(at: DateTime<Utc>) -> PolicyDecision {
         reasons: BTreeSet::from([PolicyReason::AllowedByGrant]),
         evaluated_at: at,
     }
+}
+
+fn unlock_authorization(
+    fixture: &Fixture,
+    command: &CommandAggregate,
+    id: MatterUnlockAuthorizationId,
+    issued_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+) -> TestResult<MatterUnlockAuthorization> {
+    Ok(MatterUnlockAuthorization {
+        id,
+        command_id: command.envelope.id.clone(),
+        canonical_request_hash: CanonicalRequestHash::new("b".repeat(64))?,
+        requesting_actor_id: fixture.actor.id.clone(),
+        approving_actor_id: fixture.actor.id.clone(),
+        projection_id: fixture.lock_projection_id.clone(),
+        device_id: fixture.device_id.clone(),
+        endpoint_id: fixture.lock_endpoint_id.clone(),
+        capability_schema: "access_control.v1".to_owned(),
+        action: AccessControlCommand::Unlock,
+        desired_revision: 1,
+        policy_revision: 1,
+        issued_at,
+        expires_at,
+        consumed_at: None,
+    })
 }
 
 async fn validate_command(
@@ -525,23 +685,18 @@ async fn restart_query_should_return_every_nonterminal_operation_phase() -> Test
 #[tokio::test]
 async fn unlock_authorization_should_be_bound_expiring_and_single_use() -> TestResult {
     let fixture = Fixture::new().await?;
-    let command = fixture.create_command("unlock-command", false).await?;
+    let command = fixture.create_unlock_command("unlock-command").await?;
     let issued_at = Utc::now();
     let authorization_id = MatterUnlockAuthorizationId::new();
     fixture
         .repository
-        .create_unlock_authorization(MatterUnlockAuthorization {
-            id: authorization_id.clone(),
-            command_id: command.envelope.id.clone(),
-            requesting_actor_id: fixture.actor.id.clone(),
-            approving_actor_id: fixture.actor.id.clone(),
-            projection_id: fixture.projection_id.clone(),
-            desired_revision: 1,
-            policy_revision: 1,
+        .create_unlock_authorization(unlock_authorization(
+            &fixture,
+            &command,
+            authorization_id.clone(),
             issued_at,
-            expires_at: issued_at + TimeDelta::seconds(30),
-            consumed_at: None,
-        })
+            issued_at + TimeDelta::seconds(30),
+        )?)
         .await?;
 
     let wrong_binding = fixture
@@ -549,7 +704,7 @@ async fn unlock_authorization_should_be_bound_expiring_and_single_use() -> TestR
         .consume_unlock_authorization(
             &authorization_id,
             &CommandId::new(),
-            &fixture.projection_id,
+            &fixture.lock_projection_id,
             issued_at + TimeDelta::seconds(1),
         )
         .await?;
@@ -559,13 +714,13 @@ async fn unlock_authorization_should_be_bound_expiring_and_single_use() -> TestR
         first_repository.consume_unlock_authorization(
             &authorization_id,
             &command.envelope.id,
-            &fixture.projection_id,
+            &fixture.lock_projection_id,
             issued_at + TimeDelta::seconds(2),
         ),
         second_repository.consume_unlock_authorization(
             &authorization_id,
             &command.envelope.id,
-            &fixture.projection_id,
+            &fixture.lock_projection_id,
             issued_at + TimeDelta::seconds(2),
         )
     );
@@ -581,29 +736,74 @@ async fn unlock_authorization_should_be_bound_expiring_and_single_use() -> TestR
     let expired_id = MatterUnlockAuthorizationId::new();
     fixture
         .repository
-        .create_unlock_authorization(MatterUnlockAuthorization {
-            id: expired_id.clone(),
-            command_id: command.envelope.id.clone(),
-            requesting_actor_id: fixture.actor.id.clone(),
-            approving_actor_id: fixture.actor.id.clone(),
-            projection_id: fixture.projection_id.clone(),
-            desired_revision: 1,
-            policy_revision: 1,
+        .create_unlock_authorization(unlock_authorization(
+            &fixture,
+            &command,
+            expired_id.clone(),
             issued_at,
-            expires_at: issued_at + TimeDelta::seconds(5),
-            consumed_at: None,
-        })
+            issued_at + TimeDelta::seconds(5),
+        )?)
         .await?;
     let expired = fixture
         .repository
         .consume_unlock_authorization(
             &expired_id,
             &command.envelope.id,
-            &fixture.projection_id,
+            &fixture.lock_projection_id,
             issued_at + TimeDelta::seconds(5),
         )
         .await?;
     assert_eq!(expired, MatterUnlockConsumption::Expired);
+    Ok(())
+}
+
+#[tokio::test]
+async fn unlock_authorization_and_dispatch_should_admit_exactly_once() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let command = fixture.create_unlock_command("atomic-unlock").await?;
+    let issued_at = Utc::now();
+    let authorization_id = MatterUnlockAuthorizationId::new();
+    fixture
+        .repository
+        .create_unlock_authorization(unlock_authorization(
+            &fixture,
+            &command,
+            authorization_id.clone(),
+            issued_at,
+            issued_at + TimeDelta::seconds(60),
+        )?)
+        .await?;
+    let mut dispatched = command.clone();
+    dispatched.transition(CommandState::Dispatched, issued_at + TimeDelta::seconds(1))?;
+    let write = MatterDispatchWrite {
+        projection_id: fixture.lock_projection_id.clone(),
+        command: dispatched.clone(),
+        expected_version: command.version,
+        audit: audit(&dispatched, Some(CommandState::Validated)),
+        dispatched_at: issued_at + TimeDelta::seconds(1),
+    };
+    let first_repository = fixture.repository.clone();
+    let second_repository = fixture.repository.clone();
+    let first_authorization = authorization_id.clone();
+    let second_authorization = authorization_id.clone();
+    let first_write = write.clone();
+    let (first, second) = tokio::join!(
+        first_repository.authorize_and_record_unlock_dispatch(&first_authorization, first_write,),
+        second_repository.authorize_and_record_unlock_dispatch(&second_authorization, write,)
+    );
+    let outcomes = BTreeSet::from([format!("{:?}", first?), format!("{:?}", second?)]);
+    let durable = fixture
+        .repository
+        .command(&command.envelope.id)
+        .await?
+        .ok_or("unlock command missing")?;
+
+    assert_eq!(
+        outcomes,
+        BTreeSet::from(["AlreadyConsumed".to_owned(), "Consumed".to_owned()])
+    );
+    assert_eq!(durable.state, CommandState::Dispatched);
+    assert_eq!(durable.version, command.version + 1);
     Ok(())
 }
 
@@ -1243,22 +1443,17 @@ async fn retention_should_preserve_live_state_and_unexpired_authorization() -> T
             Some(repair.clone()),
         )
         .await?;
-    let command = fixture.create_command("retention-unlock", false).await?;
+    let command = fixture.create_unlock_command("retention-unlock").await?;
     let issued_at = Utc::now();
     fixture
         .repository
-        .create_unlock_authorization(MatterUnlockAuthorization {
-            id: MatterUnlockAuthorizationId::new(),
-            command_id: command.envelope.id,
-            requesting_actor_id: fixture.actor.id.clone(),
-            approving_actor_id: fixture.actor.id.clone(),
-            projection_id: fixture.projection_id.clone(),
-            desired_revision: 1,
-            policy_revision: 1,
+        .create_unlock_authorization(unlock_authorization(
+            &fixture,
+            &command,
+            MatterUnlockAuthorizationId::new(),
             issued_at,
-            expires_at: issued_at + TimeDelta::minutes(5),
-            consumed_at: None,
-        })
+            issued_at + TimeDelta::minutes(5),
+        )?)
         .await?;
     let result = fixture
         .repository

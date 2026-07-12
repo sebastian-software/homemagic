@@ -6,7 +6,7 @@ use homemagic_domain::{
     DomainEvent, Installation, InstallationId, IntegrationInstance, ObservedConfirmation,
     RepairRecord, SecretRef, Space,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -112,7 +112,8 @@ pub trait FoundationRepository: Send + Sync {
 }
 
 /// Canonical SHA-256 request digest used to compare idempotent retries.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct CanonicalRequestHash(String);
 
 impl CanonicalRequestHash {
@@ -136,6 +137,20 @@ impl CanonicalRequestHash {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for CanonicalRequestHash {
+    type Error = CanonicalRequestHashError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<CanonicalRequestHash> for String {
+    fn from(value: CanonicalRequestHash) -> Self {
+        value.0
     }
 }
 
@@ -231,6 +246,12 @@ pub trait CommandRepository: Send + Sync {
 
     /// Loads one current command aggregate.
     async fn command(&self, command_id: &CommandId) -> Result<Option<CommandAggregate>, BoxError>;
+
+    /// Loads the immutable canonical request digest for one command.
+    async fn command_request_hash(
+        &self,
+        command_id: &CommandId,
+    ) -> Result<Option<CanonicalRequestHash>, BoxError>;
 
     /// Loads a bounded newest-first page owned by one actor.
     async fn actor_commands(

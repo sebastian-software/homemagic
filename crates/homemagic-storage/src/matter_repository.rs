@@ -11,8 +11,10 @@ use homemagic_application::{
     StoredMatterSubscription,
 };
 use homemagic_domain::{
-    CommandAggregate, CommandId, CommandState, InstallationId, MatterConvergence, MatterFabricId,
-    MatterOperation, MatterOperationTarget, MatterProjectionId, MatterUnlockAuthorizationId,
+    AccessControlCommand, Actor, ActorGrant, ActorKind, CommandAction, CommandAggregate,
+    CommandAuditRecord, CommandId, CommandPayload, CommandState, GrantScope, InstallationId,
+    MatterConvergence, MatterFabricId, MatterOperation, MatterOperationTarget, MatterProjectionId,
+    MatterStateFreshness, MatterStateValue, MatterUnlockAuthorizationId, RiskClass,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
@@ -289,6 +291,19 @@ impl MatterRepository for SqliteRepository {
     async fn record_matter_dispatch(&self, write: MatterDispatchWrite) -> Result<(), BoxError> {
         run_write(&self.connection, move |transaction| {
             record_dispatch(transaction, &write)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn authorize_and_record_unlock_dispatch(
+        &self,
+        authorization_id: &MatterUnlockAuthorizationId,
+        write: MatterDispatchWrite,
+    ) -> Result<MatterUnlockConsumption, BoxError> {
+        let authorization_id = authorization_id.clone();
+        run_write(&self.connection, move |transaction| {
+            authorize_and_record_unlock_dispatch(transaction, &authorization_id, &write)
         })
         .await
         .map_err(boxed)
@@ -761,6 +776,8 @@ fn create_authorization(
         || authorization.policy_revision == 0
         || authorization.issued_at >= authorization.expires_at
         || authorization.consumed_at.is_some()
+        || authorization.capability_schema != "access_control.v1"
+        || authorization.action != AccessControlCommand::Unlock
     {
         return Err(StorageError::InvalidMatter("invalid unlock authorization"));
     }
@@ -770,15 +787,33 @@ fn create_authorization(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     let projection: StoredMatterProjection = decode(&projection)?;
-    let command: String = transaction.query_row(
-        "SELECT payload_json FROM commands WHERE id = ?1",
+    let (command, request_hash): (String, String) = transaction.query_row(
+        "SELECT payload_json, request_hash FROM commands WHERE id = ?1",
         [authorization.command_id.to_string()],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     let command: CommandAggregate = decode(&command)?;
-    if command.envelope.actor_id != authorization.requesting_actor_id
+    let authorization_request_hash: String = authorization.canonical_request_hash.clone().into();
+    if command.state != CommandState::Validated
+        || command.envelope.actor_id != authorization.requesting_actor_id
         || command.envelope.device_id != projection.device_id
         || command.envelope.endpoint_id != projection.endpoint_id
+        || command.envelope.device_id != authorization.device_id
+        || command.envelope.endpoint_id != authorization.endpoint_id
+        || command.envelope.payload != CommandPayload::AccessControl(AccessControlCommand::Unlock)
+        || command.envelope.payload.schema() != authorization.capability_schema
+        || request_hash != authorization_request_hash
+        || projection.projection_id != authorization.projection_id
+        || projection.capability_schema != authorization.capability_schema
+        || projection.state.freshness() != MatterStateFreshness::Fresh
+        || !projection.state.desired().is_some_and(|desired| {
+            desired.revision.get() == authorization.desired_revision
+                && desired.value
+                    == MatterStateValue::Lock(homemagic_domain::MatterLockState::Unlocked)
+        })
+        || !current_slot_matches(transaction, authorization)?
+        || !command_policy_matches(transaction, authorization)?
+        || !actor_has_exact_unlock_grant(transaction, authorization)?
     {
         return Err(StorageError::InvalidMatter(
             "unlock authorization binding mismatch",
@@ -803,7 +838,105 @@ fn create_authorization(
             authorization.expires_at,
         ],
     )?;
+    transaction.execute(
+        "INSERT INTO matter_unlock_authorization_bindings(
+            authorization_id, request_hash, device_id, endpoint_id,
+            capability_schema, action
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'unlock')",
+        params![
+            authorization.id.to_string(),
+            authorization_request_hash,
+            authorization.device_id.to_string(),
+            authorization.endpoint_id.as_str(),
+            authorization.capability_schema,
+        ],
+    )?;
     Ok(())
+}
+
+fn current_slot_matches(
+    transaction: &Transaction<'_>,
+    authorization: &MatterUnlockAuthorization,
+) -> Result<bool, StorageError> {
+    let slot = transaction
+        .query_row(
+            "SELECT command_id, desired_revision, dispatched_at
+             FROM matter_desired_command_slots WHERE projection_id = ?1",
+            [authorization.projection_id.to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<DateTime<Utc>>>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    Ok(matches!(slot, Some((command_id, revision, None))
+        if command_id == authorization.command_id.to_string()
+            && to_u64(revision)? == authorization.desired_revision))
+}
+
+fn command_policy_matches(
+    transaction: &Transaction<'_>,
+    authorization: &MatterUnlockAuthorization,
+) -> Result<bool, StorageError> {
+    let payload = transaction
+        .query_row(
+            "SELECT payload_json FROM command_audit
+             WHERE command_id = ?1 ORDER BY sequence DESC LIMIT 1",
+            [authorization.command_id.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(payload) = payload else {
+        return Ok(false);
+    };
+    let audit: CommandAuditRecord = decode(&payload)?;
+    Ok(audit.policy.is_some_and(|policy| {
+        policy.allowed && u64::from(policy.policy_version) == authorization.policy_revision
+    }))
+}
+
+fn actor_has_exact_unlock_grant(
+    transaction: &Transaction<'_>,
+    authorization: &MatterUnlockAuthorization,
+) -> Result<bool, StorageError> {
+    let actor = transaction
+        .query_row(
+            "SELECT payload_json FROM actors WHERE id = ?1",
+            [authorization.approving_actor_id.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(actor) = actor else {
+        return Ok(false);
+    };
+    let actor: Actor = decode(&actor)?;
+    if !actor.enabled || actor.kind != ActorKind::User {
+        return Ok(false);
+    }
+    let mut statement = transaction
+        .prepare("SELECT payload_json FROM actor_grants WHERE actor_id = ?1 AND enabled = 1")?;
+    let rows = statement.query_map([authorization.approving_actor_id.to_string()], |row| {
+        row.get::<_, String>(0)
+    })?;
+    for row in rows {
+        let grant: ActorGrant = decode(&row?)?;
+        if grant.maximum_risk.permits(RiskClass::Security)
+            && grant.actions.contains(&CommandAction::ApproveUnlock)
+            && matches!(
+                grant.scope,
+                GrantScope::Capability { device_id, endpoint_id, schema }
+                    if device_id == authorization.device_id
+                        && endpoint_id == authorization.endpoint_id
+                        && schema == authorization.capability_schema
+            )
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn consume_authorization(
@@ -850,6 +983,140 @@ fn consume_authorization(
     } else {
         Ok(MatterUnlockConsumption::AlreadyConsumed)
     }
+}
+
+fn authorize_and_record_unlock_dispatch(
+    transaction: &Transaction<'_>,
+    authorization_id: &MatterUnlockAuthorizationId,
+    write: &MatterDispatchWrite,
+) -> Result<MatterUnlockConsumption, StorageError> {
+    let Some(stored) = load_unlock_authorization(transaction, authorization_id)? else {
+        return Ok(MatterUnlockConsumption::NotFound);
+    };
+    if stored.consumed_at.is_some() {
+        return Ok(MatterUnlockConsumption::AlreadyConsumed);
+    }
+    if write.dispatched_at >= stored.expires_at {
+        return Ok(MatterUnlockConsumption::Expired);
+    }
+    let command = load_command_required(transaction, &write.command.envelope.id)?;
+    let projection: StoredMatterProjection =
+        load_projection_required(transaction, &write.projection_id)?;
+    let stored_request_hash: String = transaction.query_row(
+        "SELECT request_hash FROM commands WHERE id = ?1",
+        [write.command.envelope.id.to_string()],
+        |row| row.get(0),
+    )?;
+    let authorization = MatterUnlockAuthorization {
+        id: authorization_id.clone(),
+        command_id: write.command.envelope.id.clone(),
+        canonical_request_hash: stored
+            .request_hash
+            .clone()
+            .try_into()
+            .map_err(|_| StorageError::InvalidMatter("invalid stored unlock request hash"))?,
+        requesting_actor_id: stored
+            .requester
+            .parse()
+            .map_err(|_| StorageError::InvalidMatter("invalid requester ID"))?,
+        approving_actor_id: stored
+            .approver
+            .parse()
+            .map_err(|_| StorageError::InvalidMatter("invalid approver ID"))?,
+        projection_id: write.projection_id.clone(),
+        device_id: write.command.envelope.device_id.clone(),
+        endpoint_id: write.command.envelope.endpoint_id.clone(),
+        capability_schema: stored.capability_schema.clone(),
+        action: AccessControlCommand::Unlock,
+        desired_revision: to_u64(stored.desired_revision)?,
+        policy_revision: to_u64(stored.policy_revision)?,
+        issued_at: stored.issued_at,
+        expires_at: stored.expires_at,
+        consumed_at: None,
+    };
+    if stored.command_id != write.command.envelope.id.to_string()
+        || stored.projection_id != write.projection_id.to_string()
+        || stored.device_id != write.command.envelope.device_id.to_string()
+        || stored.endpoint_id != write.command.envelope.endpoint_id.as_str()
+        || stored.capability_schema != "access_control.v1"
+        || stored.action != "unlock"
+        || stored_request_hash != stored.request_hash
+        || command.state != CommandState::Validated
+        || command.envelope.payload != CommandPayload::AccessControl(AccessControlCommand::Unlock)
+        || projection.state.freshness() != MatterStateFreshness::Fresh
+        || write.expected_version != command.version
+        || !current_slot_matches(transaction, &authorization)?
+        || !command_policy_matches(transaction, &authorization)?
+        || !actor_has_exact_unlock_grant(transaction, &authorization)?
+    {
+        return Ok(MatterUnlockConsumption::BindingMismatch);
+    }
+    let changed = transaction.execute(
+        "UPDATE matter_unlock_authorizations SET consumed_at = ?1
+         WHERE id = ?2 AND consumed_at IS NULL AND expires_at > ?1",
+        params![write.dispatched_at, authorization_id.to_string()],
+    )?;
+    if changed != 1 {
+        return Ok(MatterUnlockConsumption::AlreadyConsumed);
+    }
+    record_dispatch(transaction, write)?;
+    Ok(MatterUnlockConsumption::Consumed)
+}
+
+struct StoredUnlockAuthorization {
+    command_id: String,
+    requester: String,
+    approver: String,
+    projection_id: String,
+    desired_revision: i64,
+    policy_revision: i64,
+    issued_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    consumed_at: Option<DateTime<Utc>>,
+    request_hash: String,
+    device_id: String,
+    endpoint_id: String,
+    capability_schema: String,
+    action: String,
+}
+
+fn load_unlock_authorization(
+    transaction: &Transaction<'_>,
+    authorization_id: &MatterUnlockAuthorizationId,
+) -> Result<Option<StoredUnlockAuthorization>, StorageError> {
+    transaction
+        .query_row(
+            "SELECT a.command_id, a.requesting_actor_id, a.approving_actor_id,
+                    a.projection_id, a.desired_revision, a.policy_revision,
+                    a.issued_at, a.expires_at, a.consumed_at,
+                    b.request_hash, b.device_id, b.endpoint_id,
+                    b.capability_schema, b.action
+             FROM matter_unlock_authorizations a
+             JOIN matter_unlock_authorization_bindings b
+               ON b.authorization_id = a.id
+             WHERE a.id = ?1",
+            [authorization_id.to_string()],
+            |row| {
+                Ok(StoredUnlockAuthorization {
+                    command_id: row.get(0)?,
+                    requester: row.get(1)?,
+                    approver: row.get(2)?,
+                    projection_id: row.get(3)?,
+                    desired_revision: row.get(4)?,
+                    policy_revision: row.get(5)?,
+                    issued_at: row.get(6)?,
+                    expires_at: row.get(7)?,
+                    consumed_at: row.get(8)?,
+                    request_hash: row.get(9)?,
+                    device_id: row.get(10)?,
+                    endpoint_id: row.get(11)?,
+                    capability_schema: row.get(12)?,
+                    action: row.get(13)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StorageError::from)
 }
 
 fn replace_desired_slot(

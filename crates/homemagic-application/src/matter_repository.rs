@@ -3,14 +3,15 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
-    ActorId, CommandAggregate, CommandAuditRecord, CommandId, DeviceId, EndpointId, InstallationId,
-    MatterControllerError, MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor,
-    MatterNodeId, MatterOperation, MatterOperationId, MatterOperationPhase, MatterProjectedState,
-    MatterProjectionId, MatterSubscriptionId, MatterUnlockAuthorizationId, RepairId,
+    AccessControlCommand, ActorId, CommandAggregate, CommandAuditRecord, CommandId, DeviceId,
+    EndpointId, InstallationId, MatterControllerError, MatterEndpointNumber, MatterFabricId,
+    MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId, MatterOperationPhase,
+    MatterProjectedState, MatterProjectionId, MatterSubscriptionId, MatterUnlockAuthorizationId,
+    RepairId,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{BoxError, MatterFabricSecretRefs, MatterFabricState};
+use crate::{BoxError, CanonicalRequestHash, MatterFabricSecretRefs, MatterFabricState};
 
 /// Durable fabric metadata containing references, never secret values.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -161,12 +162,22 @@ pub struct MatterUnlockAuthorization {
     pub id: MatterUnlockAuthorizationId,
     /// Exact command authorized for one use.
     pub command_id: CommandId,
+    /// Canonical immutable request digest bound to the authorization.
+    pub canonical_request_hash: CanonicalRequestHash,
     /// Actor that requested the unlock.
     pub requesting_actor_id: ActorId,
     /// Interactive actor that approved it.
     pub approving_actor_id: ActorId,
     /// Exact projected lock capability.
     pub projection_id: MatterProjectionId,
+    /// Exact common device target.
+    pub device_id: DeviceId,
+    /// Exact common endpoint target.
+    pub endpoint_id: EndpointId,
+    /// Exact versioned common capability.
+    pub capability_schema: String,
+    /// Exact governed action; only `Unlock` is valid here.
+    pub action: AccessControlCommand,
     /// Desired-state revision covered by the approval.
     pub desired_revision: u64,
     /// Version of the evaluated authorization policy.
@@ -404,6 +415,13 @@ pub trait MatterRepository: Send + Sync {
 
     /// Records the command dispatch transition and desired-slot decision atomically.
     async fn record_matter_dispatch(&self, write: MatterDispatchWrite) -> Result<(), BoxError>;
+
+    /// Atomically consumes exact unlock authorization and records dispatch.
+    async fn authorize_and_record_unlock_dispatch(
+        &self,
+        authorization_id: &MatterUnlockAuthorizationId,
+        write: MatterDispatchWrite,
+    ) -> Result<MatterUnlockConsumption, BoxError>;
 
     /// Loads bounded deterministic restart work.
     async fn recover_matter(
