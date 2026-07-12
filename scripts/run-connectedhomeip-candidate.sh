@@ -45,6 +45,7 @@ test "$(git -C "$workspace/source" rev-parse HEAD)" = "$revision"
 
 python3 "$workspace/source/scripts/checkout_submodules.py" \
   --shallow --platform "$platform" --jobs 8
+source_checkout_kib="$(du -sk "$workspace/source" | awk '{print $1}')"
 
 export GITHUB_ACTION=1
 export PW_ENVIRONMENT_ROOT="$workspace/environment"
@@ -69,7 +70,7 @@ grep -q 'Command sets:' "$workspace/chip-tool-help.txt"
 
 binary_bytes="$(wc -c < "$binary" | tr -d ' ')"
 binary_format="$(file -b "$binary")"
-source_kib="$(du -sk "$workspace/source" | awk '{print $1}')"
+source_and_build_tree_kib="$(du -sk "$workspace/source" | awk '{print $1}')"
 environment_kib="$(du -sk "$workspace/environment" | awk '{print $1}')"
 submodule_count="$(git submodule status --recursive | wc -l | tr -d ' ')"
 submodule_manifest_sha256="$(git submodule status --recursive | shasum -a 256 | awk '{print $1}')"
@@ -89,7 +90,8 @@ jq -n \
   --arg submodule_manifest_sha256 "$submodule_manifest_sha256" \
   --argjson build_seconds "$build_seconds" \
   --argjson binary_bytes "$binary_bytes" \
-  --argjson source_kib "$source_kib" \
+  --argjson source_checkout_kib "$source_checkout_kib" \
+  --argjson source_and_build_tree_kib "$source_and_build_tree_kib" \
   --argjson environment_kib "$environment_kib" \
   --argjson submodule_count "$submodule_count" \
   --argjson controller_cpp_lines "$controller_cpp_lines" \
@@ -106,7 +108,8 @@ jq -n \
       seconds: $build_seconds,
       binary_bytes: $binary_bytes,
       binary_format: $binary_format,
-      source_checkout_kib: $source_kib,
+      source_checkout_kib: $source_checkout_kib,
+      source_and_build_tree_kib: $source_and_build_tree_kib,
       bootstrap_environment_kib: $environment_kib,
       submodule_count: $submodule_count,
       submodule_manifest_sha256: $submodule_manifest_sha256,
