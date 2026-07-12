@@ -3,7 +3,7 @@ id: E4-007-03-02
 epic: EPIC-004
 parent: E4-007-03
 title: Commit commissioned nodes and capability projections atomically
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-03-01]
 adrs: [ADR-0033, ADR-0034, ADR-0037, ADR-0040]
@@ -43,7 +43,7 @@ operation.
 - [x] Atomic-failure tests expose neither partial nodes nor partial projections.
 - [x] Duplicate controller results cannot create duplicate common identities.
 - [x] Full local workspace gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -55,3 +55,6 @@ operation.
   commit. Thirty-one Matter repository contracts, full workspace tests, strict
   Clippy, boundary checks, and secret scans pass locally. Commit, push, and
   public CI remain pending.
+- 2026-07-12: Commits `d9ee1a6` and `dd11fb0` were pushed to `main`. Public CI
+  run `29203595736` passed Linux x86_64 quality and simulator hashes on Linux
+  x86_64 and macOS ARM64. This child issue is done.

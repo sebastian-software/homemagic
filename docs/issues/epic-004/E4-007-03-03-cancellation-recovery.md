@@ -3,7 +3,7 @@ id: E4-007-03-03
 epic: EPIC-004
 parent: E4-007-03
 title: Reconcile commissioning cancellation and every restart checkpoint
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-03-01, E4-007-03-02]
 adrs: [ADR-0014, ADR-0033, ADR-0037, ADR-0040]
@@ -44,3 +44,8 @@ reusing lost setup input.
 - [ ] Every simulator commissioning restart phase reaches an explicit terminal
   outcome.
 - [ ] Atomic conflict and indeterminate-outcome repair tests pass.
+
+## Progress log
+
+- 2026-07-12: E4-007-03-02 completed with public cross-platform CI. This child
+  issue is ready.
