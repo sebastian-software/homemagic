@@ -51,7 +51,16 @@ build_seconds="$(( $(date +%s) - start_seconds ))"
 
 binary="$workspace/source/out/$target/chip-tool"
 test -x "$binary"
-"$binary" --help >/dev/null
+set +e
+"$binary" --help > "$workspace/chip-tool-help.txt" 2>&1
+help_exit_code="$?"
+set -e
+# chip-tool prints the complete command catalog and exits with 1 when no
+# subcommand was selected. Treat that documented CLI behavior as a smoke pass,
+# but retain the exact status in the report so it cannot be mistaken for an
+# embeddable health check.
+test "$help_exit_code" -eq 0 -o "$help_exit_code" -eq 1
+grep -q 'Command sets:' "$workspace/chip-tool-help.txt"
 
 binary_bytes="$(wc -c < "$binary" | tr -d ' ')"
 binary_format="$(file -b "$binary")"
@@ -80,6 +89,7 @@ jq -n \
   --argjson submodule_count "$submodule_count" \
   --argjson controller_cpp_lines "$controller_cpp_lines" \
   --argjson python_binding_exports "$python_binding_exports" \
+  --argjson help_exit_code "$help_exit_code" \
   '{
     schema: $schema,
     candidate: "connectedhomeip",
@@ -94,7 +104,8 @@ jq -n \
       source_checkout_kib: $source_kib,
       bootstrap_environment_kib: $environment_kib,
       submodule_count: $submodule_count,
-      submodule_manifest_sha256: $submodule_manifest_sha256
+      submodule_manifest_sha256: $submodule_manifest_sha256,
+      cli_help_exit_code: $help_exit_code
     },
     boundary: {
       evaluated: "chip-tool process plus source-level controller ABI survey",
