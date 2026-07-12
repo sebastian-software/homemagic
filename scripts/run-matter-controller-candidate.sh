@@ -64,7 +64,7 @@ rust_bytes="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o 
 other_code_bytes="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' -o -name '*.py' -o -name '*.js' -o -name '*.ts' \) -exec wc -c {} + | awk 'END {print $1 + 0}')"
 total_code_bytes="$((rust_bytes + other_code_bytes))"
 rust_share_basis_points="$((rust_bytes * 10000 / total_code_bytes))"
-unsafe_blocks="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f -name '*.rs' -exec grep -Eho '(^|[^[:alnum:]_])unsafe[[:space:]]+(fn|impl|trait|extern)|(^|[^[:alnum:]_])unsafe[[:space:]]*\{' {} + | wc -l | tr -d ' ')"
+unsafe_lines="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f -name '*.rs' -exec awk '/(^|[^[:alnum:]_])unsafe[[:space:]]+(fn|impl|trait|extern)|(^|[^[:alnum:]_])unsafe[[:space:]]*\{/ { count += 1 } END { print count + 0 }' {} + | awk '{ sum += $1 } END { print sum + 0 }')"
 native_files="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' \) -print | wc -l | tr -d ' ')"
 default_tree="$(cargo tree --manifest-path "$workspace/source/Cargo.toml" --locked --workspace -e normal --prefix none)"
 default_dependencies="$(sort -u <<<"$default_tree" | wc -l | tr -d ' ')"
@@ -105,7 +105,7 @@ jq -n \
   --argjson rust_bytes "$rust_bytes" \
   --argjson other_code_bytes "$other_code_bytes" \
   --argjson rust_share_basis_points "$rust_share_basis_points" \
-  --argjson unsafe_blocks "$unsafe_blocks" \
+  --argjson unsafe_lines "$unsafe_lines" \
   --argjson compiled_unsafe_blocks "$compiled_unsafe_blocks" \
   --argjson native_files "$native_files" \
   --argjson default_dependencies "$default_dependencies" \
@@ -124,7 +124,7 @@ jq -n \
       repository_other_code_bytes: $other_code_bytes,
       repository_rust_share_basis_points: $rust_share_basis_points,
       compiled_first_party_rust_share_basis_points: 10000,
-      repository_semantic_unsafe_blocks: $unsafe_blocks,
+      repository_semantic_unsafe_lines: $unsafe_lines,
       compiled_first_party_semantic_unsafe_blocks: $compiled_unsafe_blocks,
       compiled_first_party_native_files: $native_files,
       default_normal_dependencies: $default_dependencies,
