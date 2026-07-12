@@ -6,12 +6,14 @@
 
 mod barrier;
 mod clock;
+mod command;
 mod fixture;
 mod script;
 mod simulator;
 
 pub use barrier::{SimulatorBarrier, SimulatorDispatchBarriers};
 pub use clock::{SimulatorClock, SimulatorClockError};
+pub use command::MatterCommandAdapter;
 pub use fixture::{
     DOOR_LOCK_CLUSTER_ID, DOOR_LOCK_STATE_ATTRIBUTE_ID, ON_OFF_ATTRIBUTE_ID, ON_OFF_CLUSTER_ID,
     SimulatorFixture, SimulatorFixtureError,

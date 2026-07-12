@@ -7,32 +7,48 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
-    ActorCredential, CanonicalRequestHash, CommandCreateOutcome, CommandDispatchControl,
-    CommandRepository, DesiredStateRegistration, FoundationRepository, FoundationWrite,
-    MatterCommandDispatchControl, MatterDesiredCommandSlot, MatterDispatchAdmission,
-    MatterDispatchWrite, MatterFabricSecretRefs, MatterFabricState, MatterOperationProgress,
-    MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRetention,
-    MatterSupersededCommand, MatterUnlockAuthorization, MatterUnlockConsumption,
-    StoredMatterFabric, StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
-    StoredMatterSubscriptionState,
+    ActorCredential, CanonicalRequestHash, Clock, CommandConfirmation, CommandConfirmationOutcome,
+    CommandCreateOutcome, CommandDispatchControl, CommandDispatcher, CommandRepository,
+    DesiredStateRegistration, FoundationRepository, FoundationWrite, MatterCommandDispatchControl,
+    MatterCommissioningRequest, MatterController, MatterCreateFabricRequest,
+    MatterDesiredCommandSlot, MatterDispatchAdmission, MatterDispatchWrite, MatterFabricSecretRefs,
+    MatterFabricState, MatterOperationProgress, MatterRepairRecord, MatterRepairStatus,
+    MatterRepository, MatterRetention, MatterSupersededCommand, MatterUnlockAuthorization,
+    MatterUnlockConsumption, SecretValue, StoredMatterFabric, StoredMatterNode,
+    StoredMatterProjection, StoredMatterSubscription, StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
     Actor, AuditId, CapabilityDescriptor, CapabilitySnapshot, CommandAggregate, CommandAuditRecord,
-    CommandEnvelope, CommandErrorCode, CommandId, CommandPayload, CommandState, CorrelationId,
-    DeviceId, DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot, IdempotencyKey,
-    Installation, InstallationId, IntegrationId, IntegrationInstance, MatterClusterDescriptor,
-    MatterConvergence, MatterDescriptorRevision, MatterDesiredState, MatterDeviceType,
-    MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor,
-    MatterNodeId, MatterOperation, MatterOperationKind, MatterOperationPhase,
-    MatterOperationTarget, MatterProjectedState, MatterProjectionId, MatterStateFreshness,
-    MatterStateRevision, MatterStateValue, MatterSubscriptionId, MatterUnlockAuthorizationId,
-    OnOffCommand, PolicyDecision, PolicyReason, RepairId, RiskClass, SecretRef,
+    CommandEnvelope, CommandErrorCode, CommandFailure, CommandId, CommandPayload, CommandState,
+    CorrelationId, DeviceId, DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot,
+    IdempotencyKey, Installation, InstallationId, IntegrationId, IntegrationInstance,
+    MatterClusterDescriptor, MatterControllerError, MatterControllerErrorCategory,
+    MatterControllerErrorCode, MatterConvergence, MatterDescriptorRevision, MatterDesiredState,
+    MatterDeviceType, MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId,
+    MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId, MatterOperationKind,
+    MatterOperationPhase, MatterOperationTarget, MatterProjectedState, MatterProjectionId,
+    MatterRetryability, MatterStateFreshness, MatterStateRevision, MatterStateValue,
+    MatterSubscriptionId, MatterUnlockAuthorizationId, OnOffCommand, PolicyDecision, PolicyReason,
+    RepairId, RiskClass, SecretRef,
+};
+use homemagic_matter::{
+    DeterministicMatterSimulator, MatterCommandAdapter, SIMULATOR_LIGHT_SETUP, SimulatorFault,
+    SimulatorOperation,
 };
 use homemagic_storage::SqliteRepository;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
+
+#[derive(Clone, Copy)]
+struct FixedClock(DateTime<Utc>);
+
+impl Clock for FixedClock {
+    fn now(&self) -> DateTime<Utc> {
+        self.0
+    }
+}
 
 struct Fixture {
     _directory: TempDir,
@@ -59,7 +75,7 @@ impl Fixture {
         let now = Utc::now();
         let installation_id = InstallationId::new();
         let integration_id = IntegrationId::from_native(&installation_id, "matter", "local");
-        let device_id = DeviceId::from_integration(&integration_id, "fabric-node-42");
+        let device_id = DeviceId::from_integration(&integration_id, "fabric-node-4097");
         let endpoint_id = EndpointId::new("matter:1");
         repository
             .apply(FoundationWrite {
@@ -122,7 +138,7 @@ impl Fixture {
                 None,
             )
             .await?;
-        let node_id = MatterNodeId::new(42)?;
+        let node_id = MatterNodeId::new(0x1001)?;
         let descriptor = MatterNodeDescriptor::new(
             fabric_id.clone(),
             node_id,
@@ -146,7 +162,7 @@ impl Fixture {
                 None,
             )
             .await?;
-        let projection_id = MatterProjectionId::from_key(&fabric_id, 42, 1, "on_off", 1);
+        let projection_id = MatterProjectionId::from_key(&fabric_id, node_id.get(), 1, "on_off", 1);
         repository
             .store_matter_projection(
                 StoredMatterProjection {
@@ -230,7 +246,7 @@ fn device(
         integration_id,
         DeviceSnapshot {
             id: device_id,
-            native_id: "fabric-node-42".to_owned(),
+            native_id: "fabric-node-4097".to_owned(),
             integration: "matter".to_owned(),
             name: "Matter light".to_owned(),
             manufacturer: "Fixture".to_owned(),
@@ -809,6 +825,10 @@ async fn command_control_should_collapse_undispatched_state_and_preserve_dispatc
         .matter_desired_slot(&fixture.projection_id)
         .await?
         .ok_or("desired slot missing")?;
+    let projected = repository
+        .matter_projection(&fixture.projection_id)
+        .await?
+        .ok_or("desired projection missing")?;
     assert_eq!(first.state, CommandState::Cancelled);
     assert_eq!(
         first.failure.map(|failure| failure.code),
@@ -819,6 +839,13 @@ async fn command_control_should_collapse_undispatched_state_and_preserve_dispatc
     assert_eq!(slot.desired_revision, 3);
     assert_eq!(slot.command_id, third.envelope.id);
     assert!(slot.dispatched_at.is_some());
+    assert_eq!(
+        projected
+            .state
+            .desired()
+            .map(|desired| (desired.revision.get(), desired.value.clone())),
+        Some((3, MatterStateValue::OnOff(true)))
+    );
 
     let fourth = validate_command(
         &repository,
@@ -837,11 +864,22 @@ async fn command_control_should_collapse_undispatched_state_and_preserve_dispatc
         .matter_desired_slot(&fixture.projection_id)
         .await?
         .ok_or("latest desired slot missing")?;
+    let latest_projection = repository
+        .matter_projection(&fixture.projection_id)
+        .await?
+        .ok_or("latest desired projection missing")?;
 
     assert_eq!(historical.state, CommandState::Dispatched);
     assert_eq!(latest.desired_revision, 4);
     assert_eq!(latest.command_id, fourth.envelope.id);
     assert!(latest.dispatched_at.is_none());
+    assert_eq!(
+        latest_projection
+            .state
+            .desired()
+            .map(|desired| (desired.revision.get(), desired.value.clone())),
+        Some((4, MatterStateValue::OnOff(false)))
+    );
     Ok(())
 }
 
@@ -892,6 +930,148 @@ async fn concurrent_desired_registration_should_serialize_monotonic_revisions() 
     assert_eq!(revisions, BTreeSet::from([2, 3]));
     assert_eq!(slot.desired_revision, 3);
     assert!(slot.command_id == second.envelope.id || slot.command_id == third.envelope.id);
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the adapter contract keeps acknowledgement, confirmation, mismatch, and restart evidence ordered"
+)]
+async fn matter_adapter_should_dispatch_typed_command_and_confirm_only_from_observation()
+-> TestResult {
+    let fixture = Fixture::new().await?;
+    let started_at = Utc::now();
+    let simulator = Arc::new(DeterministicMatterSimulator::new(started_at));
+    simulator
+        .create_fabric(MatterCreateFabricRequest {
+            operation_id: MatterOperationId::new(),
+            fabric_id: fixture.fabric_id.clone(),
+            secrets: MatterFabricSecretRefs {
+                root_ca_key: SecretRef::from_backend_id("simulator-root-ref"),
+                operational_key: SecretRef::from_backend_id("simulator-operational-ref"),
+                controller_state: SecretRef::from_backend_id("simulator-state-ref"),
+            },
+        })
+        .await?;
+    simulator
+        .commission(MatterCommissioningRequest::new(
+            MatterOperationId::new(),
+            fixture.fabric_id.clone(),
+            SecretValue::new(SIMULATOR_LIGHT_SETUP),
+        ))
+        .await?;
+    simulator.advance(TimeDelta::seconds(1)).await?;
+
+    let repository = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let control = MatterCommandDispatchControl::new(repository.clone(), repository.clone());
+    let adapter = MatterCommandAdapter::with_clock(
+        simulator.clone(),
+        repository.clone(),
+        Arc::new(FixedClock(started_at + TimeDelta::seconds(2))),
+    );
+    let requested = validate_command(
+        &repository,
+        fixture.create_command("adapter-on", true).await?,
+        started_at,
+    )
+    .await?;
+    control.register_desired(&requested, started_at).await?;
+    let MatterDispatchAdmission::Committed {
+        command: dispatched,
+        ..
+    } = control.commit_dispatch(&requested, started_at).await?
+    else {
+        return Err("Matter command should reach atomic dispatch boundary".into());
+    };
+
+    let acknowledgement = adapter
+        .dispatch(&dispatched.envelope)
+        .await
+        .map_err(|failure| std::io::Error::other(format!("dispatch failed: {failure:?}")))?;
+    assert_eq!(acknowledgement.code, "matter.invoke.accepted");
+    assert_eq!(dispatched.state, CommandState::Dispatched);
+    assert!(dispatched.confirmation.is_none());
+
+    let confirmation = adapter.confirm(&dispatched).await?;
+    assert!(matches!(
+        confirmation,
+        CommandConfirmationOutcome::Confirmed(_)
+    ));
+    let trace_before_restart = simulator.normalized_trace_json().await?;
+    let invokes_before_restart = String::from_utf8(trace_before_restart)?
+        .matches("\"type\":\"invocation_acknowledged\"")
+        .count();
+    assert_eq!(invokes_before_restart, 1);
+
+    let restarted_adapter = MatterCommandAdapter::with_clock(
+        simulator.clone(),
+        repository.clone(),
+        Arc::new(FixedClock(started_at + TimeDelta::seconds(3))),
+    );
+    assert!(matches!(
+        restarted_adapter.confirm(&dispatched).await?,
+        CommandConfirmationOutcome::Confirmed(_)
+    ));
+    let invokes_after_restart = String::from_utf8(simulator.normalized_trace_json().await?)?
+        .matches("\"type\":\"invocation_acknowledged\"")
+        .count();
+    assert_eq!(invokes_after_restart, invokes_before_restart);
+
+    let mismatch = validate_command(
+        &repository,
+        fixture.create_command("adapter-mismatch", false).await?,
+        started_at + TimeDelta::milliseconds(1),
+    )
+    .await?;
+    control
+        .register_desired(&mismatch, started_at + TimeDelta::milliseconds(1))
+        .await?;
+    let MatterDispatchAdmission::Committed {
+        command: mismatch, ..
+    } = control
+        .commit_dispatch(&mismatch, started_at + TimeDelta::milliseconds(1))
+        .await?
+    else {
+        return Err("mismatch fixture should reach dispatch boundary".into());
+    };
+    assert!(matches!(
+        adapter.confirm(&mismatch).await?,
+        CommandConfirmationOutcome::Failed(CommandFailure {
+            code: CommandErrorCode::ConfirmationMismatch,
+            ..
+        })
+    ));
+
+    simulator
+        .inject_fault(SimulatorFault::FailNext {
+            operation: SimulatorOperation::Read,
+            error: MatterControllerError::new(
+                MatterControllerErrorCategory::Persistence,
+                MatterControllerErrorCode::OutcomeIndeterminate,
+                MatterRetryability::AfterRepair,
+                None,
+                None,
+            ),
+        })
+        .await;
+    assert!(matches!(
+        adapter.confirm(&mismatch).await?,
+        CommandConfirmationOutcome::Failed(CommandFailure {
+            code: CommandErrorCode::IndeterminateAfterRestart,
+            ..
+        })
+    ));
+
+    let mut unsupported = dispatched.envelope.clone();
+    unsupported.payload = CommandPayload::OnOff(OnOffCommand::Toggle);
+    assert_eq!(
+        adapter.dispatch(&unsupported).await,
+        Err(CommandFailure {
+            code: CommandErrorCode::CapabilityMismatch,
+            detail: None,
+        })
+    );
     Ok(())
 }
 

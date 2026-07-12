@@ -19,6 +19,7 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+homemagic-matter = { path = "../homemagic-matter" }
 tempfile.workspace = true
 
 [lints]

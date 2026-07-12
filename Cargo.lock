@@ -1226,6 +1226,7 @@ dependencies = [
  "chrono",
  "homemagic-application",
  "homemagic-domain",
+ "homemagic-matter",
  "rusqlite",
  "serde",
  "serde_json",
