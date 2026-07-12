@@ -1,0 +1,51 @@
+name: Matter controller candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - config/matter-controller-candidates.json
+      - scripts/run-matter-controller-candidate.sh
+      - .github/workflows/matter-controller-candidate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  rust-matc:
+    name: rust-matc (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: x86_64
+            label: Linux x86_64
+          - runner: macos-14
+            architecture: arm64
+            label: macOS ARM64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out HomeMagic
+        uses: actions/checkout@v6
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev pkg-config
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Run pinned candidate audit
+        run: ./scripts/run-matter-controller-candidate.sh rust-matc report.json "${{ matrix.architecture }}"
+
+      - name: Upload candidate report
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-matc-${{ matrix.architecture }}
+          path: report.json
+          if-no-files-found: error

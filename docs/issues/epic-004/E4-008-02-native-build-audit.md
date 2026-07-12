@@ -3,7 +3,7 @@ id: E4-008-02
 epic: EPIC-004
 parent: E4-008
 title: Build and audit native Rust controller candidates
-status: ready
+status: in_progress
 priority: critical
 depends_on: [E4-008-01]
 adrs: [ADR-0005, ADR-0038]
@@ -24,3 +24,10 @@ and packaging measurements.
 - [ ] Default and all-feature builds are reproducible on both hosts.
 - [ ] First-party and transitive native footprints are reported separately.
 - [ ] Production manifests remain free of candidate dependencies.
+
+## Progress log
+
+- 2026-07-12: A pinned host-neutral audit script and separate macOS ARM64/Linux
+  x86_64 workflow now produce the same versioned JSON report. Manual macOS ARM64
+  evidence already passes 69 default and 73 all-feature tests plus a 3.9 MiB
+  release example on stable Rust 1.93; workflow evidence remains pending.

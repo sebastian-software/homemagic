@@ -17,7 +17,7 @@ updated: 2026-07-12
 | Issue | Status | Outcome |
 | --- | --- | --- |
 | [E4-008-01](E4-008-01-discovery-rubric.md) | Done | Current candidate screen and frozen detailed rubric |
-| [E4-008-02](E4-008-02-native-build-audit.md) | Ready | Cross-platform native build and footprint evidence |
+| [E4-008-02](E4-008-02-native-build-audit.md) | In progress | Cross-platform native build and footprint evidence |
 | [E4-008-03](E4-008-03-contract-reference.md) | Planned | Fixed port contract and independent reference lifecycle |
 | [E4-008-04](E4-008-04-selection-adr.md) | Planned | Evidence matrix and accepted ADR-0039 |
 

@@ -52,7 +52,7 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-05-04](E4-007-05-04-examples-exit.md) | Done | E4-007-05-03 | Executable examples and Track A exit evidence |
 | [E4-008](E4-008-controller-feasibility.md) | In progress | E4-004 | Reproducible candidate evidence and accepted selection ADR |
 | [E4-008-01](E4-008-01-discovery-rubric.md) | Done | E4-004 | Current candidate screen and frozen detailed rubric |
-| [E4-008-02](E4-008-02-native-build-audit.md) | Ready | E4-008-01 | Cross-platform native build and footprint evidence |
+| [E4-008-02](E4-008-02-native-build-audit.md) | In progress | E4-008-01 | Cross-platform native build and footprint evidence |
 | [E4-008-03](E4-008-03-contract-reference.md) | Planned | E4-008-02 | Fixed contract and independent reference lifecycle |
 | [E4-008-04](E4-008-04-selection-adr.md) | Planned | E4-008-03 | Evidence matrix and ADR-0039 |
 | [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
