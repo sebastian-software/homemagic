@@ -1122,6 +1122,7 @@ dependencies = [
  "homemagic-domain",
  "homemagic-matter",
  "homemagic-storage",
+ "jsonschema",
  "serde",
  "serde_json",
  "tempfile",

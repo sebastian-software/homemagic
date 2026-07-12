@@ -3513,6 +3513,127 @@ mod tests {
         );
     }
 
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one catalog contract keeps every method, endpoint, params, result, and stable error pair auditable"
+    )]
+    fn matter_rpc_examples_should_match_every_executable_schema() {
+        let read =
+            matter_read_rpc_schema().unwrap_or_else(|error| panic!("Matter read schema: {error}"));
+        let mutation = matter_mutation_rpc_schema()
+            .unwrap_or_else(|error| panic!("Matter mutation schema: {error}"));
+        let envelopes: Value = serde_json::from_str(include_str!(
+            "../../../docs/api/schemas/json-rpc-envelope-v1.json"
+        ))
+        .unwrap_or_else(|error| panic!("JSON-RPC envelope schema: {error}"));
+        let examples: Value = serde_json::from_str(include_str!(
+            "../../../docs/api/examples/matter-rpc-v1.json"
+        ))
+        .unwrap_or_else(|error| panic!("Matter RPC examples: {error}"));
+
+        let mut methods = BTreeMap::new();
+        for group in [
+            &read["methods"],
+            &mutation["ordinary_methods"],
+            &mutation["sensitive_methods"],
+        ] {
+            for (method, schema) in group
+                .as_object()
+                .unwrap_or_else(|| panic!("method schema map"))
+            {
+                assert!(methods.insert(method.clone(), schema.clone()).is_none());
+            }
+        }
+        let example_items = examples["examples"]
+            .as_array()
+            .unwrap_or_else(|| panic!("example array"));
+        assert_eq!(example_items.len(), methods.len());
+        let mut seen = BTreeSet::new();
+        let stable_errors = BTreeMap::from([
+            (-32603_i64, "matter_internal"),
+            (-32602, "invalid_matter_params"),
+            (-32060, "matter_unavailable"),
+            (-32061, "matter_conflict"),
+            (-32062, "matter_sensitive_timeout"),
+            (-32063, "matter_denied"),
+            (-32064, "matter_not_found"),
+            (-32065, "matter_controller_unavailable"),
+            (-32066, "matter_evidence_mismatch"),
+        ]);
+
+        for example in example_items {
+            let method = example["method"]
+                .as_str()
+                .unwrap_or_else(|| panic!("example method"));
+            assert!(seen.insert(method.to_owned()), "duplicate example {method}");
+            assert_eq!(example["request"]["method"], method);
+            assert_eq!(example["request"]["id"], example["response"]["id"]);
+            assert_eq!(example["request"]["id"], example["error"]["id"]);
+            let sensitive = mutation["sensitive_methods"].get(method).is_some();
+            assert_eq!(
+                example["endpoint"].as_str(),
+                Some(if sensitive { "/rpc/sensitive" } else { "/rpc" })
+            );
+
+            assert!(jsonschema::is_valid(
+                &envelopes["schemas"]["request"],
+                &example["request"]
+            ));
+            assert!(jsonschema::is_valid(
+                &envelopes["schemas"]["success"],
+                &example["response"]
+            ));
+            assert!(jsonschema::is_valid(
+                &envelopes["schemas"]["error"],
+                &example["error"]
+            ));
+
+            let method_schema = methods
+                .get(method)
+                .unwrap_or_else(|| panic!("schema missing for {method}"));
+            let params_schema = if mutation["ordinary_methods"].get(method).is_some() || sensitive {
+                let mut definitions = mutation["$defs"]
+                    .as_object()
+                    .unwrap_or_else(|| panic!("mutation definitions"))
+                    .clone();
+                definitions.insert("method".to_owned(), method_schema.clone());
+                json!({
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "$ref": "#/$defs/method",
+                    "$defs": definitions
+                })
+            } else {
+                method_schema.clone()
+            };
+            assert!(
+                jsonschema::is_valid(&params_schema, &example["request"]["params"]),
+                "invalid params example for {method}"
+            );
+
+            let result_name = example["result_schema"]
+                .as_str()
+                .unwrap_or_else(|| panic!("result schema name"));
+            let result_schema = read["result_envelopes"]
+                .get(result_name)
+                .or_else(|| mutation["result_envelopes"].get(result_name))
+                .unwrap_or_else(|| panic!("result schema missing for {method}"));
+            assert!(
+                jsonschema::is_valid(result_schema, &example["response"]["result"]),
+                "invalid response example for {method}"
+            );
+            let error_code = example["error"]["error"]["code"]
+                .as_i64()
+                .unwrap_or_else(|| panic!("error code"));
+            assert_eq!(
+                stable_errors.get(&error_code).copied(),
+                example["error"]["error"]["data"]["code"].as_str(),
+                "unstable error example for {method}"
+            );
+        }
+        assert_eq!(seen, methods.into_keys().collect());
+    }
+
     struct FixedAuthenticator(Actor);
 
     struct FixtureDispatcher;
