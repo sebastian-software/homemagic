@@ -99,6 +99,13 @@ Local evidence on 2026-07-12:
 - complete workspace tests and warning-denied Rustdoc: passed;
 - Matter dependency boundary and secret scan: passed.
 
-The Linux x86_64 CI execution remains pending because this repository currently
-has no configured remote and no local Linux container runtime. The matrix is
-committed but must run before E4-004 is marked done.
+Public [CI run 29196515664](https://github.com/sebastian-software/homemagic/actions/runs/29196515664)
+completed successfully on 2026-07-12:
+
+- macOS ARM64 hash job `86660357907`: architecture and committed hash passed;
+- Linux x86_64 hash job `86660357969`: architecture and committed hash passed;
+- Linux x86_64 quality job `86660357915`: formatting, strict Clippy, all
+  workspace tests, historical migrations, and secret scan passed.
+
+This closes the E4-004 portability gate for deterministic application-contract
+evidence. It still makes no Matter protocol or physical-device claim.

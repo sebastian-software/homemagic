@@ -2,7 +2,7 @@
 id: E4-004
 epic: EPIC-004
 title: Implement the deterministic Rust Matter controller simulator
-status: in_progress
+status: done
 priority: critical
 depends_on: [E4-002]
 adrs: [ADR-0001, ADR-0033, ADR-0034, ADR-0038]
@@ -51,7 +51,7 @@ injection for application development without claiming protocol compatibility.
 - [x] Light and lock happy-path contract suites pass.
 - [x] Every injected fault has a stable expected trace and terminal/recovery state.
 - [x] Repeated-run and randomized-order property tests are deterministic.
-- [ ] macOS ARM64 and Linux x86_64 produce identical normalized fixture hashes.
+- [x] macOS ARM64 and Linux x86_64 produce identical normalized fixture hashes.
 - [x] Dependency inspection shows no Matter SDK or external reference runtime.
 
 ## Evidence
@@ -65,9 +65,10 @@ injection for application development without claiming protocol compatibility.
   repeated-order property and all twelve scripted nonterminal restart phases.
 - `light-trace-v1.json` and `light-trace-v1.sha256` fix the normalized trace to
   `7451b5a74337e40a2312f5a5723308ad1e8a881714e19f94c9b0e538bff1f244`.
-- The CI matrix checks the same fixture on Linux x86_64 and macOS ARM64 with
-  explicit `uname -m` assertions. The macOS ARM64 result passed locally; the
-  Linux job has not run because no remote or Linux runtime is configured.
+- [CI run 29196515664](https://github.com/sebastian-software/homemagic/actions/runs/29196515664)
+  passed the same committed hash on Linux x86_64 and macOS ARM64 with explicit
+  `uname -m` assertions. Jobs `86660357969` and `86660357907` prove the two
+  platform results.
 - Workspace format, strict Clippy, all tests/features, warning-denied Rustdoc,
   dependency boundaries, secret scan, and patch hygiene passed on 2026-07-12.
 
@@ -77,5 +78,5 @@ injection for application development without claiming protocol compatibility.
 - 2026-07-12: Implemented the pure-Rust simulator, versioned light and lock,
   complete port behavior, barriers, ordered faults, restart checkpoints,
   typed export isolation, property tests, and committed normalized trace.
-  E4-004 remains in progress only until the committed Linux x86_64 hash job
-  confirms the locally passing macOS ARM64 result.
+  The first public CI run then confirmed the exact committed trace hash on both
+  Linux x86_64 and macOS ARM64, completing E4-004 and making E4-005 ready.

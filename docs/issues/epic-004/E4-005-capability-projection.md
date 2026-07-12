@@ -2,7 +2,7 @@
 id: E4-005
 epic: EPIC-004
 title: Project Matter devices and recover subscriptions safely
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-003, E4-004]
 adrs: [ADR-0002, ADR-0009, ADR-0010, ADR-0034]
