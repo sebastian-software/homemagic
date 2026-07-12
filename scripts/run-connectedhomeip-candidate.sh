@@ -5,6 +5,11 @@ report_path="${1:-connectedhomeip-candidate-report.json}"
 expected_architecture="${2:-$(uname -m)}"
 manifest="config/matter-controller-candidates.json"
 
+case "$report_path" in
+  /*) ;;
+  *) report_path="$PWD/$report_path" ;;
+esac
+
 test "$(uname -m)" = "$expected_architecture"
 
 repository="$(jq -r '.candidates[] | select(.id == "connectedhomeip") | .repository' "$manifest")"
