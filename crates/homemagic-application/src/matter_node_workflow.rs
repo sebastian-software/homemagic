@@ -12,17 +12,18 @@ use homemagic_domain::{
     MatterControllerErrorCode, MatterControllerEventKind, MatterFabricId, MatterLockState,
     MatterNodeDescriptor, MatterOperation, MatterOperationId, MatterOperationKind,
     MatterOperationPhase, MatterOperationTarget, MatterRetryability, MatterStateValue,
-    MatterSubscriptionId, ObservationSourceKind,
+    MatterSubscriptionId, ObservationSourceKind, RepairId,
 };
 use thiserror::Error;
 
 use crate::{
     BoxError, MatterAdministrationError, MatterAdministrationRequest, MatterAdministrationService,
-    MatterAttributeSelection, MatterCommissioningCommit, MatterCommissioningRequest,
-    MatterFabricState, MatterOperationCreateOutcome, MatterOperationNodeResult,
-    MatterOperationProgress, MatterReadRequest, MatterReportCausation, MatterReportDecision,
-    MatterRepository, MatterSubscriptionRequest, MatterWorkflowOutcome, SecretValue,
-    StoredMatterNode, StoredMatterSubscription, StoredMatterSubscriptionState,
+    MatterAttributeSelection, MatterCancellationCommit, MatterCancellationOutcome,
+    MatterCommissioningCommit, MatterCommissioningRequest, MatterFabricState,
+    MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
+    MatterReadRequest, MatterRepairRecord, MatterRepairStatus, MatterReportCausation,
+    MatterReportDecision, MatterRepository, MatterSubscriptionRequest, MatterWorkflowOutcome,
+    SecretValue, StoredMatterNode, StoredMatterSubscription, StoredMatterSubscriptionState,
     advance_matter_projected_state, initial_stored_matter_projection, normalize_matter_report,
     project_matter_node,
 };
@@ -71,6 +72,37 @@ impl fmt::Debug for MatterCommissioningInput {
             .field("setup_payload", &"[REDACTED]")
             .finish()
     }
+}
+
+/// Result of admitting a cancellation at its current dispatch boundary.
+#[derive(Clone, Debug)]
+pub enum MatterCancellationStartOutcome {
+    /// Original commissioning was still local and is now durably cancelled.
+    LocalCancelled(MatterOperation),
+    /// In-flight work requires one separate durable cancellation operation.
+    Operation(MatterOperationCreateOutcome),
+}
+
+/// Reconciled controller meaning for one cancellation attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MatterCancellationResolution {
+    /// Controller proved that commissioning was cancelled.
+    Cancelled,
+    /// Controller reported completion but the application lacks an atomic node result.
+    AlreadyCompletedRequiresRepair,
+    /// Controller could not prove whether cancellation or commissioning won.
+    OutcomeUnknown,
+}
+
+/// Atomic original and cancellation histories after controller reconciliation.
+#[derive(Clone, Debug)]
+pub struct MatterCancellationResult {
+    /// Original commissioning operation.
+    pub commissioning: MatterOperation,
+    /// Separate cancellation operation.
+    pub cancellation: MatterOperation,
+    /// Structured interpretation of the controller result.
+    pub resolution: MatterCancellationResolution,
 }
 
 /// Application-owned orchestration for commissioning, inventory, and removal.
@@ -136,16 +168,192 @@ impl MatterNodeWorkflowService {
             .map_err(Into::into)
     }
 
+    /// Cancels locally while requested or admits a separate in-flight cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Fails for missing ownership or authority, terminal operations, invalid
+    /// targets, idempotency conflicts, and repository failures.
+    pub async fn start_cancel_commissioning(
+        &self,
+        authenticated_actor: &Actor,
+        commissioning_operation_id: &MatterOperationId,
+        idempotency_key: IdempotencyKey,
+        now: DateTime<Utc>,
+    ) -> Result<MatterCancellationStartOutcome, MatterNodeWorkflowError> {
+        self.ensure_simulator()?;
+        let commissioning = self
+            .administration
+            .owned_commissioning_for_cancellation(authenticated_actor, commissioning_operation_id)
+            .await?;
+        if commissioning.phase == MatterOperationPhase::Requested {
+            return self
+                .administration
+                .cancel_requested(authenticated_actor, commissioning_operation_id, now)
+                .await
+                .map(MatterCancellationStartOutcome::LocalCancelled)
+                .map_err(Into::into);
+        }
+        if commissioning.phase.is_terminal() {
+            return Err(MatterNodeWorkflowError::InvalidOperationState);
+        }
+        let fabric_id = operation_fabric_id(&commissioning)?.clone();
+        self.administration
+            .admit(
+                authenticated_actor,
+                MatterAdministrationRequest {
+                    kind: MatterOperationKind::CancelCommissioning,
+                    target: MatterOperationTarget::Operation {
+                        fabric_id,
+                        operation_id: commissioning.id,
+                    },
+                    idempotency_key,
+                },
+                now,
+            )
+            .await
+            .map(MatterCancellationStartOutcome::Operation)
+            .map_err(Into::into)
+    }
+
+    /// Runs one durable in-flight commissioning cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Fails for missing ownership or authority, invalid phases or targets, and
+    /// repository failures. Controller ambiguity becomes atomic repair evidence.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "cancellation keeps both durable histories and their atomic reconciliation visible"
+    )]
+    pub async fn run_cancel_commissioning(
+        &self,
+        authenticated_actor: &Actor,
+        cancellation_operation_id: &MatterOperationId,
+        now: DateTime<Utc>,
+    ) -> Result<MatterCancellationResult, MatterNodeWorkflowError> {
+        self.ensure_simulator()?;
+        let mut cancellation = self
+            .administration
+            .owned_operation_for_action(
+                authenticated_actor,
+                cancellation_operation_id,
+                CommandAction::MatterCancelOperation,
+            )
+            .await?;
+        let MatterOperationTarget::Operation {
+            operation_id: commissioning_id,
+            ..
+        } = &cancellation.target
+        else {
+            return Err(MatterNodeWorkflowError::InvalidOperationTarget);
+        };
+        let mut commissioning = self
+            .administration
+            .owned_commissioning_for_cancellation(authenticated_actor, commissioning_id)
+            .await?;
+        if commissioning.phase.is_terminal() {
+            return Err(MatterNodeWorkflowError::InvalidOperationState);
+        }
+        if cancellation.phase == MatterOperationPhase::Requested {
+            cancellation = self
+                .transition(cancellation, MatterOperationPhase::Cancelling, now)
+                .await?;
+        } else if cancellation.phase != MatterOperationPhase::Cancelling {
+            return Err(MatterNodeWorkflowError::InvalidOperationState);
+        }
+        let outcome = self
+            .controller
+            .cancel_commissioning(&commissioning.id)
+            .await;
+        let expected_commissioning_revision = commissioning.revision;
+        let expected_cancellation_revision = cancellation.revision;
+        let (resolution, commissioning_error, cancellation_error) = match outcome {
+            Ok(MatterCancellationOutcome::Cancelled) => {
+                commissioning
+                    .transition(MatterOperationPhase::Cancelled, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                cancellation
+                    .transition(MatterOperationPhase::Completed, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                (MatterCancellationResolution::Cancelled, None, None)
+            }
+            Ok(MatterCancellationOutcome::AlreadyCompleted) => {
+                let error = indeterminate_operation_error(&commissioning);
+                commissioning
+                    .transition(MatterOperationPhase::RepairRequired, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                cancellation
+                    .transition(MatterOperationPhase::Completed, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                (
+                    MatterCancellationResolution::AlreadyCompletedRequiresRepair,
+                    Some(error),
+                    None,
+                )
+            }
+            Ok(MatterCancellationOutcome::OutcomeUnknown) => {
+                let commissioning_failure = indeterminate_operation_error(&commissioning);
+                let cancellation_failure = indeterminate_operation_error(&cancellation);
+                commissioning
+                    .transition(MatterOperationPhase::RepairRequired, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                cancellation
+                    .transition(MatterOperationPhase::RepairRequired, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                (
+                    MatterCancellationResolution::OutcomeUnknown,
+                    Some(commissioning_failure),
+                    Some(cancellation_failure),
+                )
+            }
+            Err(_) => {
+                let commissioning_failure = indeterminate_operation_error(&commissioning);
+                let cancellation_failure = indeterminate_operation_error(&cancellation);
+                commissioning
+                    .transition(MatterOperationPhase::RepairRequired, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                cancellation
+                    .transition(MatterOperationPhase::RepairRequired, now)
+                    .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+                (
+                    MatterCancellationResolution::OutcomeUnknown,
+                    Some(commissioning_failure),
+                    Some(cancellation_failure),
+                )
+            }
+        };
+        let commissioning_repair = commissioning_error
+            .clone()
+            .map(|error| repair(&commissioning, error, now));
+        let cancellation_repair = cancellation_error
+            .clone()
+            .map(|error| repair(&cancellation, error, now));
+        self.matter
+            .commit_matter_cancellation(MatterCancellationCommit {
+                commissioning: commissioning.clone(),
+                expected_commissioning_revision,
+                commissioning_progress: progress_with_error(&commissioning, commissioning_error),
+                commissioning_repair,
+                cancellation: cancellation.clone(),
+                expected_cancellation_revision,
+                cancellation_progress: progress_with_error(&cancellation, cancellation_error),
+                cancellation_repair,
+            })
+            .await?;
+        Ok(MatterCancellationResult {
+            commissioning,
+            cancellation,
+            resolution,
+        })
+    }
+
     /// Runs one already durable simulator commissioning operation.
     ///
     /// # Errors
     ///
     /// Returns ownership, repository, or contract failures. Expected controller
     /// failures are normalized into a durable terminal operation outcome.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "commissioning durability boundaries remain explicit and ordered in one workflow"
-    )]
     pub async fn run_commission(
         &self,
         authenticated_actor: &Actor,
@@ -218,6 +426,18 @@ impl MatterNodeWorkflowService {
         for phase in phases.into_iter().skip(1).take(4) {
             operation = self.transition(operation, phase, now).await?;
         }
+        self.complete_commissioning(authenticated_actor, operation, descriptor, now)
+            .await
+    }
+
+    async fn complete_commissioning(
+        &self,
+        authenticated_actor: &Actor,
+        mut operation: MatterOperation,
+        descriptor: MatterNodeDescriptor,
+        now: DateTime<Utc>,
+    ) -> Result<MatterWorkflowOutcome<MatterOperationNodeResult>, MatterNodeWorkflowError> {
+        let fabric_id = operation_fabric_id(&operation)?.clone();
         let prepared = match self
             .prepare_commissioning_projection(&operation, descriptor, now)
             .await
@@ -229,9 +449,13 @@ impl MatterNodeWorkflowService {
                     .await;
             }
         };
-        operation = self
-            .transition(operation, MatterOperationPhase::Subscribing, now)
-            .await?;
+        if operation.phase == MatterOperationPhase::Projecting {
+            operation = self
+                .transition(operation, MatterOperationPhase::Subscribing, now)
+                .await?;
+        } else if operation.phase != MatterOperationPhase::Subscribing {
+            return Err(MatterNodeWorkflowError::InvalidOperationState);
+        }
         let subscription_status = match self
             .controller
             .subscribe(prepared.subscription_request.clone())
@@ -305,6 +529,68 @@ impl MatterNodeWorkflowService {
             operation,
             value: result,
         })
+    }
+
+    /// Reconciles an interrupted commissioning operation without setup input.
+    ///
+    /// The normalized controller contract exposes bounded progress and inventory,
+    /// but it does not correlate an inventory node with the commissioning
+    /// operation that created it. Consequently, an operation without an already
+    /// atomic application result cannot be completed safely after restart and is
+    /// made explicitly repair-required after both evidence sources are inspected.
+    ///
+    /// # Errors
+    ///
+    /// Returns ownership, repository, target, or invalid-state failures.
+    pub async fn recover_commissioning(
+        &self,
+        authenticated_actor: &Actor,
+        operation_id: &MatterOperationId,
+        now: DateTime<Utc>,
+    ) -> Result<MatterWorkflowOutcome<MatterOperationNodeResult>, MatterNodeWorkflowError> {
+        self.ensure_simulator()?;
+        let operation = self
+            .administration
+            .owned_operation_for_action(
+                authenticated_actor,
+                operation_id,
+                CommandAction::MatterCommissionNode,
+            )
+            .await?;
+        if operation.phase == MatterOperationPhase::Completed {
+            let result = self
+                .matter
+                .matter_operation_node_result(operation_id)
+                .await?
+                .ok_or(MatterNodeWorkflowError::CommissioningResultMissing)?;
+            return Ok(MatterWorkflowOutcome::Completed {
+                operation,
+                value: result,
+            });
+        }
+        if operation.phase.is_terminal() {
+            return Ok(MatterWorkflowOutcome::Terminal(operation));
+        }
+        if operation.phase == MatterOperationPhase::Requested
+            || !COMMISSIONING_PHASES.contains(&operation.phase)
+        {
+            return Err(MatterNodeWorkflowError::InvalidOperationState);
+        }
+        let fabric_id = operation_fabric_id(&operation)?.clone();
+
+        // Both reads are deliberately bounded. Even a complete phase trace plus
+        // a present node is not proof that this operation created that node.
+        let progress_evidence = self.controller.events_after(0, CONTROLLER_EVENT_PAGE).await;
+        let inventory_evidence = self.controller.nodes(&fabric_id).await;
+        let _bounded_evidence_available = progress_evidence.is_ok() && inventory_evidence.is_ok();
+
+        self.terminal_controller_error(
+            authenticated_actor,
+            operation.clone(),
+            indeterminate_operation_error(&operation),
+            now,
+        )
+        .await
     }
 
     async fn commissioning_progress(
@@ -561,12 +847,35 @@ fn operation_fabric_id(
 }
 
 fn progress(operation: &MatterOperation) -> MatterOperationProgress {
+    progress_with_error(operation, None)
+}
+
+fn progress_with_error(
+    operation: &MatterOperation,
+    error: Option<MatterControllerError>,
+) -> MatterOperationProgress {
     MatterOperationProgress {
         operation_id: operation.id.clone(),
         revision: operation.revision,
         phase: operation.phase,
-        error: None,
+        error,
         occurred_at: operation.updated_at,
+    }
+}
+
+fn repair(
+    operation: &MatterOperation,
+    error: MatterControllerError,
+    now: DateTime<Utc>,
+) -> MatterRepairRecord {
+    MatterRepairRecord {
+        id: RepairId::new(),
+        operation_id: operation.id.clone(),
+        status: MatterRepairStatus::Open,
+        error,
+        revision: 1,
+        created_at: now,
+        updated_at: now,
     }
 }
 

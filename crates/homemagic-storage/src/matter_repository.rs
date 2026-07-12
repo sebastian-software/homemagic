@@ -4,12 +4,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_application::{
-    BoxError, MatterCommissioningCommit, MatterDesiredCommandSlot, MatterDesiredSlotOutcome,
-    MatterDesiredStateWrite, MatterDispatchWrite, MatterFabricStage, MatterOperationBinding,
-    MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
-    MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention, MatterRetentionResult,
-    MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode,
-    StoredMatterProjection, StoredMatterSubscription,
+    BoxError, MatterCancellationCommit, MatterCommissioningCommit, MatterDesiredCommandSlot,
+    MatterDesiredSlotOutcome, MatterDesiredStateWrite, MatterDispatchWrite, MatterFabricStage,
+    MatterOperationBinding, MatterOperationCreateOutcome, MatterOperationNodeResult,
+    MatterOperationProgress, MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention,
+    MatterRetentionResult, MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric,
+    StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CommandAction, CommandAggregate,
@@ -248,6 +248,30 @@ impl MatterRepository for SqliteRepository {
     ) -> Result<(), BoxError> {
         run_write(&self.connection, move |transaction| {
             commit_commissioning(transaction, &commit, expected_operation_revision)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn commit_matter_cancellation(
+        &self,
+        commit: MatterCancellationCommit,
+    ) -> Result<(), BoxError> {
+        run_write(&self.connection, move |transaction| {
+            transition_operation(
+                transaction,
+                &commit.commissioning,
+                commit.expected_commissioning_revision,
+                &commit.commissioning_progress,
+                commit.commissioning_repair.as_ref(),
+            )?;
+            transition_operation(
+                transaction,
+                &commit.cancellation,
+                commit.expected_cancellation_revision,
+                &commit.cancellation_progress,
+                commit.cancellation_repair.as_ref(),
+            )
         })
         .await
         .map_err(boxed)

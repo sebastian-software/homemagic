@@ -14,11 +14,11 @@ use homemagic_application::{
     CommandLimitConfig, CommandLimits, CommandRepository, CommandRequest, CommandService,
     CommandServiceDependencies, CommandServiceError, DesiredStateRegistration,
     FoundationRepository, FoundationWrite, MatterAdministrationError, MatterAdministrationRequest,
-    MatterAdministrationService, MatterCommandDispatchControl, MatterCommissioningInput,
-    MatterCommissioningRequest, MatterController, MatterCreateFabricRequest,
-    MatterDesiredCommandSlot, MatterDesiredStateWrite, MatterDispatchAdmission,
-    MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat, MatterFabricSecretRefs,
-    MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
+    MatterAdministrationService, MatterCancellationResolution, MatterCancellationStartOutcome,
+    MatterCommandDispatchControl, MatterCommissioningInput, MatterCommissioningRequest,
+    MatterController, MatterCreateFabricRequest, MatterDesiredCommandSlot, MatterDesiredStateWrite,
+    MatterDispatchAdmission, MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat,
+    MatterFabricSecretRefs, MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
     MatterNodeWorkflowError, MatterNodeWorkflowService, MatterOperationCreateOutcome,
     MatterOperationProgress, MatterRepairRecord, MatterRepairStatus, MatterRepository,
     MatterRestoreRequest, MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
@@ -264,6 +264,7 @@ impl FabricWorkflowFixture {
                         CommandAction::MatterRead,
                         CommandAction::MatterCreateFabric,
                         CommandAction::MatterCommissionNode,
+                        CommandAction::MatterCancelOperation,
                         CommandAction::MatterExportFabric,
                         CommandAction::MatterRestoreFabric,
                     ]),
@@ -760,6 +761,57 @@ fn sqlite_artifact_bytes(path: &std::path::Path) -> TestResult<Vec<u8>> {
     Ok(bytes)
 }
 
+async fn in_flight_commissioning(
+    key: &str,
+) -> TestResult<(
+    FabricWorkflowFixture,
+    Arc<DeterministicMatterSimulator>,
+    MatterNodeWorkflowService,
+    MatterOperation,
+    DateTime<Utc>,
+)> {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let fabric_workflow = fixture.workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new(format!("{key}-fabric"))?,
+            now,
+        )
+        .await?
+    else {
+        return Err("fabric create operation missing".into());
+    };
+    let _created = fabric_workflow
+        .run_create(&fixture.actor, &create.id, now)
+        .await?;
+    let node_workflow = fixture.node_workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(mut commissioning) = node_workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new(format!("{key}-commission"))?,
+            now,
+        )
+        .await?
+    else {
+        return Err("commissioning operation missing".into());
+    };
+    let expected_revision = commissioning.revision;
+    commissioning.transition(MatterOperationPhase::ValidatingSetup, now)?;
+    fixture
+        .repository
+        .transition_matter_operation(
+            commissioning.clone(),
+            expected_revision,
+            progress(&commissioning),
+            None,
+        )
+        .await?;
+    Ok((fixture, controller, node_workflow, commissioning, now))
+}
+
 #[tokio::test]
 async fn matter_identity_and_incomplete_operation_should_survive_reopen() -> TestResult {
     let fixture = Fixture::new().await?;
@@ -1197,6 +1249,89 @@ async fn commissioning_projection_failure_should_roll_back_every_visible_node_fa
     assert!(result.is_err());
     assert!(snapshot.devices.is_empty());
     assert_eq!(durable_result, None);
+
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch("DROP TRIGGER fail_commissioning_projection;")?;
+    drop(connection);
+    let MatterWorkflowOutcome::Terminal(recovered) = node_workflow
+        .recover_commissioning(&fixture.actor, &operation.id, now)
+        .await?
+    else {
+        return Err("ambiguous commissioning recovery was not terminal".into());
+    };
+    let after_recovery = fixture.repository.load().await?;
+
+    assert_eq!(recovered.phase, MatterOperationPhase::RepairRequired);
+    assert!(after_recovery.devices.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_commissioning_restart_checkpoint_should_end_explicitly() -> TestResult {
+    for (index, phase) in [
+        MatterOperationPhase::ValidatingSetup,
+        MatterOperationPhase::Discovering,
+        MatterOperationPhase::EstablishingSession,
+        MatterOperationPhase::Commissioning,
+        MatterOperationPhase::Projecting,
+        MatterOperationPhase::Subscribing,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let fixture = FabricWorkflowFixture::new().await?;
+        let now = Utc::now();
+        let controller = Arc::new(DeterministicMatterSimulator::new(now));
+        let fabric_workflow = fixture.workflow(controller.clone());
+        let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+            .start_create(
+                &fixture.actor,
+                IdempotencyKey::new(format!("restart-{index}-fabric"))?,
+                now,
+            )
+            .await?
+        else {
+            return Err("fabric create operation missing".into());
+        };
+        let _created = fabric_workflow
+            .run_create(&fixture.actor, &create.id, now)
+            .await?;
+        let node_workflow = fixture.node_workflow(controller.clone());
+        let MatterOperationCreateOutcome::Created(operation) = node_workflow
+            .start_commission(
+                &fixture.actor,
+                IdempotencyKey::new(format!("restart-{index}-commission"))?,
+                now,
+            )
+            .await?
+        else {
+            return Err("commissioning operation missing".into());
+        };
+        controller
+            .inject_fault(SimulatorFault::RestartAt(phase))
+            .await;
+
+        let MatterWorkflowOutcome::Terminal(terminal) = node_workflow
+            .run_commission(
+                &fixture.actor,
+                &operation.id,
+                MatterCommissioningInput::new(SecretValue::new(SIMULATOR_LIGHT_SETUP)),
+                now,
+            )
+            .await?
+        else {
+            return Err(format!("restart at {phase:?} was not terminal").into());
+        };
+        let durable = fixture
+            .repository
+            .matter_administration_operation(&operation.id)
+            .await?
+            .ok_or("commissioning missing after restart")?
+            .0;
+
+        assert_eq!(terminal.phase, MatterOperationPhase::RepairRequired);
+        assert_eq!(durable.phase, MatterOperationPhase::RepairRequired);
+    }
     Ok(())
 }
 
@@ -1313,6 +1448,326 @@ async fn requested_commissioning_cancellation_should_survive_reopen() -> TestRes
             .await,
         Err(MatterAdministrationError::NotCancellable)
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn node_workflow_local_cancel_should_not_call_controller() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let controller = Arc::new(DeterministicMatterSimulator::new(Utc::now()));
+    controller
+        .inject_fault(SimulatorFault::UnknownCancellation)
+        .await;
+    let workflow = MatterNodeWorkflowService::new(
+        MatterAdministrationService::new(repository.clone(), repository.clone()),
+        repository,
+        controller,
+    );
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new("workflow-local-cancel")?,
+            Utc::now(),
+        )
+        .await?
+    else {
+        return Err("commissioning operation missing".into());
+    };
+
+    let outcome = workflow
+        .start_cancel_commissioning(
+            &fixture.actor,
+            &operation.id,
+            IdempotencyKey::new("unused-local-cancel-key")?,
+            Utc::now(),
+        )
+        .await?;
+
+    assert!(matches!(
+        outcome,
+        MatterCancellationStartOutcome::LocalCancelled(MatterOperation {
+            phase: MatterOperationPhase::Cancelled,
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn foreign_commissioning_should_be_indistinguishable_from_missing_on_cancel() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let fabric_workflow = fixture.workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("foreign-cancel-fabric")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("fabric create operation missing".into());
+    };
+    let _created = fabric_workflow
+        .run_create(&fixture.actor, &create.id, now)
+        .await?;
+    let workflow = fixture.node_workflow(controller);
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new("foreign-cancel-source")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("commissioning operation missing".into());
+    };
+    let other_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: fixture.actor.installation_id.clone(),
+        kind: homemagic_domain::ActorKind::User,
+        name: "Other Matter operator".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(other_actor.clone(), None)
+        .await?;
+    fixture
+        .repository
+        .replace_actor_grants(
+            &other_actor.id,
+            vec![ActorGrant {
+                id: GrantId::new(),
+                actor_id: other_actor.id.clone(),
+                actions: BTreeSet::from([CommandAction::MatterCancelOperation]),
+                scope: GrantScope::Installation {
+                    installation_id: other_actor.installation_id.clone(),
+                },
+                maximum_risk: RiskClass::Security,
+                enabled: true,
+            }],
+        )
+        .await?;
+
+    let result = workflow
+        .start_cancel_commissioning(
+            &other_actor,
+            &operation.id,
+            IdempotencyKey::new("foreign-cancel-attempt")?,
+            now,
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(MatterNodeWorkflowError::Administration(
+            MatterAdministrationError::OperationNotFound
+        ))
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn in_flight_cancel_should_atomically_complete_both_histories() -> TestResult {
+    let (fixture, _controller, workflow, commissioning, now) =
+        in_flight_commissioning("cancelled").await?;
+    let MatterCancellationStartOutcome::Operation(MatterOperationCreateOutcome::Created(
+        cancellation,
+    )) = workflow
+        .start_cancel_commissioning(
+            &fixture.actor,
+            &commissioning.id,
+            IdempotencyKey::new("cancelled-request")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("cancellation operation missing".into());
+    };
+    let result = workflow
+        .run_cancel_commissioning(&fixture.actor, &cancellation.id, now)
+        .await?;
+    drop(workflow);
+    drop(fixture.repository);
+    let reopened = SqliteRepository::open(&fixture.path)?;
+    let reopened_commissioning = reopened
+        .matter_administration_operation(&commissioning.id)
+        .await?
+        .ok_or("commissioning missing after reopen")?
+        .0;
+    let reopened_cancellation = reopened
+        .matter_administration_operation(&cancellation.id)
+        .await?
+        .ok_or("cancellation missing after reopen")?
+        .0;
+
+    assert_eq!(result.resolution, MatterCancellationResolution::Cancelled);
+    assert_eq!(result.commissioning.phase, MatterOperationPhase::Cancelled);
+    assert_eq!(result.cancellation.phase, MatterOperationPhase::Completed);
+    assert_eq!(reopened_commissioning, result.commissioning);
+    assert_eq!(reopened_cancellation, result.cancellation);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancellation_ambiguity_should_leave_explicit_repair() -> TestResult {
+    let (completed_fixture, completed_controller, completed_workflow, completed, now) =
+        in_flight_commissioning("already-completed").await?;
+    completed_controller
+        .commission(MatterCommissioningRequest::new(
+            completed.id.clone(),
+            MatterFabricId::from_installation(&completed_fixture.actor.installation_id),
+            SecretValue::new(SIMULATOR_LIGHT_SETUP),
+        ))
+        .await?;
+    let MatterCancellationStartOutcome::Operation(MatterOperationCreateOutcome::Created(
+        completed_cancel,
+    )) = completed_workflow
+        .start_cancel_commissioning(
+            &completed_fixture.actor,
+            &completed.id,
+            IdempotencyKey::new("already-completed-cancel")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("completed cancellation operation missing".into());
+    };
+    let completed_result = completed_workflow
+        .run_cancel_commissioning(&completed_fixture.actor, &completed_cancel.id, now)
+        .await?;
+
+    let (unknown_fixture, unknown_controller, unknown_workflow, unknown, unknown_now) =
+        in_flight_commissioning("unknown-cancel").await?;
+    unknown_controller
+        .inject_fault(SimulatorFault::UnknownCancellation)
+        .await;
+    let MatterCancellationStartOutcome::Operation(MatterOperationCreateOutcome::Created(
+        unknown_cancel,
+    )) = unknown_workflow
+        .start_cancel_commissioning(
+            &unknown_fixture.actor,
+            &unknown.id,
+            IdempotencyKey::new("unknown-cancel-request")?,
+            unknown_now,
+        )
+        .await?
+    else {
+        return Err("unknown cancellation operation missing".into());
+    };
+    let unknown_result = unknown_workflow
+        .run_cancel_commissioning(&unknown_fixture.actor, &unknown_cancel.id, unknown_now)
+        .await?;
+
+    assert_eq!(
+        completed_result.resolution,
+        MatterCancellationResolution::AlreadyCompletedRequiresRepair
+    );
+    assert_eq!(
+        completed_result.commissioning.phase,
+        MatterOperationPhase::RepairRequired
+    );
+    assert_eq!(
+        completed_result.cancellation.phase,
+        MatterOperationPhase::Completed
+    );
+    assert_eq!(
+        unknown_result.resolution,
+        MatterCancellationResolution::OutcomeUnknown
+    );
+    assert_eq!(
+        unknown_result.commissioning.phase,
+        MatterOperationPhase::RepairRequired
+    );
+    assert_eq!(
+        unknown_result.cancellation.phase,
+        MatterOperationPhase::RepairRequired
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancellation_atomic_failure_should_preserve_both_prior_phases() -> TestResult {
+    let (fixture, controller, workflow, commissioning, now) =
+        in_flight_commissioning("atomic-cancel").await?;
+    let MatterCancellationStartOutcome::Operation(MatterOperationCreateOutcome::Created(
+        cancellation,
+    )) = workflow
+        .start_cancel_commissioning(
+            &fixture.actor,
+            &commissioning.id,
+            IdempotencyKey::new("atomic-cancel-request")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("cancellation operation missing".into());
+    };
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch(&format!(
+        "CREATE TRIGGER fail_terminal_cancellation_progress
+         BEFORE INSERT ON matter_operation_progress
+         WHEN NEW.operation_id = '{}' AND NEW.phase = 'completed'
+         BEGIN
+           SELECT RAISE(ABORT, 'injected cancellation reconciliation failure');
+         END;",
+        cancellation.id
+    ))?;
+    drop(connection);
+
+    let result = workflow
+        .run_cancel_commissioning(&fixture.actor, &cancellation.id, now)
+        .await;
+    let durable_commissioning = fixture
+        .repository
+        .matter_administration_operation(&commissioning.id)
+        .await?
+        .ok_or("commissioning missing")?
+        .0;
+    let durable_cancellation = fixture
+        .repository
+        .matter_administration_operation(&cancellation.id)
+        .await?
+        .ok_or("cancellation missing")?
+        .0;
+
+    assert!(result.is_err());
+    assert_eq!(
+        durable_commissioning.phase,
+        MatterOperationPhase::ValidatingSetup
+    );
+    assert_eq!(durable_cancellation.phase, MatterOperationPhase::Cancelling);
+
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch("DROP TRIGGER fail_terminal_cancellation_progress;")?;
+    drop(connection);
+    drop(workflow);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let recovered_workflow = MatterNodeWorkflowService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        controller,
+    );
+    let recovered = recovered_workflow
+        .run_cancel_commissioning(&fixture.actor, &cancellation.id, now)
+        .await?;
+
+    assert_eq!(
+        recovered.resolution,
+        MatterCancellationResolution::Cancelled
+    );
+    assert_eq!(
+        recovered.commissioning.phase,
+        MatterOperationPhase::Cancelled
+    );
+    assert_eq!(
+        recovered.cancellation.phase,
+        MatterOperationPhase::Completed
+    );
     Ok(())
 }
 

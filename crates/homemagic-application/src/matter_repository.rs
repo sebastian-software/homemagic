@@ -194,6 +194,27 @@ pub struct MatterCommissioningCommit {
     pub progress: MatterOperationProgress,
 }
 
+/// One atomic reconciliation of cancellation and its original commissioning.
+#[derive(Clone, Debug)]
+pub struct MatterCancellationCommit {
+    /// Original commissioning operation after reconciliation.
+    pub commissioning: MatterOperation,
+    /// Expected prior revision of the original operation.
+    pub expected_commissioning_revision: u64,
+    /// Immutable original-operation progress fact.
+    pub commissioning_progress: MatterOperationProgress,
+    /// Optional original-operation repair evidence.
+    pub commissioning_repair: Option<MatterRepairRecord>,
+    /// Cancellation operation after reconciliation.
+    pub cancellation: MatterOperation,
+    /// Expected prior revision of the cancellation operation.
+    pub expected_cancellation_revision: u64,
+    /// Immutable cancellation progress fact.
+    pub cancellation_progress: MatterOperationProgress,
+    /// Optional cancellation repair evidence.
+    pub cancellation_repair: Option<MatterRepairRecord>,
+}
+
 /// Status of a durable Matter repair record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -484,6 +505,12 @@ pub trait MatterRepository: Send + Sync {
         &self,
         commit: MatterCommissioningCommit,
         expected_operation_revision: u64,
+    ) -> Result<(), BoxError>;
+
+    /// Atomically reconciles a cancellation with its original commissioning.
+    async fn commit_matter_cancellation(
+        &self,
+        commit: MatterCancellationCommit,
     ) -> Result<(), BoxError>;
 
     /// Atomically replaces an operation and appends its progress fact.

@@ -334,6 +334,33 @@ impl MatterAdministrationService {
             Err(MatterAdministrationError::OperationNotFound)
         }
     }
+
+    pub(crate) async fn owned_commissioning_for_cancellation(
+        &self,
+        authenticated_actor: &Actor,
+        operation_id: &MatterOperationId,
+    ) -> Result<MatterOperation, MatterAdministrationError> {
+        let security = self.security(authenticated_actor).await?;
+        authorize(
+            &security.actor,
+            &security.grants,
+            CommandAction::MatterCancelOperation,
+        )?;
+        let (operation, binding) = self
+            .matter
+            .matter_administration_operation(operation_id)
+            .await
+            .map_err(MatterAdministrationError::Repository)?
+            .ok_or(MatterAdministrationError::OperationNotFound)?;
+        if binding.actor_id == security.actor.id
+            && binding.action == CommandAction::MatterCommissionNode
+            && operation.kind == MatterOperationKind::CommissionNode
+        {
+            Ok(operation)
+        } else {
+            Err(MatterAdministrationError::OperationNotFound)
+        }
+    }
 }
 
 fn authorize(
