@@ -3,7 +3,7 @@ id: E4-007-05-04
 epic: EPIC-004
 parent: E4-007-05
 title: Validate Matter RPC examples and Track A exit evidence
-status: ready
+status: in_progress
 priority: high
 depends_on: [E4-007-05-03]
 adrs: [ADR-0003, ADR-0012, ADR-0016, ADR-0042]
@@ -21,18 +21,29 @@ restart, common commands, and actor-filtered reconnect behavior.
 
 ## Tasks
 
-- [ ] Add schema-valid request/response/error examples for every method.
-- [ ] Document sensitive setup/export/restore handling and non-replay behavior.
-- [ ] Document cancellation, restart, partial cleanup, and repair procedures.
-- [ ] Exercise light and lock behavior through common command RPC only.
-- [ ] Produce a redacted cross-platform Track A exit report.
+- [x] Add schema-valid request/response/error examples for every method.
+- [x] Document sensitive setup/export/restore handling and non-replay behavior.
+- [x] Document cancellation, restart, partial cleanup, and repair procedures.
+- [x] Exercise light and lock behavior through common command RPC only.
+- [x] Produce a redacted cross-platform Track A exit report.
 
 ## Acceptance criteria
 
-- [ ] Every documented example is executed or schema-validated in CI.
-- [ ] Procedures match actual method names, errors, and operation phases.
-- [ ] Exit evidence distinguishes simulator proof from production interoperability.
+- [x] Every documented example is executed or schema-validated in CI.
+- [x] Procedures match actual method names, errors, and operation phases.
+- [x] Exit evidence distinguishes simulator proof from production interoperability.
 
 ## Verification
 
-- [ ] Full local gates and public Linux x86_64/macOS ARM64 CI pass.
+- [x] Full local gates pass.
+- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+
+## Progress log
+
+- 2026-07-12: Commit `a8e91c3` added one executable request/success/error example for all 17
+  Matter methods, a shared JSON-RPC envelope schema, exact catalog validation,
+  simulator recovery procedures, and the redacted Track A exit matrix. Existing
+  common command RPC parity, simulator light/lock adapter, and exact unlock
+  approval contracts form the command-boundary evidence. Full workspace tests,
+  strict all-target Clippy, Matter boundaries, and disclosure scans pass;
+  public CI remains pending.

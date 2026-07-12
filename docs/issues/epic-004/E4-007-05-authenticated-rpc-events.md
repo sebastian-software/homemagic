@@ -20,7 +20,7 @@ updated: 2026-07-12
 | [E4-007-05-01](E4-007-05-01-rpc-contracts-reads.md) | Done | Versioned authenticated read contracts |
 | [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | Done | Immediate mutations and sensitive exchange |
 | [E4-007-05-03](E4-007-05-03-operation-events.md) | Done | Actor-filtered durable operation events |
-| [E4-007-05-04](E4-007-05-04-examples-exit.md) | Ready | Executable examples and Track A exit evidence |
+| [E4-007-05-04](E4-007-05-04-examples-exit.md) | In progress | Executable examples and Track A exit evidence |
 
 ## Outcome
 
@@ -74,3 +74,5 @@ normal device-action API.
   local CI-equivalent gate; public CI remains pending.
 - 2026-07-12: E4-007-05-03 passed public CI run `29208961425` and is done;
   E4-007-05-04 is ready.
+- 2026-07-12: E4-007-05-04 executable examples, operator recovery, and Track A
+  exit evidence are implemented; full validation remains pending.
