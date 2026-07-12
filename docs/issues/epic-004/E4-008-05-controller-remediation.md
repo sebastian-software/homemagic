@@ -46,3 +46,10 @@ and no production compatibility claim.
 - [ ] Candidate self-tests remain separate from independent interoperability.
 - [ ] Production Cargo manifests remain free of rejected/reference tooling.
 - [ ] E4-009 stays blocked until a superseding ADR names one passing boundary.
+
+## Progress log
+
+- 2026-07-12: The matter.js spike now wraps each upstream commissioning step
+  and persists only step number, static step name, status, and error class. A
+  two-host official ConnectedHomeIP light workflow is running as the second
+  independent fixture; setup values remain absent from reports and normal logs.

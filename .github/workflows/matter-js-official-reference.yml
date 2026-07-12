@@ -1,0 +1,59 @@
+name: Matter matter.js official reference
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - config/matter-js-candidate.json
+      - config/matter-controller-candidates.json
+      - scripts/run-matter-js-official-reference.sh
+      - spikes/matter-controller-matter-js/**
+      - .github/workflows/matter-js-official-reference.yml
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    name: matter.js vs official light (${{ matrix.label }})
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: x86_64
+            label: Linux x86_64
+          - runner: macos-14
+            architecture: arm64
+            label: macOS ARM64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out HomeMagic
+        uses: actions/checkout@v6
+
+      - name: Install pinned Node runtime
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          gcc g++ python3 pkg-config libssl-dev libdbus-1-dev libglib2.0-dev
+          ninja-build python3-venv python3-dev unzip
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Run official independent lifecycle
+        run: ./scripts/run-matter-js-official-reference.sh report.json "${{ matrix.architecture }}"
+
+      - name: Upload lifecycle report
+        uses: actions/upload-artifact@v6
+        with:
+          name: matter-js-official-${{ matrix.architecture }}
+          path: report.json
+          if-no-files-found: error
