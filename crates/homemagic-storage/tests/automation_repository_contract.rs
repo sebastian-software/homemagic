@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex};
 use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
     AutomationActivation, AutomationCompiler, AutomationDraft, AutomationEngine,
-    AutomationEventProcessor, AutomationLifecycleService, AutomationRepository,
-    AutomationRetention, AutomationRuntime, AutomationRuntimeStep, AutomationScheduler,
-    AutomationSimulationEvidence, AutomationSimulationFixture, AutomationSimulationInput,
-    AutomationSimulationStatus, AutomationSimulator, AutomationStepWrite,
-    AutomationValidationEvidence, BoxError, Clock, FoundationRepository, FoundationSnapshot,
-    FoundationWrite, MemoryFoundationRepository, SimulationTriggerContext, SimulationTriggerKind,
-    StoredAutomationVersion,
+    AutomationEventProcessor, AutomationLifecycleError, AutomationLifecycleService,
+    AutomationRepository, AutomationRetention, AutomationRuntime, AutomationRuntimeStep,
+    AutomationScheduler, AutomationSimulationEvidence, AutomationSimulationFixture,
+    AutomationSimulationInput, AutomationSimulationStatus, AutomationSimulator,
+    AutomationStepWrite, AutomationValidationEvidence, BoxError, Clock, FoundationRepository,
+    FoundationSnapshot, FoundationWrite, MemoryFoundationRepository, SimulationTriggerContext,
+    SimulationTriggerKind, StoredAutomationVersion,
 };
 use homemagic_domain::{
     Actor, ActorId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
@@ -130,6 +130,76 @@ async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version()
             .await
             .is_err()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn lifecycle_sensitive_version_should_require_exact_authenticated_approval() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("lifecycle-sensitive.sqlite3"),
+    )?);
+    let mut stored = stored_version();
+    stored.plan.approval = AutomationApprovalRequirement::ExplicitUserApproval;
+    stored.plan.plan_hash = canonical_automation_plan_hash(&stored.plan)?;
+    stored.validation.plan_hash = stored.plan.plan_hash.clone();
+    stored
+        .simulation
+        .as_mut()
+        .ok_or("fixture simulation missing")?
+        .plan_hash = stored.plan.plan_hash.clone();
+    stored.state = AutomationVersionState::AwaitingApproval;
+    repository.store_automation_version(stored.clone()).await?;
+    let actor = Actor {
+        id: stored.document.provenance.author_id.clone(),
+        installation_id: InstallationId::new(),
+        name: "Sensitive automation owner".to_owned(),
+        enabled: true,
+        created_at: stored.document.created_at,
+    };
+    let service = AutomationLifecycleService::new(
+        repository,
+        Arc::new(MemoryFoundationRepository::default()),
+        Arc::new(FixedClock(
+            stored.document.created_at + TimeDelta::seconds(2),
+        )),
+    );
+    let stranger = Actor {
+        id: ActorId::new(),
+        ..actor.clone()
+    };
+    assert!(matches!(
+        service
+            .catch_up(
+                &stranger,
+                &stored.document.id,
+                stored.document.created_at - TimeDelta::minutes(1),
+                IdempotencyKey::new("cross-owner-catch-up")?,
+            )
+            .await,
+        Err(AutomationLifecycleError::NotAuthorized)
+    ));
+
+    assert!(
+        service
+            .activate(&actor, &stored.document.id, stored.document.version, 0)
+            .await
+            .is_err()
+    );
+    let ready = service
+        .decide(
+            &actor,
+            &stored.document.id,
+            stored.document.version,
+            true,
+            Some("Reviewed exact sensitive behavior".to_owned()),
+        )
+        .await?;
+    assert_eq!(ready.state, AutomationVersionState::Ready);
+    let active = service
+        .activate(&actor, &stored.document.id, stored.document.version, 0)
+        .await?;
+    assert_eq!(active.active_version, Some(stored.document.version));
     Ok(())
 }
 

@@ -6,12 +6,13 @@ use std::sync::Arc;
 use homemagic_domain::{
     Actor, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
     AutomationApprovalRequirement, AutomationApprovalState, AutomationCondition,
-    AutomationDocument, AutomationDocumentSchema, AutomationId, AutomationOccurrenceId,
-    AutomationOperationalState, AutomationProvenance, AutomationResourceBudget, AutomationRun,
-    AutomationRunId, AutomationRunMode, AutomationRunState, AutomationSelfTriggerPolicy,
-    AutomationTimerState, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
-    AutomationTrigger, AutomationValue, AutomationVariableDefinition, AutomationVersion,
-    AutomationVersionState, CorrelationId,
+    AutomationDocument, AutomationDocumentSchema, AutomationId, AutomationOccurrence,
+    AutomationOccurrenceId, AutomationOperationalState, AutomationProvenance,
+    AutomationResourceBudget, AutomationRun, AutomationRunId, AutomationRunMode,
+    AutomationRunState, AutomationSelfTriggerPolicy, AutomationTimerState, AutomationTraceId,
+    AutomationTraceKind, AutomationTraceStep, AutomationTrigger, AutomationValue,
+    AutomationVariableDefinition, AutomationVersion, AutomationVersionState, CorrelationId,
+    IdempotencyKey,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -99,6 +100,9 @@ pub enum AutomationLifecycleError {
     /// Deterministic simulation failed before producing evidence.
     #[error("automation simulation failed")]
     Simulation(#[from] crate::AutomationSimulationError),
+    /// Explicit scheduler request failed after ownership was established.
+    #[error("automation lifecycle scheduler request failed")]
+    Scheduler(#[from] crate::AutomationSchedulerError),
     /// Canonical simulation input hashing failed.
     #[error("automation simulation input is not canonical")]
     CanonicalInput,
@@ -578,6 +582,33 @@ impl AutomationLifecycleService {
             AutomationOperationalState::Retired,
         )
         .await
+    }
+
+    /// Requests one explicit missed schedule occurrence for an actor-owned automation.
+    ///
+    /// # Errors
+    ///
+    /// Returns access, scheduler, or repository failures.
+    pub async fn catch_up(
+        &self,
+        actor: &Actor,
+        automation_id: &AutomationId,
+        scheduled_for: chrono::DateTime<chrono::Utc>,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<AutomationOccurrence, AutomationLifecycleError> {
+        let versions = self.versions(actor, automation_id, 1).await?;
+        if versions.is_empty() {
+            return Err(AutomationLifecycleError::NotFound);
+        }
+        crate::AutomationScheduler::new(self.repository.clone(), self.clock.clone())
+            .request_catch_up(
+                automation_id,
+                scheduled_for,
+                actor.id.clone(),
+                idempotency_key,
+            )
+            .await
+            .map_err(AutomationLifecycleError::Scheduler)
     }
 
     async fn transition_operational(

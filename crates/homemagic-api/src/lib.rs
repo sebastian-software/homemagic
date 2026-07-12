@@ -635,7 +635,7 @@ async fn dispatch_with_services(
     application: &HomeMagicApplication,
     commands: Option<&CommandService>,
     automations: Option<&AutomationLifecycleService>,
-    automation_scheduler: Option<&AutomationScheduler>,
+    _automation_scheduler: Option<&AutomationScheduler>,
     actor: &Actor,
     request: RpcRequest,
 ) -> RpcResponse {
@@ -709,7 +709,7 @@ async fn dispatch_with_services(
             automation_operational(automations, actor, request.id, request.params, true).await
         }
         "automations.catch_up" => {
-            automation_catch_up(automation_scheduler, actor, request.id, request.params).await
+            automation_catch_up(automations, actor, request.id, request.params).await
         }
         "automations.runs.get" => {
             automation_run_get(automations, actor, request.id, request.params).await
@@ -1145,29 +1145,30 @@ async fn automation_run_cancel(
 }
 
 async fn automation_catch_up(
-    scheduler: Option<&AutomationScheduler>,
+    automations: Option<&AutomationLifecycleService>,
     actor: &Actor,
     id: Value,
     params: Value,
 ) -> RpcResponse {
-    let Some(scheduler) = scheduler else {
-        return RpcResponse::error(id, -32040, "Automation service unavailable", None);
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
     };
     let params = match parse_params::<AutomationCatchUpParams>(&id, params) {
         Ok(params) => params,
         Err(response) => return *response,
     };
-    match scheduler
-        .request_catch_up(
+    match service
+        .catch_up(
+            actor,
             &params.automation_id,
             params.scheduled_for,
-            actor.id.clone(),
             params.idempotency_key,
         )
         .await
     {
         Ok(occurrence) => RpcResponse::success(id, json!({"occurrence": occurrence})),
-        Err(error) => automation_scheduler_error(id, &error),
+        Err(error) => automation_error(id, error),
     }
 }
 
@@ -1191,6 +1192,7 @@ fn automation_error(id: Value, error: AutomationLifecycleError) -> RpcResponse {
         AutomationLifecycleError::Simulation(_) | AutomationLifecycleError::CanonicalInput => {
             RpcResponse::error(id, -32045, "Automation simulation failed", None)
         }
+        AutomationLifecycleError::Scheduler(error) => automation_scheduler_error(id, &error),
         AutomationLifecycleError::Repository(_) | AutomationLifecycleError::Foundation(_) => {
             RpcResponse::error(id, -32046, "Automation persistence failed", None)
         }

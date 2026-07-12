@@ -16,7 +16,7 @@ use homemagic_domain::{
     AutomationValidationError, AutomationValue, AutomationValueType, CommandPayload,
     DeviceLifecycle, DeviceRecord, MAX_AUTOMATION_DOCUMENT_BYTES, MAX_AUTOMATION_RETRIES,
     MAX_AUTOMATION_TIMER_MILLIS, PositionCommand, ResolvedAutomationCondition,
-    ResolvedAutomationExpression, ResolvedAutomationTarget, ResolvedAutomationTrigger,
+    ResolvedAutomationExpression, ResolvedAutomationTarget, ResolvedAutomationTrigger, RiskClass,
     canonical_automation_hash, canonical_automation_plan_hash,
 };
 use thiserror::Error;
@@ -410,7 +410,7 @@ impl<'a> Compiler<'a> {
                     depth + 1,
                 );
                 targets.map(|targets| {
-                    self.classify_command(target, payload, path);
+                    self.classify_command(target, &targets, payload, path);
                     self.push_node(AutomationPlanNodeKind::Command {
                         targets,
                         payload: payload.clone(),
@@ -942,6 +942,7 @@ impl<'a> Compiler<'a> {
     fn classify_command(
         &mut self,
         target: &AutomationTargetReference,
+        resolved: &[ResolvedAutomationTarget],
         payload: &CommandPayload,
         path: &str,
     ) {
@@ -950,7 +951,10 @@ impl<'a> Compiler<'a> {
             AutomationSafetyProfile::AccessControl
         } else if name.contains("valve") || name.contains("flow") {
             AutomationSafetyProfile::FlowControl
-        } else if name.contains("camera") || name.contains("security") {
+        } else if name.contains("camera")
+            || name.contains("security")
+            || self.resolved_risk(resolved) == Some(RiskClass::Security)
+        {
             AutomationSafetyProfile::Security
         } else if matches!(payload, CommandPayload::Position(_)) {
             self.requirements
@@ -980,6 +984,30 @@ impl<'a> Compiler<'a> {
             AutomationSafetyProfile::Comfort
         };
         self.profiles.insert(profile);
+    }
+
+    fn resolved_risk(&self, targets: &[ResolvedAutomationTarget]) -> Option<RiskClass> {
+        targets.iter().find_map(|target| {
+            self.snapshot
+                .devices
+                .iter()
+                .find(|device| device.snapshot.id == target.device_id)
+                .and_then(|device| {
+                    device
+                        .snapshot
+                        .endpoints
+                        .iter()
+                        .find(|endpoint| endpoint.id == target.endpoint_id)
+                })
+                .and_then(|endpoint| {
+                    endpoint
+                        .capabilities
+                        .iter()
+                        .map(homemagic_domain::CapabilitySnapshot::descriptor)
+                        .find(|descriptor| descriptor.schema() == target.capability)
+                })
+                .map(|descriptor| descriptor.risk)
+        })
     }
 
     fn position_is_calibrated(&self, target: &AutomationTargetReference) -> bool {
@@ -1451,6 +1479,30 @@ mod tests {
         assert_eq!(
             plan.approval,
             AutomationApprovalRequirement::ActivationGrant
+        );
+    }
+
+    #[test]
+    fn resolved_security_risk_requires_exact_user_approval() {
+        let (mut snapshot, target) = fixture();
+        snapshot.devices[0].snapshot.endpoints[0].capabilities[0] = CapabilitySnapshot::OnOff {
+            on: false,
+            risk: RiskClass::Security,
+        };
+
+        let plan = AutomationCompiler::compile(&document(target), &snapshot).expect("valid plan");
+
+        assert_eq!(
+            plan.safety_profiles,
+            BTreeSet::from([AutomationSafetyProfile::Security])
+        );
+        assert!(
+            plan.safety_requirements
+                .contains(&AutomationSafetyRequirement::ExplicitApproval)
+        );
+        assert_eq!(
+            plan.approval,
+            AutomationApprovalRequirement::ExplicitUserApproval
         );
     }
 

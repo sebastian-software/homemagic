@@ -19,17 +19,17 @@ updated: 2026-07-12
 - [x] Add approve/reject and exact-evidence activation gates.
 - [x] Add atomic activate, rollback, disable, and retire methods.
 - [x] Add run list/get, trace cursor, cancel, and explicit catch-up methods.
-- [ ] Derive Actor exclusively from authentication and enforce ownership/grants.
+- [x] Derive Actor exclusively from authentication and enforce ownership/grants.
 - [ ] Stream durable lifecycle/run transitions on the existing event channel.
-- [ ] Add stable error mappings and bounded filters/cursors.
+- [x] Add stable error mappings and bounded filters/cursors.
 - [x] Document executable agent-oriented examples without hand-built internal IDs.
 - [ ] Test RPC/internal parity, isolation, conflicts, governance, and redaction.
 
 ## Acceptance criteria
 
 - [ ] Complete lifecycle management is possible solely through RPC.
-- [ ] Sensitive profiles cannot activate without explicit version approval.
-- [ ] Comfort and constrained comfort-motion follow the simple auto-ready rule.
+- [x] Sensitive profiles cannot activate without explicit version approval.
+- [x] Comfort and constrained comfort-motion follow the simple auto-ready rule.
 - [ ] Tokens, secrets, vendor payloads, and untrusted actor fields never leak.
 
 ## Progress
@@ -57,3 +57,8 @@ updated: 2026-07-12
 - 2026-07-12: Accepted ADR-0031 and added `automations.drafts.create`.
   Authenticated server code now supplies every lifecycle envelope field, while
   the executable curl/JSON example can author a schedule using no internal IDs.
+- 2026-07-12: Routed explicit catch-up through the authenticated lifecycle
+  boundary instead of accepting an actor ID at the scheduler edge. Security
+  risk metadata now conservatively derives the `security` profile, and
+  lifecycle evidence proves activation fails until the owner approves the exact
+  immutable version. Comfort remains auto-ready after successful simulation.

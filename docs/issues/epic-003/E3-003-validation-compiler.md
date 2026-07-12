@@ -7,7 +7,7 @@ priority: critical
 depends_on: [E3-002]
 adrs: [ADR-0017, ADR-0019]
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # E3-003: Validation and Compiler
@@ -41,5 +41,8 @@ updated: 2026-07-11
 - Focused tests cover deterministic hashes, missing/ambiguous/stale/incompatible
   references, type errors, schedules, motion constraints, reduction, and delay
   boundaries.
+- Resolved `security` risk metadata is a conservative fallback when a common
+  capability name does not itself encode a sensitive semantic profile; focused
+  evidence proves that it derives `security` plus exact user approval.
 - Published `automation.plan.v1` schema and typed example are validated by the
   domain test suite.
