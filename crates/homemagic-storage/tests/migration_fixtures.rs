@@ -15,7 +15,7 @@ async fn schema_v0_fixture_should_upgrade_to_current() -> Result<(), BoxError> {
     let repository = SqliteRepository::open(&path)?;
     let health = repository.health().await?;
 
-    assert_eq!(health.schema_version, 6);
+    assert_eq!(health.schema_version, 7);
     assert_eq!(health.integrity, "ok");
     Ok(())
 }
@@ -35,7 +35,7 @@ async fn schema_v1_fixture_should_reopen_and_load() -> Result<(), BoxError> {
     let health = repository.health().await?;
 
     assert_eq!(snapshot.installations.len(), 1);
-    assert_eq!(health.schema_version, 6);
+    assert_eq!(health.schema_version, 7);
     Ok(())
 }
 
@@ -59,7 +59,7 @@ async fn schema_v2_fixture_should_apply_automation_migration() -> Result<(), Box
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 6);
+    assert_eq!(health.schema_version, 7);
     assert_eq!(automation_tables, 1);
     Ok(())
 }
@@ -84,7 +84,7 @@ async fn schema_v3_fixture_should_apply_event_runtime_migration() -> Result<(), 
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 6);
+    assert_eq!(health.schema_version, 7);
     assert_eq!(cursor_tables, 1);
     Ok(())
 }
@@ -109,7 +109,7 @@ async fn schema_v5_fixture_should_apply_matter_migration() -> Result<(), BoxErro
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 6);
+    assert_eq!(health.schema_version, 7);
     assert_eq!(matter_tables, 1);
     Ok(())
 }

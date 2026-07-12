@@ -4,12 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
-    ActorCredential, CanonicalRequestHash, Clock, CommandConfirmation, CommandConfirmationOutcome,
-    CommandCreateOutcome, CommandDispatchControl, CommandDispatcher, CommandRepository,
-    DesiredStateRegistration, FoundationRepository, FoundationWrite, MatterCommandDispatchControl,
+    ActorCredential, BoxError, CanonicalRequestHash, Clock, CommandAuditSink, CommandConfirmation,
+    CommandConfirmationOutcome, CommandCreateOutcome, CommandDispatchControl, CommandDispatcher,
+    CommandLimitConfig, CommandLimits, CommandRepository, CommandRequest, CommandService,
+    CommandServiceDependencies, CommandServiceError, DesiredStateRegistration,
+    FoundationRepository, FoundationWrite, MatterCommandDispatchControl,
     MatterCommissioningRequest, MatterController, MatterCreateFabricRequest,
     MatterDesiredCommandSlot, MatterDesiredStateWrite, MatterDispatchAdmission,
     MatterDispatchWrite, MatterFabricSecretRefs, MatterFabricState, MatterOperationProgress,
@@ -49,6 +52,50 @@ struct FixedClock(DateTime<Utc>);
 impl Clock for FixedClock {
     fn now(&self) -> DateTime<Utc> {
         self.0
+    }
+}
+
+#[derive(Default)]
+struct CountingDispatcher(AtomicUsize);
+
+#[async_trait::async_trait]
+impl CommandDispatcher for CountingDispatcher {
+    async fn dispatch(
+        &self,
+        _command: &CommandEnvelope,
+    ) -> Result<homemagic_domain::AdapterAcknowledgement, CommandFailure> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(homemagic_domain::AdapterAcknowledgement {
+            acknowledged_at: Utc::now(),
+            code: "accepted".to_owned(),
+        })
+    }
+}
+
+struct ConfirmImmediately;
+
+#[async_trait::async_trait]
+impl CommandConfirmation for ConfirmImmediately {
+    async fn confirm(
+        &self,
+        _command: &CommandAggregate,
+    ) -> Result<CommandConfirmationOutcome, BoxError> {
+        let now = Utc::now();
+        Ok(CommandConfirmationOutcome::Confirmed(
+            homemagic_domain::ObservedConfirmation {
+                confirmed_at: now,
+                observation_at: now,
+            },
+        ))
+    }
+}
+
+struct IgnoreAudits;
+
+#[async_trait::async_trait]
+impl CommandAuditSink for IgnoreAudits {
+    async fn publish(&self, _audit: &CommandAuditRecord) -> Result<(), BoxError> {
+        Ok(())
     }
 }
 
@@ -211,7 +258,7 @@ impl Fixture {
                 vec![ActorGrant {
                     id: GrantId::new(),
                     actor_id: actor.id.clone(),
-                    actions: BTreeSet::from([CommandAction::ApproveUnlock]),
+                    actions: BTreeSet::from([CommandAction::Execute, CommandAction::ApproveUnlock]),
                     scope: GrantScope::Capability {
                         device_id: device_id.clone(),
                         endpoint_id: lock_endpoint_id.clone(),
@@ -758,6 +805,43 @@ async fn unlock_authorization_should_be_bound_expiring_and_single_use() -> TestR
 }
 
 #[tokio::test]
+async fn unlock_authorization_should_reject_stale_or_mismatched_facts() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let command = fixture.create_unlock_command("mismatched-unlock").await?;
+    let issued_at = Utc::now();
+    let base = unlock_authorization(
+        &fixture,
+        &command,
+        MatterUnlockAuthorizationId::new(),
+        issued_at,
+        issued_at + TimeDelta::seconds(60),
+    )?;
+    let mut stale_policy = base.clone();
+    stale_policy.id = MatterUnlockAuthorizationId::new();
+    stale_policy.policy_revision += 1;
+    let mut stale_desired = base.clone();
+    stale_desired.id = MatterUnlockAuthorizationId::new();
+    stale_desired.desired_revision += 1;
+    let mut wrong_request = base.clone();
+    wrong_request.id = MatterUnlockAuthorizationId::new();
+    wrong_request.canonical_request_hash = CanonicalRequestHash::new("c".repeat(64))?;
+    let mut wrong_target = base;
+    wrong_target.id = MatterUnlockAuthorizationId::new();
+    wrong_target.endpoint_id = EndpointId::new("matter:99");
+
+    for invalid in [stale_policy, stale_desired, wrong_request, wrong_target] {
+        assert!(
+            fixture
+                .repository
+                .create_unlock_authorization(invalid)
+                .await
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn unlock_authorization_and_dispatch_should_admit_exactly_once() -> TestResult {
     let fixture = Fixture::new().await?;
     let command = fixture.create_unlock_command("atomic-unlock").await?;
@@ -804,6 +888,72 @@ async fn unlock_authorization_and_dispatch_should_admit_exactly_once() -> TestRe
     );
     assert_eq!(durable.state, CommandState::Dispatched);
     assert_eq!(durable.version, command.version + 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_unlock_should_wait_for_exact_approval_and_dispatch_once() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let now = Utc::now();
+    let repository = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let dispatcher = Arc::new(CountingDispatcher::default());
+    let service = CommandService::new(
+        CommandServiceDependencies {
+            foundation: repository.clone(),
+            commands: repository.clone(),
+            dispatcher: dispatcher.clone(),
+            confirmation: Arc::new(ConfirmImmediately),
+            audits: Arc::new(IgnoreAudits),
+            clock: Arc::new(FixedClock(now + TimeDelta::seconds(1))),
+        },
+        CommandLimits::new(CommandLimitConfig::default()),
+        homemagic_domain::FreshnessPolicy::default(),
+    )
+    .with_dispatch_control(Arc::new(MatterCommandDispatchControl::new(
+        repository.clone(),
+        repository,
+    )));
+    let pending = service
+        .execute(
+            &fixture.actor,
+            CommandRequest {
+                device_id: fixture.device_id.clone(),
+                endpoint_id: fixture.lock_endpoint_id.clone(),
+                payload: CommandPayload::AccessControl(AccessControlCommand::Unlock),
+                idempotency_key: IdempotencyKey::new("interactive-unlock")?,
+                deadline: now + TimeDelta::seconds(30),
+                expected: None,
+                dry_run: false,
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                automation_causation: None,
+            },
+            now,
+        )
+        .await?;
+
+    assert_eq!(pending.state, CommandState::Validated);
+    assert_eq!(dispatcher.0.load(Ordering::SeqCst), 0);
+    let confirmed = service
+        .approve_unlock(
+            &fixture.actor,
+            &pending.envelope.id,
+            now + TimeDelta::milliseconds(1),
+        )
+        .await?;
+    assert_eq!(confirmed.state, CommandState::Confirmed);
+    assert_eq!(dispatcher.0.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        service
+            .approve_unlock(
+                &fixture.actor,
+                &pending.envelope.id,
+                now + TimeDelta::milliseconds(2),
+            )
+            .await,
+        Err(CommandServiceError::UnlockNotPending)
+    ));
+    assert_eq!(dispatcher.0.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

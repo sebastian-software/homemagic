@@ -3,17 +3,19 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    AccessControlCommand, AuditId, CommandAggregate, CommandAuditRecord, CommandErrorCode,
+    AccessControlCommand, Actor, AuditId, CommandAggregate, CommandAuditRecord, CommandErrorCode,
     CommandFailure, CommandPayload, CommandState, MatterDesiredState, MatterLockState,
-    MatterProjectionId, MatterStateRevision, MatterStateValue, OnOffCommand,
+    MatterProjectionId, MatterStateRevision, MatterStateValue, MatterUnlockAuthorizationId,
+    OnOffCommand, PolicyDecision,
 };
 use thiserror::Error;
 
 use crate::{
     BoxError, CommandRepository, MatterDesiredCommandSlot, MatterDesiredStateWrite,
-    MatterDispatchWrite, MatterRepository, MatterSupersededCommand, advance_matter_desired_state,
+    MatterDispatchWrite, MatterRepository, MatterSupersededCommand, MatterUnlockAuthorization,
+    MatterUnlockConsumption, advance_matter_desired_state,
 };
 
 const DESIRED_REGISTRATION_ATTEMPTS: usize = 4;
@@ -66,6 +68,15 @@ pub trait CommandDispatchControl: Send + Sync {
     async fn commit_dispatch(
         &self,
         command: &CommandAggregate,
+        now: DateTime<Utc>,
+    ) -> Result<MatterDispatchAdmission, BoxError>;
+
+    /// Authorizes and atomically commits one exact pending unlock dispatch.
+    async fn authorize_unlock(
+        &self,
+        approver: &Actor,
+        command: &CommandAggregate,
+        approval: &PolicyDecision,
         now: DateTime<Utc>,
     ) -> Result<MatterDispatchAdmission, BoxError>;
 }
@@ -249,6 +260,101 @@ impl CommandDispatchControl for MatterCommandDispatchControl {
             audit: Box::new(audit),
         })
     }
+
+    async fn authorize_unlock(
+        &self,
+        approver: &Actor,
+        command: &CommandAggregate,
+        approval: &PolicyDecision,
+        now: DateTime<Utc>,
+    ) -> Result<MatterDispatchAdmission, BoxError> {
+        if !approval.allowed
+            || !matches!(
+                command.envelope.payload,
+                CommandPayload::AccessControl(AccessControlCommand::Unlock)
+            )
+        {
+            return Err(Box::new(MatterCommandControlError::InvalidUnlockApproval));
+        }
+        let projection = self
+            .projection_for(command)
+            .await?
+            .ok_or(MatterCommandControlError::DesiredSlotMissing)?;
+        let slot = self
+            .matter
+            .matter_desired_slot(&projection.projection_id)
+            .await?
+            .ok_or(MatterCommandControlError::DesiredSlotMissing)?;
+        if slot.command_id != command.envelope.id {
+            let durable = self
+                .commands
+                .command(&command.envelope.id)
+                .await?
+                .ok_or(MatterCommandControlError::PriorCommandMissing)?;
+            return Ok(MatterDispatchAdmission::Superseded(Box::new(durable)));
+        }
+        let request_hash = self
+            .commands
+            .command_request_hash(&command.envelope.id)
+            .await?
+            .ok_or(MatterCommandControlError::PriorCommandMissing)?;
+        let expires_at = std::cmp::min(now + TimeDelta::seconds(60), command.envelope.deadline);
+        if expires_at <= now {
+            return Err(Box::new(MatterCommandControlError::UnlockApprovalExpired));
+        }
+        let authorization_id = MatterUnlockAuthorizationId::new();
+        self.matter
+            .create_unlock_authorization(MatterUnlockAuthorization {
+                id: authorization_id.clone(),
+                command_id: command.envelope.id.clone(),
+                canonical_request_hash: request_hash,
+                requesting_actor_id: command.envelope.actor_id.clone(),
+                approving_actor_id: approver.id.clone(),
+                projection_id: projection.projection_id.clone(),
+                device_id: command.envelope.device_id.clone(),
+                endpoint_id: command.envelope.endpoint_id.clone(),
+                capability_schema: command.envelope.capability.schema(),
+                action: AccessControlCommand::Unlock,
+                desired_revision: slot.desired_revision,
+                policy_revision: u64::from(approval.policy_version),
+                issued_at: now,
+                expires_at,
+                consumed_at: None,
+            })
+            .await?;
+        let mut dispatched = command.clone();
+        let from = dispatched.state;
+        let expected_version = dispatched.version;
+        dispatched
+            .transition(CommandState::Dispatched, now)
+            .map_err(|_| MatterCommandControlError::InvalidDispatchTransition)?;
+        let audit = command_audit(&dispatched, Some(from));
+        let outcome = self
+            .matter
+            .authorize_and_record_unlock_dispatch(
+                &authorization_id,
+                MatterDispatchWrite {
+                    projection_id: projection.projection_id,
+                    command: dispatched.clone(),
+                    expected_version,
+                    audit: audit.clone(),
+                    dispatched_at: now,
+                },
+            )
+            .await?;
+        match outcome {
+            MatterUnlockConsumption::Consumed => Ok(MatterDispatchAdmission::Committed {
+                command: Box::new(dispatched),
+                audit: Box::new(audit),
+            }),
+            MatterUnlockConsumption::NotFound
+            | MatterUnlockConsumption::AlreadyConsumed
+            | MatterUnlockConsumption::Expired
+            | MatterUnlockConsumption::BindingMismatch => {
+                Err(Box::new(MatterCommandControlError::UnlockApprovalRejected))
+            }
+        }
+    }
 }
 
 fn is_replaceable(payload: &CommandPayload) -> bool {
@@ -321,4 +427,13 @@ pub enum MatterCommandControlError {
     /// Payload was incorrectly admitted as replaceable desired state.
     #[error("Matter command has no replaceable desired-state value")]
     UnsupportedDesiredState,
+    /// Approval was not an allowed exact unlock decision.
+    #[error("unlock approval is invalid")]
+    InvalidUnlockApproval,
+    /// Command deadline left no positive authorization lifetime.
+    #[error("unlock approval already expired")]
+    UnlockApprovalExpired,
+    /// Durable authorization failed closed during atomic dispatch admission.
+    #[error("unlock approval was rejected at dispatch boundary")]
+    UnlockApprovalRejected,
 }

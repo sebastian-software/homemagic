@@ -1,3 +1,4 @@
+DROP TABLE matter_unlock_authorization_bindings;
 DROP TABLE matter_command_supersessions;
 DROP TABLE matter_desired_command_slots;
 DROP TABLE matter_unlock_authorizations;
@@ -9,5 +10,5 @@ DROP TABLE matter_projections;
 DROP TABLE matter_endpoints;
 DROP TABLE matter_nodes;
 DROP TABLE matter_fabrics;
-DELETE FROM schema_migrations WHERE version = 6;
+DELETE FROM schema_migrations WHERE version IN (6, 7);
 PRAGMA user_version = 5;

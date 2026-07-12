@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorId, AutomationCausation, CapabilityDescriptor,
-    CapabilitySnapshot, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode,
-    CommandFailure, CommandId, CommandPayload, CommandState, ConstraintState, CorrelationId,
-    DeviceId, DomainEvent, DomainEventKind, EndpointId, EventId, ExpectedObservation,
-    FreshnessPolicy, FreshnessState, IdempotencyKey, OnOffCommand, PolicyInput, PositionCommand,
-    RiskClass,
+    CapabilitySnapshot, CapacityState, CommandAction, CommandAggregate, CommandAuditRecord,
+    CommandEnvelope, CommandErrorCode, CommandFailure, CommandId, CommandPayload, CommandState,
+    ConstraintState, CorrelationId, DeviceId, DomainEvent, DomainEventKind, EndpointId, EventId,
+    ExpectedObservation, FreshnessPolicy, FreshnessState, IdempotencyKey, OnOffCommand,
+    PolicyInput, PositionCommand, RiskClass,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -89,6 +89,15 @@ pub enum CommandServiceError {
     /// A persisted lifecycle transition was invalid.
     #[error("invalid command lifecycle transition")]
     InvalidTransition,
+    /// No Matter dispatch control is configured for interactive unlock approval.
+    #[error("interactive unlock approval is unavailable")]
+    UnlockApprovalUnavailable,
+    /// Command is not one pending validated unlock.
+    #[error("command is not awaiting unlock approval")]
+    UnlockNotPending,
+    /// Interactive actor lacks exact non-delegable unlock approval authority.
+    #[error("interactive unlock approval was denied")]
+    UnlockApprovalDenied,
 }
 
 /// Infrastructure boundaries required by the command orchestrator.
@@ -335,6 +344,95 @@ impl CommandService {
         Ok(count)
     }
 
+    /// Interactively approves and dispatches one exact pending unlock command.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when the command, principal, exact grant, durable desired
+    /// state, projection freshness, policy revision, or authorization lifetime
+    /// no longer matches at the atomic dispatch boundary.
+    pub async fn approve_unlock(
+        &self,
+        approver: &Actor,
+        command_id: &CommandId,
+        now: DateTime<Utc>,
+    ) -> Result<CommandAggregate, CommandServiceError> {
+        let command = self
+            .commands
+            .command(command_id)
+            .await
+            .map_err(CommandServiceError::Repository)?
+            .ok_or(CommandServiceError::CommandNotFound)?;
+        if command.state != CommandState::Validated
+            || command.envelope.deadline <= now
+            || !matches!(
+                command.envelope.payload,
+                CommandPayload::AccessControl(AccessControlCommand::Unlock)
+            )
+        {
+            return Err(CommandServiceError::UnlockNotPending);
+        }
+        let security = self
+            .commands
+            .actor_security(&approver.id)
+            .await
+            .map_err(CommandServiceError::Repository)?
+            .ok_or(CommandServiceError::ActorNotFound)?;
+        let snapshot = self
+            .foundation
+            .load()
+            .await
+            .map_err(CommandServiceError::Repository)?;
+        let device = snapshot
+            .devices
+            .iter()
+            .find(|device| device.snapshot.id == command.envelope.device_id)
+            .ok_or(CommandServiceError::DeviceNotFound)?;
+        let approval = PolicyEvaluator::evaluate(
+            &PolicyInput {
+                actor: security.actor.clone(),
+                action: CommandAction::ApproveUnlock,
+                device_id: command.envelope.device_id.clone(),
+                endpoint_id: command.envelope.endpoint_id.clone(),
+                schema: command.envelope.capability.schema(),
+                risk: RiskClass::Security,
+                spaces: device.spaces.clone(),
+                freshness: device.freshness_at(self.freshness, now),
+                constraint: ConstraintState::Available,
+                rate_capacity: CapacityState::Available,
+                device_capacity: CapacityState::Available,
+                dry_run: false,
+                evaluated_at: now,
+            },
+            &security.grants,
+        );
+        if !approval.allowed {
+            return Err(CommandServiceError::UnlockApprovalDenied);
+        }
+        let control = self
+            .dispatch_control
+            .as_ref()
+            .ok_or(CommandServiceError::UnlockApprovalUnavailable)?;
+        match control
+            .authorize_unlock(&security.actor, &command, &approval, now)
+            .await
+            .map_err(CommandServiceError::Repository)?
+        {
+            MatterDispatchAdmission::Committed {
+                command: dispatched,
+                audit,
+            } => {
+                self.publish(&audit).await?;
+                self.dispatch_committed(*dispatched).await
+            }
+            MatterDispatchAdmission::Superseded(durable) => Ok(*durable),
+            MatterDispatchAdmission::Unmanaged
+            | MatterDispatchAdmission::AwaitingUnlockAuthorization => {
+                Err(CommandServiceError::UnlockApprovalUnavailable)
+            }
+        }
+    }
+
     async fn continue_received(
         &self,
         mut command: CommandAggregate,
@@ -437,6 +535,13 @@ impl CommandService {
             self.transition(&mut command, CommandState::Dispatched, now)
                 .await?;
         }
+        self.dispatch_committed(command).await
+    }
+
+    async fn dispatch_committed(
+        &self,
+        mut command: CommandAggregate,
+    ) -> Result<CommandAggregate, CommandServiceError> {
         match self.dispatcher.dispatch(&command.envelope).await {
             Ok(acknowledgement) => {
                 command.acknowledgement = Some(acknowledgement);
