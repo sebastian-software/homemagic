@@ -65,7 +65,7 @@ for _ in $(seq 1 30); do
     cat "$workspace/reference.log" >&2
     exit 1
   fi
-  if rg --quiet 'SetupQRCode:.*MT:' "$workspace/reference.log"; then
+  if grep -q 'SetupQRCode:.*MT:' "$workspace/reference.log"; then
     ready=true
     break
   fi
@@ -79,7 +79,7 @@ cargo run --quiet --locked --release \
   "$workspace/controller-state" '[::1]:55540' > "$workspace/lifecycle.json"
 
 last_reference_observation="commissionable_fixture_started"
-if rg --quiet 'Got Arm Fail Safe Request' "$workspace/reference.log"; then
+if grep -q 'Got Arm Fail Safe Request' "$workspace/reference.log"; then
   last_reference_observation="arm_fail_safe_received"
 fi
 
