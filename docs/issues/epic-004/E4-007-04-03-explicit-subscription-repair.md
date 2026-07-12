@@ -3,7 +3,7 @@ id: E4-007-04-03
 epic: EPIC-004
 parent: E4-007-04
 title: Execute explicit bounded gap-read and resubscribe repair
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-04-02]
 adrs: [ADR-0014, ADR-0033, ADR-0034, ADR-0041]
@@ -39,7 +39,7 @@ repair that performs at most the declared gap-read and resubscribe work.
   foreign, and atomic rollback tests pass.
 - [x] Controller calls never exceed the declared policy.
 - [x] Full local workspace, strict Clippy, boundary, and secret-scan gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -50,4 +50,6 @@ repair that performs at most the declared gap-read and resubscribe work.
   reservation, deterministic waiting, success, and exhaustion. All 50 Matter
   repository contracts and the targeted strict-Clippy gate pass.
 - 2026-07-12: The all-feature workspace, strict Clippy, Matter boundaries, and
-  secret scan pass. Commit, push, and public CI remain pending.
+  secret scan pass.
+- 2026-07-12: Commits `2071742` and `cc6e9b5` passed public CI run
+  `29207047390` across Linux x86_64 and macOS ARM64. This issue is done.

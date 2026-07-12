@@ -3,7 +3,7 @@ id: E4-007-04-04
 epic: EPIC-004
 parent: E4-007-04
 title: Reconcile subscription repair restart and exhaustion
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-04-03]
 adrs: [ADR-0014, ADR-0033, ADR-0034, ADR-0041]
@@ -37,3 +37,8 @@ ends with explicit repair guidance; controller work is never blindly replayed.
 - [ ] Phase-by-phase restart, deadline, exhaustion, retention, and reopen tests
   pass.
 - [ ] Full local gates and public Linux x86_64/macOS ARM64 CI pass.
+
+## Progress log
+
+- 2026-07-12: E4-007-04-03 completed with public cross-platform CI. This issue
+  is ready.
