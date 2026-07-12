@@ -21,9 +21,9 @@ and packaging measurements.
 
 ## Verification
 
-- [ ] Default and all-feature builds are reproducible on both hosts.
-- [ ] First-party and transitive native footprints are reported separately.
-- [ ] Production manifests remain free of candidate dependencies.
+- [x] Default and all-feature builds are reproducible on both hosts.
+- [x] First-party and transitive native footprints are reported separately.
+- [x] Production manifests remain free of candidate dependencies.
 
 ## Progress log
 
@@ -31,3 +31,9 @@ and packaging measurements.
   x86_64 workflow now produce the same versioned JSON report. Manual macOS ARM64
   evidence already passes 69 default and 73 all-feature tests plus a 3.9 MiB
   release example on stable Rust 1.93; workflow evidence remains pending.
+- 2026-07-12: Public candidate workflow run `29210089483` passed the identical
+  pinned audit on macOS ARM64 and Linux x86_64 and uploaded both reports. The
+  compiled first-party path is 100% Rust with zero semantic unsafe blocks;
+  repository-wide source bytes are 94.83% Rust because code-generation tooling
+  is Python. Optional BLE native dependencies are reported separately. Final
+  HomeMagic CI for the committed reports remains pending.

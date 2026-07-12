@@ -1,0 +1,41 @@
+{
+  "schema": "homemagic.matter.controller-candidate-report.v1",
+  "candidate": "rust-matc",
+  "source": {
+    "repository": "https://github.com/tom-code/rust-matc.git",
+    "revision": "c829d2a1b570b2f2433607a3f4731074b73fb367"
+  },
+  "host": {
+    "captured_at": "2026-07-12T21:43:10Z",
+    "os": "Darwin",
+    "architecture": "arm64",
+    "kernel": "23.6.0",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
+    "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
+  },
+  "commands": {
+    "default_tests": "pass",
+    "all_feature_tests": "pass",
+    "release_example": "pass"
+  },
+  "footprint": {
+    "repository_rust_bytes": 3304384,
+    "repository_other_code_bytes": 180093,
+    "repository_rust_share_basis_points": 9483,
+    "compiled_first_party_rust_share_basis_points": 10000,
+    "compiled_first_party_semantic_unsafe_blocks": 0,
+    "compiled_first_party_native_files": 0,
+    "default_normal_dependencies": 114,
+    "all_feature_normal_dependencies": 150,
+    "all_feature_transitive_native_packages": [
+      "btleplug",
+      "objc-sys",
+      "objc2",
+      "objc2-core-bluetooth",
+      "objc2-foundation"
+    ],
+    "release_example_bytes": 3814864,
+    "release_example_format": "Mach-O 64-bit executable arm64",
+    "optional_native_boundary": "ble feature through btleplug platform backends"
+  }
+}

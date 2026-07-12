@@ -1,0 +1,39 @@
+{
+  "schema": "homemagic.matter.controller-candidate-report.v1",
+  "candidate": "rust-matc",
+  "source": {
+    "repository": "https://github.com/tom-code/rust-matc.git",
+    "revision": "c829d2a1b570b2f2433607a3f4731074b73fb367"
+  },
+  "host": {
+    "captured_at": "2026-07-12T21:43:47Z",
+    "os": "Linux",
+    "architecture": "x86_64",
+    "kernel": "6.17.0-1018-azure",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
+    "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
+  },
+  "commands": {
+    "default_tests": "pass",
+    "all_feature_tests": "pass",
+    "release_example": "pass"
+  },
+  "footprint": {
+    "repository_rust_bytes": 3304384,
+    "repository_other_code_bytes": 180093,
+    "repository_rust_share_basis_points": 9483,
+    "compiled_first_party_rust_share_basis_points": 10000,
+    "compiled_first_party_semantic_unsafe_blocks": 0,
+    "compiled_first_party_native_files": 0,
+    "default_normal_dependencies": 113,
+    "all_feature_normal_dependencies": 153,
+    "all_feature_transitive_native_packages": [
+      "btleplug",
+      "dbus",
+      "libdbus-sys"
+    ],
+    "release_example_bytes": 4610504,
+    "release_example_format": "ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=c38e46b42afca290c6547101ad9000dc5fa5800c, not stripped",
+    "optional_native_boundary": "ble feature through btleplug platform backends"
+  }
+}

@@ -197,3 +197,6 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   progress pending public CI.
 - 2026-07-12: E4-008-01 passed public pin-verification CI run `29209739369`;
   E4-008-02 is ready.
+- 2026-07-12: E4-008-02 candidate run `29210089483` passed macOS ARM64 and
+  Linux x86_64; exact native build and footprint reports are committed pending
+  final repository CI.

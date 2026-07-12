@@ -19,4 +19,10 @@ if rg --quiet 'homemagic-matter|rs-matter|matter-rs|matterjs|connectedhomeip' \
   exit 1
 fi
 
+if rg --quiet '(rs-matter|matter-rs|matterjs|connectedhomeip|tom-code/rust-matc|^matc[[:space:]]*=)' \
+  Cargo.toml crates/*/Cargo.toml Cargo.lock; then
+  printf 'candidate or reference Matter dependency entered a production manifest\n' >&2
+  exit 1
+fi
+
 printf 'Matter domain/application dependency boundaries are intact.\n'

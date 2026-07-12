@@ -78,3 +78,6 @@ security, packaging, or Rust-majority requirements.
   dependency-ordered children before assigning scores.
 - 2026-07-12: E4-008-01 pin verification passed public CI run `29209739369`;
   E4-008-02 is ready.
+- 2026-07-12: E4-008-02 public candidate run `29210089483` passed both hosts;
+  exact reports and the footprint audit are committed pending final repository
+  CI.
