@@ -2,7 +2,7 @@
 id: E4-007
 epic: EPIC-004
 title: Expose simulator-backed durable Matter workflows over RPC
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-003, E4-005, E4-006]
 adrs: [ADR-0003, ADR-0012, ADR-0013, ADR-0016, ADR-0033, ADR-0035, ADR-0037]
@@ -20,7 +20,7 @@ updated: 2026-07-12
 | [E4-007-02](E4-007-02-fabric-workflows.md) | Done | Fabric status, create, simulated export, and restore |
 | [E4-007-03](E4-007-03-node-operation-workflows.md) | Done | Commissioning, removal, cancellation, and restart recovery |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Done | Bounded diagnostics and explicit subscription repair |
-| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | In progress | Versioned `matter.*` RPC and actor-filtered operation events |
+| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Done | Versioned `matter.*` RPC and actor-filtered operation events |
 
 ## Outcome
 
@@ -40,35 +40,35 @@ capability-oriented.
 - [x] Implement node list/get/remove and partial-cleanup reporting.
 - [x] Implement subscription status and explicit repair workflows.
 - [x] Implement bounded redacted controller/fabric/node/endpoint diagnostics.
-- [ ] Implement interactive unlock-authorization creation with server-derived
+- [x] Implement interactive unlock-authorization creation with server-derived
   actor and policy context.
-- [ ] Finalize versioned JSON-RPC schemas and stable error mappings for the
+- [x] Finalize versioned JSON-RPC schemas and stable error mappings for the
   `matter.*` administration method group.
-- [ ] Return operation envelopes immediately for long-running mutations.
-- [ ] Stream actor-filtered operation transitions through the durable event
+- [x] Return operation envelopes immediately for long-running mutations.
+- [x] Stream actor-filtered operation transitions through the durable event
   cursor without exposing secret input or bearer authorization material.
-- [ ] Keep normal state and action access on common device and command methods.
-- [ ] Document sensitive-input handling, idempotency, cancellation, restart, and
+- [x] Keep normal state and action access on common device and command methods.
+- [x] Document sensitive-input handling, idempotency, cancellation, restart, and
   repair procedures.
 
 ## Acceptance criteria
 
-- [ ] Actor identity and authorization context are never accepted from params.
-- [ ] Setup codes and sensitive export/restore input never enter logs, events,
+- [x] Actor identity and authorization context are never accepted from params.
+- [x] Setup codes and sensitive export/restore input never enter logs, events,
   operation details, or ordinary request hashes.
-- [ ] Restart in every simulated phase yields completed, failed, cancelled, or
+- [x] Restart in every simulated phase yields completed, failed, cancelled, or
   explicit `repair_required`, never silent disappearance.
-- [ ] Raw cluster/attribute writes are absent from public RPC schemas.
-- [ ] The same common command RPC controls simulated light and lock capabilities.
+- [x] Raw cluster/attribute writes are absent from public RPC schemas.
+- [x] The same common command RPC controls simulated light and lock capabilities.
 
 ## Verification
 
-- [ ] SQLite-backed JSON-RPC happy, invalid, conflict, unauthorized, and restart
+- [x] SQLite-backed JSON-RPC happy, invalid, conflict, unauthorized, and restart
   matrices pass.
-- [ ] Actor isolation and event-cursor reconnect tests pass.
-- [ ] Sensitive input and diagnostic secret-canary scans pass.
-- [ ] Partial commissioning/removal cleanup remains queryable and repairable.
-- [ ] API examples and operator procedures match executable schemas.
+- [x] Actor isolation and event-cursor reconnect tests pass.
+- [x] Sensitive input and diagnostic secret-canary scans pass.
+- [x] Partial commissioning/removal cleanup remains queryable and repairable.
+- [x] API examples and operator procedures match executable schemas.
 
 ## Progress log
 
@@ -92,3 +92,7 @@ capability-oriented.
   Public CI run `29207369049` passed; E4-007-05 is ready.
 - 2026-07-12: E4-007-05 was decomposed under ADR-0042; E4-007-05-01 read RPC
   contracts are ready.
+- 2026-07-12: E4-007-05 completed authenticated reads, immediate mutation
+  admission, isolated sensitive exchange, actor-scoped durable events, and
+  executable Track A evidence. Final public CI run `29209289949` passed; E4-007
+  is done.

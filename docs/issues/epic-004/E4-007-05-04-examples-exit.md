@@ -3,7 +3,7 @@ id: E4-007-05-04
 epic: EPIC-004
 parent: E4-007-05
 title: Validate Matter RPC examples and Track A exit evidence
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-05-03]
 adrs: [ADR-0003, ADR-0012, ADR-0016, ADR-0042]
@@ -36,7 +36,7 @@ restart, common commands, and actor-filtered reconnect behavior.
 ## Verification
 
 - [x] Full local gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -47,3 +47,6 @@ restart, common commands, and actor-filtered reconnect behavior.
   approval contracts form the command-boundary evidence. Full workspace tests,
   strict all-target Clippy, Matter boundaries, and disclosure scans pass;
   public CI remains pending.
+- 2026-07-12: Public CI run `29209289949` passed Linux x86_64 Rust quality and
+  Linux x86_64/macOS ARM64 simulator verification. This issue and E4-007-05 are
+  done.

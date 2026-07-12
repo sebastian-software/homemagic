@@ -52,11 +52,11 @@ params, JSON-RPC envelopes, result envelopes, and numeric/data error pairs.
 | Read RPC and schemas | `29208029880` | Pass | Pass |
 | Sensitive mutation handoff | `29208555337` | Pass | Pass |
 | Atomic operation events | `29208961425` | Pass | Pass |
+| Executable examples and exit procedures | `29209289949` | Pass | Pass |
 
-The final examples/procedure slice must add its own green public run before
-E4-007-05 and E4-007 close. All listed runs execute formatting, strict Clippy,
-the full Rust workspace suite, historical migration fixtures, disclosure scan,
-and the committed simulator trace hash.
+All listed runs execute formatting, strict Clippy, the full Rust workspace
+suite, historical migration fixtures, disclosure scan, and the committed
+simulator trace hash. E4-007-05 and E4-007 closed only after the final run.
 
 ## Redaction statement
 

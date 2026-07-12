@@ -3,7 +3,7 @@ id: E4-007-05
 epic: EPIC-004
 parent: E4-007
 title: Publish authenticated Matter RPC and operation events
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-02, E4-007-03, E4-007-04]
 adrs: [ADR-0003, ADR-0012, ADR-0013, ADR-0016, ADR-0035, ADR-0042]
@@ -20,7 +20,7 @@ updated: 2026-07-12
 | [E4-007-05-01](E4-007-05-01-rpc-contracts-reads.md) | Done | Versioned authenticated read contracts |
 | [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | Done | Immediate mutations and sensitive exchange |
 | [E4-007-05-03](E4-007-05-03-operation-events.md) | Done | Actor-filtered durable operation events |
-| [E4-007-05-04](E4-007-05-04-examples-exit.md) | In progress | Executable examples and Track A exit evidence |
+| [E4-007-05-04](E4-007-05-04-examples-exit.md) | Done | Executable examples and Track A exit evidence |
 
 ## Outcome
 
@@ -31,30 +31,30 @@ normal device-action API.
 
 ## Tasks
 
-- [ ] Define versioned schemas and stable errors for fabric, operation, node,
+- [x] Define versioned schemas and stable errors for fabric, operation, node,
   subscription, diagnostics, repair, and unlock-approval methods.
-- [ ] Keep setup, export, and restore input on dedicated sensitive request paths.
-- [ ] Derive actor context server-side for every method.
-- [ ] Route unlock approval to `CommandService::approve_unlock` without exposing
+- [x] Keep setup, export, and restore input on dedicated sensitive request paths.
+- [x] Derive actor context server-side for every method.
+- [x] Route unlock approval to `CommandService::approve_unlock` without exposing
   authorization identifiers.
-- [ ] Return operation envelopes immediately for long-running mutations.
-- [ ] Project operation transitions into actor-filtered durable cursor events.
-- [ ] Document executable examples, cancellation, restart, repair, and sensitive
+- [x] Return operation envelopes immediately for long-running mutations.
+- [x] Project operation transitions into actor-filtered durable cursor events.
+- [x] Document executable examples, cancellation, restart, repair, and sensitive
   input handling.
 
 ## Acceptance criteria
 
-- [ ] Params cannot supply actor or policy context.
-- [ ] Public schemas contain no raw cluster, attribute, or command escape hatch.
-- [ ] Common `commands.execute` controls simulated lights and locks.
-- [ ] Reconnected event clients receive only authorized operation transitions.
+- [x] Params cannot supply actor or policy context.
+- [x] Public schemas contain no raw cluster, attribute, or command escape hatch.
+- [x] Common `commands.execute` controls simulated lights and locks.
+- [x] Reconnected event clients receive only authorized operation transitions.
 
 ## Verification
 
-- [ ] SQLite-backed JSON-RPC happy, invalid, conflict, denied, and restart
+- [x] SQLite-backed JSON-RPC happy, invalid, conflict, denied, and restart
   matrices pass.
-- [ ] Actor isolation and event-cursor reconnect contracts pass.
-- [ ] API examples validate against executable schemas.
+- [x] Actor isolation and event-cursor reconnect contracts pass.
+- [x] API examples validate against executable schemas.
 
 ## Progress log
 
@@ -76,3 +76,5 @@ normal device-action API.
   E4-007-05-04 is ready.
 - 2026-07-12: E4-007-05-04 executable examples, operator recovery, and Track A
   exit evidence are implemented; full validation remains pending.
+- 2026-07-12: E4-007-05-04 passed public CI run `29209289949`; all four child
+  issues and this parent are done.

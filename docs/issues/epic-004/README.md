@@ -28,7 +28,7 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-006-02](E4-006-02-desired-state-supersession.md) | Done | E4-006-01 | Monotonic desired slots and pre-dispatch supersession |
 | [E4-006-03](E4-006-03-matter-command-adapters.md) | Done | E4-006-01, E4-006-02 | Governed controller dispatch and observation confirmation |
 | [E4-006-04](E4-006-04-interactive-unlock-authorization.md) | Done | E4-006-01, E4-006-02, E4-006-03 | Exact interactive single-use unlock admission |
-| [E4-007](E4-007-matter-rpc-workflows.md) | In progress | E4-003, E4-005, E4-006 | Simulator-backed durable workflows and authenticated RPC |
+| [E4-007](E4-007-matter-rpc-workflows.md) | Done | E4-003, E4-005, E4-006 | Simulator-backed durable workflows and authenticated RPC |
 | [E4-007-01](E4-007-01-administration-service.md) | Done | E4-003, E4-005, E4-006 | Authenticated durable administration boundary |
 | [E4-007-02](E4-007-02-fabric-workflows.md) | Done | E4-007-01 | Fabric status, creation, and simulator portability workflows |
 | [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | Done | E4-007-01 | Idempotent staged fabric creation and status |
@@ -45,11 +45,11 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-04-02](E4-007-04-02-subscription-status.md) | Done | E4-007-04-01 | Deterministic subscription status |
 | [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Done | E4-007-04-02 | Explicit gap-read and resubscribe repair |
 | [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Done | E4-007-04-03 | Restart and exhaustion reconciliation |
-| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | In progress | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
+| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Done | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-007-05-01](E4-007-05-01-rpc-contracts-reads.md) | Done | E4-007-04 | Versioned Matter read RPC contracts |
 | [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | Done | E4-007-05-01 | Immediate mutations and sensitive exchange |
 | [E4-007-05-03](E4-007-05-03-operation-events.md) | Done | E4-007-05-02 | Actor-filtered operation events |
-| [E4-007-05-04](E4-007-05-04-examples-exit.md) | In progress | E4-007-05-03 | Executable examples and Track A exit evidence |
+| [E4-007-05-04](E4-007-05-04-examples-exit.md) | Done | E4-007-05-03 | Executable examples and Track A exit evidence |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
 | [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
 | [E4-010](E4-010-portability-interoperability.md) | Planned | E4-007, E4-009 | Protected fabric portability and reference interoperability |
@@ -186,3 +186,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   ready.
 - 2026-07-12: E4-007-05-04 executable examples, recovery procedures, and Track
   A exit evidence are implemented; full validation remains pending.
+- 2026-07-12: E4-007-05-04 and its parent passed final public CI run
+  `29209289949`; E4-007 simulator-backed Matter RPC workflows are done.
