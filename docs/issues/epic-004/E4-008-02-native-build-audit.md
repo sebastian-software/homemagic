@@ -3,7 +3,7 @@ id: E4-008-02
 epic: EPIC-004
 parent: E4-008
 title: Build and audit native Rust controller candidates
-status: in_progress
+status: done
 priority: critical
 depends_on: [E4-008-01]
 adrs: [ADR-0005, ADR-0038]
@@ -37,3 +37,6 @@ and packaging measurements.
   repository-wide source bytes are 94.83% Rust because code-generation tooling
   is Python. Optional BLE native dependencies are reported separately. Final
   HomeMagic CI for the committed reports remains pending.
+- 2026-07-12: Public repository CI run `29210237059` passed the committed
+  reports, production-manifest guard, full workspace, migrations, disclosure,
+  and both simulator architectures. This issue is done; E4-008-03 is ready.

@@ -3,7 +3,7 @@ id: E4-008-03
 epic: EPIC-004
 parent: E4-008
 title: Run controller contract and independent reference lifecycle
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-008-02]
 adrs: [ADR-0033, ADR-0038]
