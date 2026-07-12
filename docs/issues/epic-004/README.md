@@ -38,7 +38,7 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | Done | E4-007-02 | Fabric-scoped commissioning admission and sensitive input boundary |
 | [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Done | E4-007-03-01 | Atomic commissioned-node projection commit |
 | [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Done | E4-007-03-01, E4-007-03-02 | Cancellation and restart reconciliation |
-| [E4-007-03-04](E4-007-03-04-node-inventory.md) | Ready | E4-007-03-02 | Authenticated bounded node inventory |
+| [E4-007-03-04](E4-007-03-04-node-inventory.md) | In progress | E4-007-03-02 | Authenticated bounded node inventory |
 | [E4-007-03-05](E4-007-03-05-node-removal.md) | Planned | E4-007-03-03, E4-007-03-04 | Removal with visible partial cleanup |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Planned | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
@@ -132,3 +132,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 - 2026-07-12: Public CI run `29204270373` passed Linux x86_64 quality and
   simulator hashes on Linux x86_64 and macOS ARM64. E4-007-03-03 is done and
   E4-007-03-04 is ready.
+- 2026-07-12: E4-007-03-04 authenticated bounded durable node inventory is
+  implemented and all local CI-equivalent gates pass. Public CI remains pending.

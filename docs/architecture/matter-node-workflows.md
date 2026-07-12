@@ -99,6 +99,26 @@ cannot prove which operation created a visible node. Recovery therefore fails
 closed to `repair_required` rather than guessing. This is intentional until the
 controller contract can carry authoritative correlation evidence.
 
+## Durable node inventory
+
+`MatterNodeInventoryService` is the authenticated read boundary over durable
+Matter node state. Every request reloads the actor and its current exact
+installation-scoped `matter_read` grant. Repository queries bind both
+installation and fabric, so a foreign fabric or node follows the same empty or
+missing path as an absent one.
+
+List pages accept 1 through 256 items and order nodes by operational node ID.
+Summary DTOs contain stable fabric, node, common-device, projection,
+subscription, descriptor-revision, and commissioning-operation identities.
+Detail DTOs add the latest bounded SDK-neutral descriptor, projection metadata,
+and logical subscription metadata. They contain no fabric secret
+references, setup payloads, raw controller objects, or SDK types.
+
+The repository loads each node and its relations from one read transaction.
+Projection ordering is stable by endpoint, capability schema, and projection
+identity. Inventory therefore remains byte-equivalent after reopen while newer
+descriptor revisions replace only the durable descriptor payload and revision.
+
 ## Verification
 
 SQLite contracts cover allowed, denied, duplicate, conflicting-key,
@@ -106,7 +126,9 @@ inactive-fabric, light and lock projection, actual initial state, subscription,
 atomic rollback, reopen, setup-canary, owner isolation, local and in-flight
 cancellation, all cancellation outcomes, dual-history rollback, and all six
 commissioning restart checkpoints. Unit contracts reject skipped, reordered,
-and duplicate controller phases. Historical migration fixtures cover schema 9
-to schema 10. Full workspace tests, all-feature strict Clippy, Matter dependency
-boundaries, and the repository secret scan remain required before each committed
-child slice closes.
+and duplicate controller phases. Inventory contracts cover empty, populated,
+bounded, foreign, disabled-actor, secret-canary, operation-link, and reopen
+behavior. Historical migration fixtures cover schema 9 to schema 10. Full
+workspace tests, all-feature strict Clippy, Matter dependency boundaries, and
+the repository secret scan remain required before each committed child slice
+closes.
