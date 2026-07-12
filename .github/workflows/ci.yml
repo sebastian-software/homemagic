@@ -38,3 +38,29 @@ jobs:
 
       - name: Scan fixtures and evidence for plaintext secrets
         run: ./scripts/scan-secrets.sh
+
+  matter-simulator-portability:
+    name: Matter simulator hash (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: x86_64
+            label: Linux x86_64
+          - runner: macos-14
+            architecture: arm64
+            label: macOS ARM64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Verify committed simulator trace hash
+        run: cargo test -p homemagic-matter --test controller_contract normalized_fixture_trace_should_match_committed_hash --locked
