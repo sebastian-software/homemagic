@@ -95,7 +95,9 @@ fabric without learning Matter cluster internals.
 - [ ] Store operational credentials through the secret-store boundary.
 - [ ] Add commissioning-window discovery and setup-code validation.
 - [ ] Add commission, cancel, remove-node, and decommission workflows.
-- [ ] Persist node identity independently from mutable labels and network address.
+- [x] Persist node identity independently from mutable labels and network address.
+  Evidence: E4-003 schema 6 and
+  [Matter Storage Boundary](../architecture/matter-storage.md).
 - [ ] Add encrypted or otherwise protected fabric backup and tested restore.
 - [ ] Surface attestation, certification, and trust failures explicitly.
 
