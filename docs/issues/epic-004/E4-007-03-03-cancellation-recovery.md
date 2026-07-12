@@ -3,7 +3,7 @@ id: E4-007-03-03
 epic: EPIC-004
 parent: E4-007-03
 title: Reconcile commissioning cancellation and every restart checkpoint
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-03-01, E4-007-03-02]
 adrs: [ADR-0014, ADR-0033, ADR-0037, ADR-0040]
@@ -45,7 +45,7 @@ reusing lost setup input.
   outcome.
 - [x] Atomic conflict and indeterminate-outcome repair tests pass.
 - [x] Full local workspace, strict Clippy, boundary, and secret-scan gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -57,3 +57,6 @@ reusing lost setup input.
   repository contracts, the full all-feature workspace suite, strict Clippy,
   Matter boundary checks, and secret scans pass locally. Commit, push, and
   public CI remain pending.
+- 2026-07-12: Commits `fc77c0d` and `95dbdcb` were pushed to `main`. Public CI
+  run `29204270373` passed Linux x86_64 quality and simulator hashes on Linux
+  x86_64 and macOS ARM64. This child issue is done.

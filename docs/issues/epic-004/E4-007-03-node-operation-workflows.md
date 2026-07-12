@@ -19,8 +19,8 @@ updated: 2026-07-12
 | --- | --- | --- |
 | [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | Done | Fabric-scoped commissioning admission and sensitive input boundary |
 | [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Done | Atomic node, projection, subscription, and operation-result commit |
-| [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | In progress | Best-effort cancellation and phase-by-phase restart reconciliation |
-| [E4-007-03-04](E4-007-03-04-node-inventory.md) | Planned | Authenticated bounded durable node inventory |
+| [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Done | Best-effort cancellation and phase-by-phase restart reconciliation |
+| [E4-007-03-04](E4-007-03-04-node-inventory.md) | Ready | Authenticated bounded durable node inventory |
 | [E4-007-03-05](E4-007-03-05-node-removal.md) | Planned | Idempotent removal with visible partial cleanup |
 
 ## Outcome
@@ -70,3 +70,5 @@ visible and repairable.
   original/cancellation reconciliation, foreign-operation isolation, and
   fail-closed bounded recovery across every simulator checkpoint. Local gates
   pass; commit, push, and public CI remain pending.
+- 2026-07-12: Public CI run `29204270373` verified E4-007-03-03 on Linux x86_64
+  and macOS ARM64. E4-007-03-03 is done and E4-007-03-04 is ready.

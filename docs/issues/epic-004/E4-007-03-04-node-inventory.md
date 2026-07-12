@@ -3,7 +3,7 @@ id: E4-007-03-04
 epic: EPIC-004
 parent: E4-007-03
 title: Expose authenticated bounded durable node inventory
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-03-02]
 adrs: [ADR-0013, ADR-0033, ADR-0034]
@@ -37,3 +37,8 @@ raw controller objects.
 
 - [ ] Empty, populated, bounded, foreign, disabled-actor, and reopen tests pass.
 - [ ] Operation-to-node result lookup survives restart.
+
+## Progress log
+
+- 2026-07-12: E4-007-03-03 completed with public cross-platform CI. This child
+  issue is ready.
