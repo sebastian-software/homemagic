@@ -12,6 +12,15 @@ updated: 2026-07-12
 
 # E4-006: Governed Matter Commands
 
+## Child issues
+
+| Issue | Status | Outcome |
+| --- | --- | --- |
+| [E4-006-01](E4-006-01-access-control-command-contract.md) | Ready | Typed access-control commands and explicit user approval authority |
+| [E4-006-02](E4-006-02-desired-state-supersession.md) | Planned | Shared monotonic desired slot and pre-dispatch supersession |
+| [E4-006-03](E4-006-03-matter-command-adapters.md) | Planned | SDK-neutral dispatch and observation-only confirmation |
+| [E4-006-04](E4-006-04-interactive-unlock-authorization.md) | Planned | Exact sixty-second single-use unlock authorization |
+
 ## Outcome
 
 Common light and lock commands use the shared durable command control plane,
@@ -67,3 +76,5 @@ and cannot unlock without exact interactive authorization.
 - 2026-07-12: Planned with interactive authorization for unlock only.
 - 2026-07-12: E4-005 completed stable projection and subscription recovery;
   this issue is ready.
+- 2026-07-12: Decomposed implementation into four dependency-ordered child
+  issues. E4-006-01 is ready.
