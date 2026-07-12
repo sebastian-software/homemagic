@@ -16,8 +16,8 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-007-01](E4-007-01-administration-service.md) | Ready | One authenticated durable administration boundary |
-| [E4-007-02](E4-007-02-fabric-workflows.md) | Planned | Fabric status, create, simulated export, and restore |
+| [E4-007-01](E4-007-01-administration-service.md) | Done | One authenticated durable administration boundary |
+| [E4-007-02](E4-007-02-fabric-workflows.md) | Ready | Fabric status, create, simulated export, and restore |
 | [E4-007-03](E4-007-03-node-operation-workflows.md) | Planned | Commissioning, removal, cancellation, and restart recovery |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Planned | Bounded diagnostics and explicit subscription repair |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | Versioned `matter.*` RPC and actor-filtered operation events |
@@ -76,3 +76,5 @@ capability-oriented.
 - 2026-07-12: E4-006 completed governed commands and unlock approval. This
   issue was decomposed into five dependency-ordered child issues; E4-007-01 is
   ready.
+- 2026-07-12: E4-007-01 completed authenticated, exact-grant, idempotent Matter
+  administration admission and durable operation bindings. E4-007-02 is ready.

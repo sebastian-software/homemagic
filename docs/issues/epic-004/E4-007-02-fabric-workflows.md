@@ -3,7 +3,7 @@ id: E4-007-02
 epic: EPIC-004
 parent: E4-007
 title: Implement durable simulated fabric workflows
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-01]
 adrs: [ADR-0033, ADR-0037]

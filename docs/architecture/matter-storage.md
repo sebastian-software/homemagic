@@ -84,6 +84,19 @@ cancelled, terminal, stale-policy, stale-projection, expired, mismatched, and
 already-consumed facts fail closed; retained unused rows are not authority.
 Lock commands do not need this unlock-specific authorization row.
 
+## Administration operation bindings
+
+Schema 8 adds one immutable binding for every operation admitted through the
+authenticated Matter administration service. It stores operation, actor,
+installation, exact administration action, actor-scoped idempotency key,
+canonical request hash, and policy version. Binding and initial progress are
+transactional, so a crash cannot leave accepted controller work without its
+authenticated identity or leave an idempotency claim without an operation.
+
+Equivalent retries return the original operation; conflicting reuse returns its
+ID without creating work. Actor-owned get/list queries join through this binding
+and remain bounded. See [Matter Administration Boundary](matter-administration.md).
+
 ## Secret boundary
 
 The fabric payload contains only three opaque `SecretRef` values. Setup codes,
@@ -119,6 +132,6 @@ authorization-and-dispatch admission, expiry, malformed payloads, retention
 protection, database and backup secret canaries, and stable identity.
 
 `crates/homemagic-storage/tests/migration_fixtures.rs` covers empty and historical
-schemas through the explicit schema-6-to-schema-7 unlock-binding upgrade. The workspace also
+schemas through the explicit schema-7-to-schema-8 operation-binding upgrade. The workspace also
 runs strict Clippy, all-feature tests, warning-denied Rustdoc, the Matter
 dependency boundary check, and the repository secret scan.
