@@ -24,8 +24,8 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-004](E4-004-deterministic-controller-simulator.md) | Done | E4-002 | Deterministic Rust light/lock simulator and cross-platform contract evidence |
 | [E4-005](E4-005-capability-projection.md) | Done | E4-003, E4-004 | Stable projection, reports, subscriptions, and gap recovery |
 | [E4-006](E4-006-governed-matter-commands.md) | Ready | E4-003, E4-004, E4-005 | Shared convergence and interactive unlock authorization |
-| [E4-006-01](E4-006-01-access-control-command-contract.md) | Ready | E4-005 | Typed access-control command and approval authority contracts |
-| [E4-006-02](E4-006-02-desired-state-supersession.md) | Planned | E4-006-01 | Monotonic desired slots and pre-dispatch supersession |
+| [E4-006-01](E4-006-01-access-control-command-contract.md) | Done | E4-005 | Typed access-control command and approval authority contracts |
+| [E4-006-02](E4-006-02-desired-state-supersession.md) | Ready | E4-006-01 | Monotonic desired slots and pre-dispatch supersession |
 | [E4-006-03](E4-006-03-matter-command-adapters.md) | Planned | E4-006-01, E4-006-02 | Governed controller dispatch and observation confirmation |
 | [E4-006-04](E4-006-04-interactive-unlock-authorization.md) | Planned | E4-006-01, E4-006-02, E4-006-03 | Exact interactive single-use unlock admission |
 | [E4-007](E4-007-matter-rpc-workflows.md) | Planned | E4-003, E4-005, E4-006 | Simulator-backed durable workflows and authenticated RPC |

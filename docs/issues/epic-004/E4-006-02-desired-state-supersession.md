@@ -3,7 +3,7 @@ id: E4-006-02
 epic: EPIC-004
 parent: E4-006
 title: Wire desired-state supersession into the shared command path
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-006-01]
 adrs: [ADR-0014, ADR-0036]
@@ -46,3 +46,7 @@ not crossed the durable dispatched boundary.
 - [ ] Repository rollback leaves command, audit, slot, and link unchanged.
 - [ ] Restart tests preserve the latest desired revision and command identity.
 
+## Progress log
+
+- 2026-07-12: E4-006-01 completed typed replaceable access-control commands;
+  this issue is ready.
