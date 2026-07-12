@@ -17,12 +17,13 @@ use homemagic_application::{
     MatterAdministrationService, MatterCancellationResolution, MatterCancellationStartOutcome,
     MatterCommandDispatchControl, MatterCommissioningInput, MatterCommissioningRequest,
     MatterController, MatterCreateFabricRequest, MatterDesiredCommandSlot, MatterDesiredStateWrite,
-    MatterDispatchAdmission, MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat,
-    MatterFabricSecretRefs, MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
-    MatterNodeInventoryError, MatterNodeInventoryService, MatterNodeWorkflowError,
-    MatterNodeWorkflowService, MatterOperationCreateOutcome, MatterOperationNodeResult,
-    MatterOperationProgress, MatterRepairRecord, MatterRepairStatus, MatterRepository,
-    MatterRestoreRequest, MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
+    MatterDiagnosticsError, MatterDiagnosticsService, MatterDispatchAdmission, MatterDispatchWrite,
+    MatterExportRequest, MatterFabricExportFormat, MatterFabricSecretRefs, MatterFabricStageState,
+    MatterFabricState, MatterFabricWorkflowService, MatterNodeInventoryError,
+    MatterNodeInventoryService, MatterNodeWorkflowError, MatterNodeWorkflowService,
+    MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
+    MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRestoreRequest,
+    MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
     MatterUnlockAuthorization, MatterUnlockConsumption, MatterWorkflowEvidence,
     MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue, StoredMatterFabric,
     StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
@@ -33,15 +34,15 @@ use homemagic_domain::{
     CommandAction, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode,
     CommandFailure, CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceRecord,
     DeviceSnapshot, EndpointId, EndpointSnapshot, GrantId, GrantScope, IdempotencyKey,
-    Installation, InstallationId, IntegrationId, IntegrationInstance, MatterClusterDescriptor,
-    MatterControllerError, MatterControllerErrorCategory, MatterControllerErrorCode,
-    MatterConvergence, MatterDescriptorRevision, MatterDesiredState, MatterDeviceType,
-    MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId, MatterLockState,
-    MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId, MatterOperationKind,
-    MatterOperationPhase, MatterOperationTarget, MatterProjectedState, MatterProjectionId,
-    MatterRetryability, MatterStateFreshness, MatterStateRevision, MatterStateValue,
-    MatterSubscriptionId, MatterUnlockAuthorizationId, OnOffCommand, PolicyDecision, PolicyReason,
-    RepairId, RiskClass, SecretRef,
+    Installation, InstallationId, IntegrationId, IntegrationInstance, MatterAttributeReport,
+    MatterClusterDescriptor, MatterControllerError, MatterControllerErrorCategory,
+    MatterControllerErrorCode, MatterConvergence, MatterDescriptorRevision, MatterDesiredState,
+    MatterDeviceType, MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId,
+    MatterLockState, MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId,
+    MatterOperationKind, MatterOperationPhase, MatterOperationTarget, MatterProjectedState,
+    MatterProjectionId, MatterRetryability, MatterStateFreshness, MatterStateRevision,
+    MatterStateValue, MatterSubscriptionId, MatterUnlockAuthorizationId, OnOffCommand,
+    PolicyDecision, PolicyReason, RepairId, RiskClass, SecretRef,
 };
 use homemagic_matter::{
     DeterministicMatterSimulator, MatterCommandAdapter, SIMULATOR_LIGHT_SETUP,
@@ -77,6 +78,137 @@ impl CommandDispatcher for CountingDispatcher {
             acknowledged_at: Utc::now(),
             code: "accepted".to_owned(),
         })
+    }
+}
+
+struct CountingDiagnosticsController {
+    inner: Arc<DeterministicMatterSimulator>,
+    status_calls: AtomicUsize,
+    mutation_calls: AtomicUsize,
+}
+
+impl CountingDiagnosticsController {
+    fn new(inner: Arc<DeterministicMatterSimulator>) -> Self {
+        Self {
+            inner,
+            status_calls: AtomicUsize::new(0),
+            mutation_calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl MatterController for CountingDiagnosticsController {
+    fn implementation(&self) -> &'static str {
+        self.inner.implementation()
+    }
+
+    async fn fabric_status(
+        &self,
+        fabric_id: &MatterFabricId,
+    ) -> Result<Option<homemagic_application::MatterFabricStatus>, MatterControllerError> {
+        self.status_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.fabric_status(fabric_id).await
+    }
+
+    async fn create_fabric(
+        &self,
+        request: MatterCreateFabricRequest,
+    ) -> Result<homemagic_application::MatterFabricStatus, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.create_fabric(request).await
+    }
+
+    async fn commission(
+        &self,
+        request: MatterCommissioningRequest,
+    ) -> Result<MatterNodeDescriptor, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.commission(request).await
+    }
+
+    async fn cancel_commissioning(
+        &self,
+        operation_id: &MatterOperationId,
+    ) -> Result<homemagic_application::MatterCancellationOutcome, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.cancel_commissioning(operation_id).await
+    }
+
+    async fn nodes(
+        &self,
+        fabric_id: &MatterFabricId,
+    ) -> Result<
+        homemagic_application::MatterControllerItems<MatterNodeDescriptor>,
+        MatterControllerError,
+    > {
+        self.inner.nodes(fabric_id).await
+    }
+
+    async fn node(
+        &self,
+        fabric_id: &MatterFabricId,
+        node_id: MatterNodeId,
+    ) -> Result<Option<MatterNodeDescriptor>, MatterControllerError> {
+        self.inner.node(fabric_id, node_id).await
+    }
+
+    async fn subscribe(
+        &self,
+        request: homemagic_application::MatterSubscriptionRequest,
+    ) -> Result<homemagic_application::MatterSubscriptionStatus, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.subscribe(request).await
+    }
+
+    async fn read(
+        &self,
+        request: homemagic_application::MatterReadRequest,
+    ) -> Result<
+        homemagic_application::MatterControllerItems<MatterAttributeReport>,
+        MatterControllerError,
+    > {
+        self.inner.read(request).await
+    }
+
+    async fn invoke(
+        &self,
+        request: homemagic_application::MatterInvokeRequest,
+    ) -> Result<homemagic_application::MatterInvocationAcknowledgement, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.invoke(request).await
+    }
+
+    async fn remove_node(
+        &self,
+        request: homemagic_application::MatterRemoveNodeRequest,
+    ) -> Result<homemagic_application::MatterRemovalOutcome, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.remove_node(request).await
+    }
+
+    async fn export_fabric(
+        &self,
+        request: MatterExportRequest,
+    ) -> Result<homemagic_application::MatterFabricExport, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.export_fabric(request).await
+    }
+
+    async fn restore_fabric(
+        &self,
+        request: MatterRestoreRequest,
+    ) -> Result<homemagic_application::MatterFabricStatus, MatterControllerError> {
+        self.mutation_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.restore_fabric(request).await
+    }
+
+    async fn events_after(
+        &self,
+        cursor: u64,
+        limit: usize,
+    ) -> Result<homemagic_application::MatterEventPage, MatterControllerError> {
+        self.inner.events_after(cursor, limit).await
     }
 }
 
@@ -310,6 +442,14 @@ impl FabricWorkflowFixture {
         MatterNodeInventoryService::new(
             MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
             self.repository.clone(),
+        )
+    }
+
+    fn diagnostics(&self, controller: Arc<dyn MatterController>) -> MatterDiagnosticsService {
+        MatterDiagnosticsService::new(
+            MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
+            self.repository.clone(),
+            controller,
         )
     }
 }
@@ -1433,6 +1573,207 @@ async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable()
         reopened_detail.summary.commissioning_operation_id,
         Some(commissioned[0].operation_id.clone())
     );
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one read-only diagnostic contract covers bounds, redaction, freshness, isolation, and reopen"
+)]
+async fn matter_diagnostics_should_be_bounded_redacted_read_only_and_restart_stable() -> TestResult
+{
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let counted_controller = Arc::new(CountingDiagnosticsController::new(controller.clone()));
+    let diagnostics = fixture.diagnostics(counted_controller.clone());
+    let empty = diagnostics.inspect(&fixture.actor, 16, now).await?;
+
+    assert!(empty.fabric.is_none());
+    assert!(!empty.controller.available);
+    assert!(empty.nodes.is_empty());
+    assert!(matches!(
+        diagnostics.inspect(&fixture.actor, 0, now).await,
+        Err(MatterDiagnosticsError::InvalidPageLimit)
+    ));
+    assert!(matches!(
+        diagnostics.inspect(&fixture.actor, 257, now).await,
+        Err(MatterDiagnosticsError::InvalidPageLimit)
+    ));
+
+    let fabric_workflow = fixture.workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("diagnostic-fabric")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("diagnostic fabric operation missing".into());
+    };
+    let _created = fabric_workflow
+        .run_create(&fixture.actor, &create.id, now)
+        .await?;
+    let node_workflow = fixture.node_workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(commission) = node_workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new("diagnostic-light")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("diagnostic commissioning operation missing".into());
+    };
+    let MatterWorkflowOutcome::Completed { value, .. } = node_workflow
+        .run_commission(
+            &fixture.actor,
+            &commission.id,
+            MatterCommissioningInput::new(SecretValue::new(SIMULATOR_LIGHT_SETUP)),
+            now,
+        )
+        .await?
+    else {
+        return Err("diagnostic commissioning did not complete".into());
+    };
+    let status_calls_before = counted_controller.status_calls.load(Ordering::SeqCst);
+    let trace_before = controller.normalized_trace_json().await?;
+    let populated = diagnostics.inspect(&fixture.actor, 1, now).await?;
+    let repeated = diagnostics.inspect(&fixture.actor, 1, now).await?;
+    let json = serde_json::to_string(&populated)?;
+
+    assert_eq!(repeated, populated);
+    assert_eq!(
+        counted_controller.status_calls.load(Ordering::SeqCst),
+        status_calls_before + 2
+    );
+    assert_eq!(controller.normalized_trace_json().await?, trace_before);
+    assert!(populated.fabric.is_some());
+    assert_eq!(populated.schema, "matter.diagnostics.v1");
+    assert!(populated.controller.available);
+    assert_eq!(populated.controller.node_count, Some(1));
+    assert_eq!(populated.nodes.len(), 1);
+    assert_eq!(populated.nodes[0].device_id, value.device_id);
+    assert_eq!(populated.nodes[0].capability_schemas, vec!["on_off.v1"]);
+    assert!(
+        populated.nodes[0]
+            .subscription
+            .as_ref()
+            .is_some_and(|subscription| !subscription.stale && !subscription.repair_eligible)
+    );
+    assert_eq!(populated.operations.len(), 1);
+    assert!(!json.contains("node_id"));
+    assert!(!json.contains("endpoint_id"));
+    assert!(!json.contains("secret"));
+    assert!(!json.contains("controller_state"));
+    assert!(!json.contains(std::str::from_utf8(SIMULATOR_LIGHT_SETUP)?));
+
+    let record = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &value.fabric_id,
+            value.node_id,
+        )
+        .await?
+        .ok_or("diagnostic inventory record missing")?;
+    let mut subscription = record
+        .subscription
+        .ok_or("diagnostic subscription missing")?;
+    let expected_revision = subscription.revision;
+    subscription.state = StoredMatterSubscriptionState::Stale;
+    subscription.revision += 1;
+    subscription.updated_at = now;
+    fixture
+        .repository
+        .store_matter_subscription(subscription, Some(expected_revision))
+        .await?;
+    let stale = diagnostics.inspect(&fixture.actor, 16, now).await?;
+    assert!(
+        stale.nodes[0]
+            .subscription
+            .as_ref()
+            .is_some_and(|subscription| subscription.stale && subscription.repair_eligible)
+    );
+
+    let foreign_installation = InstallationId::new();
+    fixture
+        .repository
+        .apply(FoundationWrite {
+            installations: vec![Installation {
+                id: foreign_installation.clone(),
+                name: "Foreign diagnostics home".to_owned(),
+                created_at: now,
+            }],
+            ..FoundationWrite::default()
+        })
+        .await?;
+    let foreign_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: foreign_installation.clone(),
+        kind: homemagic_domain::ActorKind::User,
+        name: "Foreign diagnostic reader".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(foreign_actor.clone(), None)
+        .await?;
+    fixture
+        .repository
+        .replace_actor_grants(
+            &foreign_actor.id,
+            vec![ActorGrant {
+                id: GrantId::new(),
+                actor_id: foreign_actor.id.clone(),
+                actions: BTreeSet::from([CommandAction::MatterRead]),
+                scope: GrantScope::Installation {
+                    installation_id: foreign_installation,
+                },
+                maximum_risk: RiskClass::Security,
+                enabled: true,
+            }],
+        )
+        .await?;
+    let foreign = diagnostics.inspect(&foreign_actor, 16, now).await?;
+    assert!(foreign.fabric.is_none());
+    assert!(foreign.nodes.is_empty());
+    assert!(foreign.operations.is_empty());
+
+    let disabled_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: fixture.actor.installation_id.clone(),
+        kind: homemagic_domain::ActorKind::User,
+        name: "Disabled diagnostic reader".to_owned(),
+        enabled: false,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(disabled_actor.clone(), None)
+        .await?;
+    assert!(matches!(
+        diagnostics.inspect(&disabled_actor, 16, now).await,
+        Err(MatterDiagnosticsError::Administration(_))
+    ));
+
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let reopened_diagnostics = MatterDiagnosticsService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        counted_controller.clone(),
+    );
+    assert_eq!(
+        reopened_diagnostics
+            .inspect(&fixture.actor, 16, now)
+            .await?,
+        stale
+    );
+    assert_eq!(counted_controller.status_calls.load(Ordering::SeqCst), 6);
+    assert_eq!(counted_controller.mutation_calls.load(Ordering::SeqCst), 0);
     Ok(())
 }
 

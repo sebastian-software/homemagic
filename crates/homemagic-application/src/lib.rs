@@ -14,6 +14,7 @@ mod command_service;
 mod matter_administration;
 mod matter_commands;
 mod matter_controller;
+mod matter_diagnostics;
 mod matter_fabric_workflow;
 mod matter_inventory;
 mod matter_node_workflow;
@@ -86,6 +87,7 @@ pub use command_service::{
 pub use matter_administration::*;
 pub use matter_commands::*;
 pub use matter_controller::*;
+pub use matter_diagnostics::*;
 pub use matter_fabric_workflow::*;
 pub use matter_inventory::*;
 pub use matter_node_workflow::*;
