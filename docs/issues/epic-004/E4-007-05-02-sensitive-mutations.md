@@ -3,7 +3,7 @@ id: E4-007-05-02
 epic: EPIC-004
 parent: E4-007-05
 title: Admit Matter mutations and isolate sensitive exchange
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-05-01]
 adrs: [ADR-0013, ADR-0014, ADR-0035, ADR-0037, ADR-0042]
