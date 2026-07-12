@@ -92,3 +92,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   administration grants, canonical idempotency, bounded owner reads, safe
   pre-controller cancellation, and structured failure/repair persistence.
   E4-007-02 is ready.
+- 2026-07-12: Public CI run `29199747179` verified E4-007-01 with Linux x86_64
+  quality and deterministic simulator hashes on Linux x86_64 and macOS ARM64.

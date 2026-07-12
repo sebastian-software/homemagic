@@ -53,3 +53,5 @@ and exposes bounded reads shared by internal and future RPC callers.
   actor-scoped idempotency, bounded owner reads, safe pre-controller
   cancellation, structured failure/repair normalization, and an explicit CLI
   grant workflow. SQLite contracts and all local workspace gates pass.
+- 2026-07-12: Public CI run `29199747179` passed Linux x86_64 quality and the
+  deterministic simulator hash on Linux x86_64 and macOS ARM64.
