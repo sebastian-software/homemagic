@@ -2,7 +2,7 @@
 id: E4-006
 epic: EPIC-004
 title: Govern Matter commands and interactive unlock authorization
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-003, E4-004, E4-005]
 adrs: [ADR-0014, ADR-0015, ADR-0016, ADR-0035, ADR-0036]
@@ -65,3 +65,5 @@ and cannot unlock without exact interactive authorization.
 ## Progress log
 
 - 2026-07-12: Planned with interactive authorization for unlock only.
+- 2026-07-12: E4-005 completed stable projection and subscription recovery;
+  this issue is ready.

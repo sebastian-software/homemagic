@@ -2,7 +2,7 @@
 id: E4-005
 epic: EPIC-004
 title: Project Matter devices and recover subscriptions safely
-status: in_progress
+status: done
 priority: critical
 depends_on: [E4-003, E4-004]
 adrs: [ADR-0002, ADR-0009, ADR-0010, ADR-0034]
@@ -71,3 +71,7 @@ details or creating duplicate identities after change or restart.
 - 2026-07-12: Local CI-equivalent format, Clippy, workspace tests, migration
   fixtures, and secret scan pass. Public CI evidence is still required before
   changing the issue to done.
+- 2026-07-12: Public CI run `29197306255` passed Linux x86_64 formatting,
+  Clippy, all workspace tests, historical migrations, and the plaintext-secret
+  scan. The committed simulator trace also passed unchanged on Linux x86_64 and
+  macOS ARM64. E4-005 is done.
