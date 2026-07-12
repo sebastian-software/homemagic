@@ -163,10 +163,23 @@ repair count. Operational node IDs, protocol endpoint IDs, operation targets,
 network material, setup input, secret references, controller implementation
 names, and raw SDK objects are intentionally absent.
 
-Freshness is evaluated at an explicit caller-supplied time. A subscription is
-repair-eligible only when its durable state is not `established` or its report
-deadline has elapsed. Diagnostics never start repair implicitly; the explicit
-repair children of E4-007-04 own the separate mutation boundary.
+Freshness is evaluated at an explicit caller-supplied time. Each logical
+subscription persists its gap reason, sleepy-device flag, consumed and maximum
+gap-read and subscribe-attempt budgets, retry deadline, last gap-read time, and
+sleepy-read interval in the same versioned payload. Historical payloads receive
+finite defaults during decoding; new writes reject zero or over-consumed
+budgets.
+
+The pure status projection derives `established`, `stale`, `waiting`,
+`exhausted`, or `repair_required` plus an adapter-independent remediation code.
+Retry and sleepy-read timestamps use exact inclusive boundaries: before a
+deadline the status waits, while at the deadline the bounded action is eligible.
+An ordinary stale subscription recommends a gap read or resubscribe; explicit
+repair becomes eligible only after fixed-budget exhaustion or a durable
+`repair_required` state. Reads never reset those facts, and reopening the
+repository or recovery machine restores the same counters and deadline.
+Diagnostics never start repair implicitly; the explicit repair children of
+E4-007-04 own the separate mutation boundary.
 
 ## Verification
 
@@ -175,7 +188,10 @@ inactive-fabric, light and lock projection, actual initial state, subscription,
 atomic rollback, reopen, setup-canary, owner isolation, local and in-flight
 cancellation, all cancellation outcomes, dual-history rollback, and all six
 commissioning restart checkpoints. Unit contracts reject skipped, reordered,
-and duplicate controller phases. Inventory contracts cover empty, populated,
+and duplicate controller phases. Subscription contracts cover fresh, stale,
+sleepy waiting, retry waiting, gap-budget completion, exhausted,
+repair-required, exact-deadline, checkpoint, and reopen behavior. Inventory
+contracts cover empty, populated,
 bounded, foreign, disabled-actor, secret-canary, operation-link, and reopen
 behavior. Historical migration fixtures cover schema 9 to schema 10. Full
 workspace tests, all-feature strict Clippy, Matter dependency boundaries, and
