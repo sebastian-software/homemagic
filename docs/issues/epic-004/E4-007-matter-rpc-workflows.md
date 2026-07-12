@@ -2,7 +2,7 @@
 id: E4-007
 epic: EPIC-004
 title: Expose simulator-backed durable Matter workflows over RPC
-status: planned
+status: ready
 priority: high
 depends_on: [E4-003, E4-005, E4-006]
 adrs: [ADR-0003, ADR-0012, ADR-0013, ADR-0016, ADR-0033, ADR-0035, ADR-0037]
@@ -11,6 +11,16 @@ updated: 2026-07-12
 ---
 
 # E4-007: Matter RPC Workflows
+
+## Child issues
+
+| Issue | Status | Outcome |
+| --- | --- | --- |
+| [E4-007-01](E4-007-01-administration-service.md) | Ready | One authenticated durable administration boundary |
+| [E4-007-02](E4-007-02-fabric-workflows.md) | Planned | Fabric status, create, simulated export, and restore |
+| [E4-007-03](E4-007-03-node-operation-workflows.md) | Planned | Commissioning, removal, cancellation, and restart recovery |
+| [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Planned | Bounded diagnostics and explicit subscription repair |
+| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | Versioned `matter.*` RPC and actor-filtered operation events |
 
 ## Outcome
 
@@ -63,3 +73,6 @@ capability-oriented.
 ## Progress log
 
 - 2026-07-12: Planned as the completion gate for simulator-backed Track A.
+- 2026-07-12: E4-006 completed governed commands and unlock approval. This
+  issue was decomposed into five dependency-ordered child issues; E4-007-01 is
+  ready.

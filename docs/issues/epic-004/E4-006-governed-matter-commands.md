@@ -81,3 +81,5 @@ and cannot unlock without exact interactive authorization.
 - 2026-07-12: Completed all four child issues: governed typed Matter adapters,
   monotonic desired-state supersession, observation-only confirmation, and
   exact user-only unlock approval with atomic single-use dispatch admission.
+- 2026-07-12: Public CI run `29199088173` passed Linux x86_64 quality and the
+  deterministic simulator hash on Linux x86_64 and macOS ARM64.

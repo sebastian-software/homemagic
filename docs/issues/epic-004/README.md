@@ -28,7 +28,12 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-006-02](E4-006-02-desired-state-supersession.md) | Done | E4-006-01 | Monotonic desired slots and pre-dispatch supersession |
 | [E4-006-03](E4-006-03-matter-command-adapters.md) | Done | E4-006-01, E4-006-02 | Governed controller dispatch and observation confirmation |
 | [E4-006-04](E4-006-04-interactive-unlock-authorization.md) | Done | E4-006-01, E4-006-02, E4-006-03 | Exact interactive single-use unlock admission |
-| [E4-007](E4-007-matter-rpc-workflows.md) | Planned | E4-003, E4-005, E4-006 | Simulator-backed durable workflows and authenticated RPC |
+| [E4-007](E4-007-matter-rpc-workflows.md) | Ready | E4-003, E4-005, E4-006 | Simulator-backed durable workflows and authenticated RPC |
+| [E4-007-01](E4-007-01-administration-service.md) | Ready | E4-003, E4-005, E4-006 | Authenticated durable administration boundary |
+| [E4-007-02](E4-007-02-fabric-workflows.md) | Planned | E4-007-01 | Fabric status, creation, and simulator portability workflows |
+| [E4-007-03](E4-007-03-node-operation-workflows.md) | Planned | E4-007-01, E4-007-02 | Commissioning, removal, cancellation, and recovery |
+| [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Planned | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
+| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
 | [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
 | [E4-010](E4-010-portability-interoperability.md) | Planned | E4-007, E4-009 | Protected fabric portability and reference interoperability |
@@ -80,3 +85,6 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 - 2026-07-12: E4-006 completed typed Matter command mapping, desired-state
   supersession, bounded observation confirmation, and exact interactive unlock
   approval with atomic at-most-once dispatch admission. E4-007 is ready.
+- 2026-07-12: Public CI run `29199088173` verified E4-006 with the complete
+  Linux x86_64 quality job and deterministic hashes on Linux x86_64 and macOS
+  ARM64.
