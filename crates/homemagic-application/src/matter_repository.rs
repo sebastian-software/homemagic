@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{BoxError, MatterFabricSecretRefs, MatterFabricState};
 
 /// Durable fabric metadata containing references, never secret values.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StoredMatterFabric {
     /// Owning installation.
     pub installation_id: InstallationId,
@@ -30,7 +30,7 @@ pub struct StoredMatterFabric {
 }
 
 /// Durable stable node identity and latest descriptor.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StoredMatterNode {
     /// Owning installation.
     pub installation_id: InstallationId,
@@ -45,7 +45,7 @@ pub struct StoredMatterNode {
 }
 
 /// Durable endpoint capability projection and desired/reported state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StoredMatterProjection {
     /// Owning installation.
     pub installation_id: InstallationId,
@@ -88,7 +88,7 @@ pub enum StoredMatterSubscriptionState {
 }
 
 /// Durable logical subscription independent from ephemeral SDK session IDs.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StoredMatterSubscription {
     /// Stable logical subscription identity.
     pub subscription_id: MatterSubscriptionId,
@@ -155,7 +155,7 @@ pub struct MatterRepairRecord {
 }
 
 /// Immutable decision facts bound to one short-lived unlock authorization.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MatterUnlockAuthorization {
     /// Stable authorization identity; this is not a bearer credential.
     pub id: MatterUnlockAuthorizationId,
@@ -195,7 +195,7 @@ pub enum MatterUnlockConsumption {
 }
 
 /// Current per-projection desired command slot.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MatterDesiredCommandSlot {
     /// Target projection.
     pub projection_id: MatterProjectionId,

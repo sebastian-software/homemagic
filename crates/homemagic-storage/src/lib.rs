@@ -3,6 +3,7 @@
 mod automation_repository;
 mod backup;
 mod command_repository;
+mod matter_repository;
 mod migrations;
 mod repository;
 
@@ -86,6 +87,19 @@ pub enum StorageError {
         /// Current durable version.
         found: u64,
     },
+    /// Optimistic Matter row revision did not match durable state.
+    #[error("Matter {resource} revision conflict: expected {expected:?}, found {found:?}")]
+    MatterRevisionConflict {
+        /// Stable resource category.
+        resource: &'static str,
+        /// Revision supplied by the caller, or absence for create.
+        expected: Option<u64>,
+        /// Current durable revision, or absence when not created.
+        found: Option<u64>,
+    },
+    /// A Matter mutation violated a durable invariant.
+    #[error("invalid durable Matter mutation: {0}")]
+    InvalidMatter(&'static str),
     /// An automation mutation violated a durable invariant.
     #[error("invalid durable automation mutation: {0}")]
     InvalidAutomation(&'static str),

@@ -407,7 +407,7 @@ fn load_actor_commands(
         .collect()
 }
 
-fn transition_command(
+pub(crate) fn transition_command(
     transaction: &Transaction<'_>,
     command: &CommandAggregate,
     expected_version: u64,
