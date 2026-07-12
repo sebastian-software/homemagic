@@ -3,7 +3,7 @@ id: E4-007-05-01
 epic: EPIC-004
 parent: E4-007-05
 title: Publish Matter RPC contracts and authenticated reads
-status: ready
+status: in_progress
 priority: high
 depends_on: [E4-007-04]
 adrs: [ADR-0003, ADR-0013, ADR-0016, ADR-0041, ADR-0042]
@@ -21,19 +21,29 @@ diagnostic read methods with stable transport errors.
 
 ## Tasks
 
-- [ ] Add a Matter service bundle to API state without global singletons.
-- [ ] Define `matter.*.v1` params, result envelopes, and stable error mapping.
-- [ ] Implement fabric, operation list/get, node list/get, and diagnostics reads.
-- [ ] Reject actor, policy, raw cluster, attribute, command, and oversized params.
-- [ ] Publish machine-readable JSON schemas for every read method.
+- [x] Add a Matter service bundle to API state without global singletons.
+- [x] Define `matter.*.v1` params, result envelopes, and stable error mapping.
+- [x] Implement fabric, operation list/get, node list/get, and diagnostics reads.
+- [x] Reject actor, policy, raw cluster, attribute, command, and oversized params.
+- [x] Publish machine-readable JSON schemas for every read method.
 
 ## Acceptance criteria
 
-- [ ] Actor context always comes from bearer authentication.
-- [ ] Foreign operation/node reads are indistinguishable from missing.
-- [ ] DTOs and schemas contain no setup, secret, SDK, or native network fields.
+- [x] Actor context always comes from bearer authentication.
+- [x] Foreign operation/node reads are indistinguishable from missing.
+- [x] DTOs and schemas contain no setup, secret, SDK, or native network fields.
 
 ## Verification
 
-- [ ] Happy, empty, invalid, denied, foreign, bounded, and reopen RPC tests pass.
-- [ ] Serialized schemas pass secret and raw-mutation canaries.
+- [x] Happy, empty, invalid, denied, foreign, bounded, and reopen RPC tests pass.
+- [x] Serialized schemas pass secret and raw-mutation canaries.
+- [x] Full local workspace, strict Clippy, boundary, and secret-scan gates pass.
+- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+
+## Progress log
+
+- 2026-07-12: Implemented explicit `MatterApiServices` composition, six strict
+  authenticated read methods, stable errors, committed executable schemas, and
+  a SQLite-backed actor/bounds/reopen contract. The all-feature workspace,
+  strict Clippy, Matter boundaries, and secret scan pass. Commit, push, and
+  public CI remain pending.

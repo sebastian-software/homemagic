@@ -17,7 +17,7 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-007-05-01](E4-007-05-01-rpc-contracts-reads.md) | Ready | Versioned authenticated read contracts |
+| [E4-007-05-01](E4-007-05-01-rpc-contracts-reads.md) | In progress | Versioned authenticated read contracts |
 | [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | Planned | Immediate mutations and sensitive exchange |
 | [E4-007-05-03](E4-007-05-03-operation-events.md) | Planned | Actor-filtered durable operation events |
 | [E4-007-05-04](E4-007-05-04-examples-exit.md) | Planned | Executable examples and Track A exit evidence |
@@ -63,3 +63,5 @@ normal device-action API.
 - 2026-07-12: ADR-0042 separated ordinary RPC, sensitive exchange, daemon-owned
   execution, and actor-filtered events. Work was decomposed into four
   dependency-ordered children; E4-007-05-01 is ready.
+- 2026-07-12: E4-007-05-01 Matter read contracts are implemented and all local
+  CI-equivalent gates pass; public CI remains pending.
