@@ -47,3 +47,7 @@ and no Node/TypeScript dependency in HomeMagic production crates.
   cancellation. The isolated two-host audit pins Node and the upstream lockfile
   and measures build/runtime footprint before any private sidecar protocol is
   accepted.
+- 2026-07-12: The proposed private boundary now fixes inherited-pipe framing,
+  handshake/version rules, reverse Rust-owned secret callbacks, event-window
+  backpressure, cancellation/partial outcomes, supervision, packaging, and
+  removal tests. It remains unaccepted until lifecycle and fault evidence pass.
