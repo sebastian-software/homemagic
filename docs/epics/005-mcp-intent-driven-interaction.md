@@ -40,6 +40,32 @@ construct entity IDs or receive an unrestricted administrative API.
 - building the final graphical UI;
 - allowing MCP to activate behavior that policy would reject over RPC.
 
+## Finalized EPIC-003 contracts
+
+- MCP delegates automation mutations to `AutomationLifecycleService` with the
+  session's authenticated `Actor`; tools never accept an alternate actor ID.
+- New drafts use the server-generated envelope contract from
+  `automations.drafts.create`. Agents author behavior and provenance text while
+  HomeMagic owns schema, automation ID, version, author, and timestamp.
+- Authored `automation.document.v1` and normalized `automation.plan.v1` are
+  data-only, bounded, and versioned independently. MCP must not add code,
+  template, raw-adapter, or arbitrary JSON execution paths.
+- Validation, simulation, approval, activation, rollback, disable, retirement,
+  operational get/list, run/trace/cancel, and exact catch-up semantics are the
+  JSON-RPC reference contract. MCP tools may narrow but must not weaken them.
+- Simulation accepts synthetic data but no plan, run identity, dispatcher, or
+  physical command path. Sensitive exact versions require user approval.
+- Operational mutations use the revision returned by the latest get/list
+  result. Rollback changes only the active pointer; cancellation and physical
+  compensation remain separate.
+- Missed schedules are never replayed automatically. Catch-up represents one
+  explicit, authenticated, idempotent missed instant.
+- Automation transition resources use the existing durable global event cursor,
+  actor-owner filtering, and bounded pages. Cursor gaps may represent hidden
+  events and must not be treated as data loss.
+- Every runtime command still crosses EPIC-002 `CommandService` with current
+  grants, policy, idempotency, deadlines, audit, and causation.
+
 ## Required decisions
 
 - [ ] E5.D1: Add an ADR for MCP transport, authentication, session, and actor
@@ -182,3 +208,5 @@ construct entity IDs or receive an unrestricted administrative API.
 ## Progress log
 
 - 2026-07-11: Epic created; blocked on the automation lifecycle in EPIC-003.
+- 2026-07-12: Consumed the finalized EPIC-003 lifecycle, schema, simulation,
+  approval, operational revision, run-control, catch-up, and event contracts.

@@ -2,7 +2,7 @@
 id: EPIC-003-ISSUES
 epic: EPIC-003
 title: Agent-Authored Automation Engine issue index
-status: in_progress
+status: done
 priority: critical
 depends_on: [EPIC-002]
 adrs: [ADR-0004, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027, ADR-0028, ADR-0029]
@@ -21,7 +21,7 @@ updated: 2026-07-12
 | [E3-005](E3-005-deterministic-simulator.md) | Done | E3-003 | Virtual-time side-effect-free simulation |
 | [E3-006](E3-006-runtime-scheduler.md) | Done | E3-003, E3-004 | Durable interpreter and scheduler |
 | [E3-007](E3-007-automation-rpc.md) | Done | E3-004, E3-005, E3-006 | Governance and authenticated RPC |
-| [E3-008](E3-008-automation-exit-audit.md) | In progress | E3-007 | Operations and exit evidence |
+| [E3-008](E3-008-automation-exit-audit.md) | Done | E3-007 | Operations and exit evidence |
 
 ## Progress log
 
@@ -58,3 +58,6 @@ updated: 2026-07-12
   server-generated authoring envelopes, bounded owner-filtered queries, exact
   approval gates, operational/run controls, and actor-isolated automation
   transitions on the existing durable event cursor. E3-008 is active.
+- 2026-07-12: E3-008 and EPIC-003 completed with threat and recovery guidance,
+  linked exit evidence, finalized EPIC-005 contracts, and green macOS ARM plus
+  isolated Linux x86_64 quality gates.

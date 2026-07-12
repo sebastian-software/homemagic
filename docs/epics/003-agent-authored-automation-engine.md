@@ -1,7 +1,7 @@
 # EPIC-003: Agent-Authored Automation Engine
 
 - Milestone: M3
-- Status: In progress
+- Status: Done
 - Depends on: EPIC-002
 - Unlocks: EPIC-005
 
@@ -80,18 +80,18 @@ requires it, and activates an immutable version.
 
 ## Workstream E3.2: Validation and resolution
 
-- [ ] Parse and structurally validate documents without side effects.
-- [ ] Resolve stable device, endpoint, capability, space, and alias references.
-- [ ] Type-check trigger values, conditions, variables, and command payloads.
-- [ ] Reject unknown schema versions and unsupported capabilities.
-- [ ] Detect impossible branches, missing targets, cycles, and unbounded behavior.
-- [ ] Calculate aggregate risk from every possible action path.
-- [ ] Return errors with document paths and actionable remediation.
-- [ ] Persist validation result against the exact document and registry revision.
+- [x] Parse and structurally validate documents without side effects.
+- [x] Resolve stable device, endpoint, capability, space, and alias references.
+- [x] Type-check trigger values, conditions, variables, and command payloads.
+- [x] Reject unknown schema versions and unsupported capabilities.
+- [x] Detect impossible branches, missing targets, cycles, and unbounded behavior.
+- [x] Calculate aggregate risk from every possible action path.
+- [x] Return errors with document paths and actionable remediation.
+- [x] Persist validation result against the exact document and registry revision.
 
 ## Workstream E3.3: Deterministic simulator
 
-- [ ] Introduce a clock/scheduler port with real and virtual implementations.
+- [x] Introduce a clock/scheduler port with real and virtual implementations.
 - [x] Simulate from recorded event streams without dispatching physical commands.
 - [x] Support synthetic initial state, events, and command outcomes.
 - [x] Produce ordered trigger, condition, branch, action, and policy trace steps.
@@ -102,64 +102,64 @@ requires it, and activates an immutable version.
 
 ## Workstream E3.4: Runtime engine
 
-- [ ] Subscribe only active automation versions to normalized events.
-- [ ] Evaluate conditions from an immutable state snapshot.
-- [ ] Submit actions only through the EPIC-002 command service.
-- [ ] Persist run start, trace steps, pending timers, and terminal outcome.
-- [ ] Restore or explicitly terminate interrupted runs according to documented
+- [x] Subscribe only active automation versions to normalized events.
+- [x] Evaluate conditions from an immutable state snapshot.
+- [x] Submit actions only through the EPIC-002 command service.
+- [x] Persist run start, trace steps, pending timers, and terminal outcome.
+- [x] Restore or explicitly terminate interrupted runs according to documented
   semantics.
-- [ ] Enforce concurrency mode, queue bound, timeout, and cancellation.
-- [ ] Prevent self-trigger loops through causation and configurable suppression.
-- [ ] Isolate one failing automation from other runs and device sessions.
+- [x] Enforce concurrency mode, queue bound, timeout, and cancellation.
+- [x] Prevent self-trigger loops through causation and configurable suppression.
+- [x] Isolate one failing automation from other runs and device sessions.
 
 ## Workstream E3.5: Governance and RPC
 
-- [ ] Add `automations.create_draft`.
-- [ ] Add `automations.validate`.
-- [ ] Add `automations.simulate`.
-- [ ] Add `automations.approve` and `automations.reject`.
-- [ ] Add `automations.activate`, `rollback`, `disable`, and `retire`.
-- [ ] Add `automations.get`, `list`, `versions`, `runs`, and `trace`.
-- [ ] Require approval for policy-selected mechanical or security actions.
-- [ ] Make activation atomic and preserve the previous active version for rollback.
-- [ ] Audit every lifecycle transition and execution causation chain.
+- [x] Add `automations.drafts.create`.
+- [x] Add `automations.validate`.
+- [x] Add `automations.simulate`.
+- [x] Add `automations.approve` and `automations.reject`.
+- [x] Add `automations.activate`, `rollback`, `disable`, and `retire`.
+- [x] Add `automations.get`, `list`, `versions`, `runs`, and `trace`.
+- [x] Require approval for policy-selected access, flow, or security actions.
+- [x] Make activation atomic and preserve the previous active version for rollback.
+- [x] Audit every lifecycle transition and execution causation chain.
 
 ## Test and verification checklist
 
 - [x] Schema fixtures cover every IR construct and supported version.
-- [ ] Property tests cover parser/serializer round trips and bounded execution.
-- [ ] Validator tests cover missing, stale, ambiguous, and incompatible references.
-- [ ] Virtual-time tests cover schedules, delays, duration conditions, retries,
+- [x] Property tests cover parser/serializer round trips and bounded execution.
+- [x] Validator tests cover missing, stale, ambiguous, and incompatible references.
+- [x] Virtual-time tests cover schedules, delays, duration conditions, retries,
   timeouts, and same-timestamp ordering.
-- [ ] Snapshot tests cover human-readable simulation and execution traces.
-- [ ] Restart tests cover pending timers, queues, and interrupted commands.
-- [ ] Policy tests cover low-risk auto-activation and required approval.
-- [ ] End-to-end fixtures prove equivalent simulation and runtime decisions for
+- [x] Snapshot tests cover human-readable simulation and execution traces.
+- [x] Restart tests cover pending timers, queues, and interrupted commands.
+- [x] Policy tests cover low-risk auto-activation and required approval.
+- [x] End-to-end fixtures prove equivalent simulation and runtime decisions for
   the same event history.
 
 ## Acceptance criteria
 
-- [ ] AC1: An automation document can be created, validated, simulated, approved,
+- [x] AC1: An automation document can be created, validated, simulated, approved,
   activated, rolled back, disabled, and retired solely through RPC.
-- [ ] AC2: The same inputs and registry revision produce byte-equivalent normalized
+- [x] AC2: The same inputs and registry revision produce byte-equivalent normalized
   simulation traces across repeated runs.
-- [ ] AC3: Invalid references and type errors prevent activation and identify their
+- [x] AC3: Invalid references and type errors prevent activation and identify their
   exact document path.
-- [ ] AC4: Simulation has no code path to a physical integration adapter.
-- [ ] AC5: Runtime actions pass through the same command, policy, idempotency, and
+- [x] AC4: Simulation has no code path to a physical integration adapter.
+- [x] AC5: Runtime actions pass through the same command, policy, idempotency, and
   audit services used by direct clients.
-- [ ] AC6: Every run identifies the immutable automation version and complete
+- [x] AC6: Every run identifies the immutable automation version and complete
   causation chain.
-- [ ] AC7: A previous active version can be restored atomically after a bad change.
+- [x] AC7: A previous active version can be restored atomically after a bad change.
 
 ## Exit gate
 
-- [ ] All acceptance criteria contain linked evidence.
-- [ ] Required ADRs are accepted and indexed.
-- [ ] IR schema and examples are published with compatibility rules.
-- [ ] No arbitrary-code or raw-adapter escape hatch exists.
-- [ ] Operator documentation covers stuck runs, disable, rollback, and trace use.
-- [ ] EPIC-005 references the finalized automation lifecycle and schemas.
+- [x] All acceptance criteria contain linked evidence.
+- [x] Required ADRs are accepted and indexed.
+- [x] IR schema and examples are published with compatibility rules.
+- [x] No arbitrary-code or raw-adapter escape hatch exists.
+- [x] Operator documentation covers stuck runs, disable, rollback, and trace use.
+- [x] EPIC-005 references the finalized automation lifecycle and schemas.
 
 ## Risks and mitigations
 
@@ -182,3 +182,9 @@ requires it, and activates an immutable version.
 - 2026-07-11: Completed E3-002 typed automation document/plan contracts,
   lifecycle records, canonical hashes, absolute resource budgets, published v1
   schema/example validation, property tests, and persisted round trips.
+- 2026-07-12: E3-003 through E3-007 completed validation, deterministic
+  simulation, durable runtime/scheduling, authenticated lifecycle RPCs, exact
+  Safety Profile governance, and actor-owned durable transition streaming.
+  E3-008 exit evidence, threat model, and operator recovery are in progress.
+- 2026-07-12: E3-008 closed every acceptance and exit item with linked evidence,
+  finalized EPIC-005 dependencies, and green macOS ARM and Linux x86_64 gates.
