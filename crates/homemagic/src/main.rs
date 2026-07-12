@@ -11,11 +11,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use homemagic_application::{
     ActorAuthentication, AuthenticateActor, AutomationEngine, AutomationEventProcessor,
-    AutomationRuntime, AutomationRuntimeCommandDependencies, AutomationScheduler,
-    BroadcastDomainEventSink, CommandLimitConfig, CommandLimits, CommandRepository, CommandService,
-    CommandServiceDependencies, DeviceRegistry, DomainEventCommandAuditSink, FoundationWrite,
-    HomeMagicApplication, IntegrationScanner, RepositoryLiveObservationSink, SecretStore,
-    SecretValue, SystemClock,
+    AutomationLifecycleService, AutomationRuntime, AutomationRuntimeCommandDependencies,
+    AutomationScheduler, BroadcastDomainEventSink, CommandLimitConfig, CommandLimits,
+    CommandRepository, CommandService, CommandServiceDependencies, DeviceRegistry,
+    DomainEventCommandAuditSink, FoundationWrite, HomeMagicApplication, IntegrationScanner,
+    RepositoryLiveObservationSink, SecretStore, SecretValue, SystemClock,
 };
 use homemagic_domain::{
     ActorGrant, ActorId, CapabilitySnapshot, CommandAction, FreshnessPolicy, GrantId, GrantScope,
@@ -636,6 +636,8 @@ async fn serve(options: ServeOptions) -> Result<()> {
         authenticator,
         commands,
         automation,
+        automation_lifecycle,
+        automation_scheduler,
     } = durable_application(
         options.discovery_seconds,
         &options.database,
@@ -671,7 +673,13 @@ async fn serve(options: ServeOptions) -> Result<()> {
     ));
     let result = axum::serve(
         listener,
-        homemagic_api::router_with_commands(application.clone(), authenticator, commands),
+        homemagic_api::router_with_automation(
+            application.clone(),
+            authenticator,
+            commands,
+            automation_lifecycle,
+            automation_scheduler,
+        ),
     )
     .with_graceful_shutdown(shutdown_signal(shutdown))
     .await
@@ -693,6 +701,8 @@ struct DurableRuntime {
     authenticator: Arc<dyn AuthenticateActor>,
     commands: CommandService,
     automation: AutomationEngine,
+    automation_lifecycle: AutomationLifecycleService,
+    automation_scheduler: AutomationScheduler,
 }
 
 async fn durable_application(
@@ -786,30 +796,49 @@ async fn durable_application(
         CommandLimits::new(CommandLimitConfig::default()),
         freshness_policy,
     );
-    let automation = automation_engine(repository, commands.clone());
+    let AutomationComponents {
+        engine: automation,
+        lifecycle: automation_lifecycle,
+        scheduler: automation_scheduler,
+    } = automation_components(repository, commands.clone());
     Ok(DurableRuntime {
         application: application.with_sessions(sessions),
         refresh_requests: refresh_receiver,
         authenticator,
         commands,
         automation,
+        automation_lifecycle,
+        automation_scheduler,
     })
 }
 
-fn automation_engine(
+struct AutomationComponents {
+    engine: AutomationEngine,
+    lifecycle: AutomationLifecycleService,
+    scheduler: AutomationScheduler,
+}
+
+fn automation_components(
     repository: Arc<SqliteRepository>,
     commands: CommandService,
-) -> AutomationEngine {
+) -> AutomationComponents {
     let clock = Arc::new(SystemClock);
     let events =
         AutomationEventProcessor::new(repository.clone(), repository.clone(), clock.clone());
     let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
+    let lifecycle =
+        AutomationLifecycleService::new(repository.clone(), repository.clone(), clock.clone());
     let runtime = AutomationRuntime::new(repository.clone(), repository.clone(), clock)
         .with_commands(AutomationRuntimeCommandDependencies {
             repository: repository.clone(),
             service: commands,
         });
-    AutomationEngine::new(repository, events, scheduler, runtime)
+    let engine = AutomationEngine::new(repository, events, scheduler.clone(), runtime);
+    AutomationComponents {
+        engine,
+        lifecycle,
+        scheduler,
+    }
 }
 
 async fn automation_worker(

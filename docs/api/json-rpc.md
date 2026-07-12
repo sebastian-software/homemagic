@@ -175,6 +175,58 @@ idempotency key. For moving covers, use `position.v1` with `{"action":"stop"}`
 as the software emergency stop, while preserving access to the physical stop or
 power-isolation path. Never depend on network RPC as the only emergency control.
 
+## Automation lifecycle methods
+
+Automation methods derive the author or decision maker exclusively from the
+authenticated bearer token. Supplying an extra `actor_id` parameter has no
+effect. Drafts use optimistic revisions; immutable versions use positive
+version numbers and exact compiler evidence.
+
+The first lifecycle slice exposes:
+
+- `automations.drafts.put` with `document` and optional `expected_revision`;
+- `automations.drafts.get` with `automation_id`;
+- `automations.validate` with `automation_id`;
+- `automations.versions.get` with `automation_id` and `version`;
+- `automations.simulate` with the exact version and synthetic `input` history;
+- `automations.approve` / `automations.reject` with optional `rationale`;
+- `automations.activate` with exact version and `expected_revision`;
+- `automations.catch_up` with one exact `scheduled_for` instant and
+  actor-scoped `idempotency_key`.
+
+Simulation never accepts a plan, run ID, occurrence ID, correlation ID, or
+dispatcher from the caller. Those values are derived by the lifecycle service.
+Catch-up never scans a time range and rejects a schedule whose normal window is
+still open.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 30,
+  "method": "automations.drafts.put",
+  "params": {
+    "document": {"schema":"automation.document.v1","id":"AUTOMATION_ID","version":1},
+    "expected_revision": null
+  }
+}
+```
+
+The abbreviated document above illustrates the envelope only; use the complete
+published schema and example in `docs/api/examples/automation-document-v1.json`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 31,
+  "method": "automations.catch_up",
+  "params": {
+    "automation_id": "AUTOMATION_ID",
+    "scheduled_for": "2026-07-11T16:00:00Z",
+    "idempotency_key": "catch-up-2026-07-11"
+  }
+}
+```
+
 ## Event subscriptions
 
 Open `/rpc/ws` with the same bearer header and send exactly one
@@ -218,6 +270,14 @@ must rebuild from the read APIs.
 | `-32006` | Repair not found |
 | `-32010` | Event cursor expired |
 | `-32011` | Event subscriptions unavailable in this runtime |
+| `-32040` | Automation service unavailable |
+| `-32041` | Automation access denied |
+| `-32042` | Automation resource not found |
+| `-32043` | Automation lifecycle state conflict |
+| `-32044` | Automation validation failed; data contains bounded findings |
+| `-32045` | Automation simulation failed |
+| `-32046` | Automation persistence or scheduler stage failed |
+| `-32047` | Explicit catch-up request rejected |
 | `-32012` | A second subscription was attempted on one WebSocket |
 | `-32020` | Command service unavailable in this runtime |
 | `-32021` | Command not found or not owned by the actor |

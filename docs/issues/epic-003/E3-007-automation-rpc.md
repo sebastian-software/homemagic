@@ -39,3 +39,9 @@ updated: 2026-07-12
   optimistic draft conflicts, exact validation evidence, data-only simulation
   with internally derived IDs, automatic comfort readiness, and atomic exact
   activation. RPC query/transition methods remain open.
+- 2026-07-12: Added the first authenticated JSON-RPC lifecycle surface for
+  draft put/get, validation, version get, deterministic simulation,
+  approve/reject, exact activation, and explicit catch-up. Production uses the
+  same lifecycle and scheduler instances as the engine. RPC/internal parity
+  evidence proves an extra untrusted `actor_id` cannot override the bearer
+  actor, and stable error mappings omit repository and simulation internals.

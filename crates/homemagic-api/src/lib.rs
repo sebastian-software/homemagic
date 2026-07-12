@@ -12,13 +12,14 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use homemagic_application::{
-    ApplicationError, AuthenticateActor, CommandRequest, CommandService, CommandServiceError,
-    DeviceMetadataUpdate, HomeMagicApplication,
+    ApplicationError, AuthenticateActor, AutomationLifecycleError, AutomationLifecycleService,
+    AutomationScheduler, AutomationSchedulerError, AutomationSimulationInput, CommandRequest,
+    CommandService, CommandServiceError, DeviceMetadataUpdate, HomeMagicApplication,
 };
 use homemagic_domain::{
-    Actor, AvailabilityState, CommandId, CommandPayload, CommandState, CorrelationId, DeviceId,
-    DeviceLifecycle, EndpointId, EventId, ExpectedObservation, FreshnessState, IdempotencyKey,
-    RepairId, RepairStatus, SpaceId,
+    Actor, AutomationDocument, AutomationId, AutomationVersion, AvailabilityState, CommandId,
+    CommandPayload, CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId, EventId,
+    ExpectedObservation, FreshnessState, IdempotencyKey, RepairId, RepairStatus, SpaceId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -33,6 +34,8 @@ struct ApiState {
     application: HomeMagicApplication,
     authenticator: Arc<dyn AuthenticateActor>,
     commands: Option<CommandService>,
+    automations: Option<AutomationLifecycleService>,
+    automation_scheduler: Option<AutomationScheduler>,
 }
 
 /// Builds the authenticated HTTP router for the current application instance.
@@ -49,6 +52,8 @@ pub fn router(
             application,
             authenticator,
             commands: None,
+            automations: None,
+            automation_scheduler: None,
         })
 }
 
@@ -67,6 +72,30 @@ pub fn router_with_commands(
             application,
             authenticator,
             commands: Some(commands),
+            automations: None,
+            automation_scheduler: None,
+        })
+}
+
+/// Builds the authenticated router with command and automation control planes.
+pub fn router_with_automation(
+    application: HomeMagicApplication,
+    authenticator: Arc<dyn AuthenticateActor>,
+    commands: CommandService,
+    automations: AutomationLifecycleService,
+    automation_scheduler: AutomationScheduler,
+) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/rpc", post(rpc))
+        .route("/rpc/ws", get(rpc_websocket))
+        .layer(TraceLayer::new_for_http())
+        .with_state(ApiState {
+            application,
+            authenticator,
+            commands: Some(commands),
+            automations: Some(automations),
+            automation_scheduler: Some(automation_scheduler),
         })
 }
 
@@ -83,8 +112,18 @@ async fn rpc(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    Json(dispatch_with_commands(&state.application, state.commands.as_ref(), &actor, request).await)
-        .into_response()
+    Json(
+        dispatch_with_services(
+            &state.application,
+            state.commands.as_ref(),
+            state.automations.as_ref(),
+            state.automation_scheduler.as_ref(),
+            &actor,
+            request,
+        )
+        .await,
+    )
+    .into_response()
 }
 
 async fn rpc_websocket(
@@ -475,6 +514,51 @@ struct CommandAuditParams {
     limit: usize,
 }
 
+#[derive(Deserialize)]
+struct AutomationDraftPutParams {
+    document: AutomationDocument,
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct AutomationIdParams {
+    automation_id: AutomationId,
+}
+
+#[derive(Deserialize)]
+struct AutomationVersionParams {
+    automation_id: AutomationId,
+    version: AutomationVersion,
+}
+
+#[derive(Deserialize)]
+struct AutomationSimulateParams {
+    automation_id: AutomationId,
+    version: AutomationVersion,
+    input: AutomationSimulationInput,
+}
+
+#[derive(Deserialize)]
+struct AutomationDecisionParams {
+    automation_id: AutomationId,
+    version: AutomationVersion,
+    rationale: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AutomationActivateParams {
+    automation_id: AutomationId,
+    version: AutomationVersion,
+    expected_revision: u64,
+}
+
+#[derive(Deserialize)]
+struct AutomationCatchUpParams {
+    automation_id: AutomationId,
+    scheduled_for: chrono::DateTime<chrono::Utc>,
+    idempotency_key: IdempotencyKey,
+}
+
 const fn default_command_limit() -> usize {
     50
 }
@@ -488,9 +572,21 @@ async fn dispatch(
     dispatch_with_commands(application, None, actor, request).await
 }
 
+#[cfg(test)]
 async fn dispatch_with_commands(
     application: &HomeMagicApplication,
     commands: Option<&CommandService>,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    dispatch_with_services(application, commands, None, None, actor, request).await
+}
+
+async fn dispatch_with_services(
+    application: &HomeMagicApplication,
+    commands: Option<&CommandService>,
+    automations: Option<&AutomationLifecycleService>,
+    automation_scheduler: Option<&AutomationScheduler>,
     actor: &Actor,
     request: RpcRequest,
 ) -> RpcResponse {
@@ -521,6 +617,33 @@ async fn dispatch_with_commands(
         "commands.cancel" => command_cancel(commands, actor, request.id, request.params).await,
         "commands.list" => command_list(commands, actor, request.id, request.params).await,
         "commands.audit" => command_audit(commands, actor, request.id, request.params).await,
+        "automations.drafts.put" => {
+            automation_draft_put(automations, actor, request.id, request.params).await
+        }
+        "automations.drafts.get" => {
+            automation_draft_get(automations, actor, request.id, request.params).await
+        }
+        "automations.validate" => {
+            automation_validate(automations, actor, request.id, request.params).await
+        }
+        "automations.versions.get" => {
+            automation_version_get(automations, actor, request.id, request.params).await
+        }
+        "automations.simulate" => {
+            automation_simulate(automations, actor, request.id, request.params).await
+        }
+        "automations.approve" => {
+            automation_decide(automations, actor, request.id, request.params, true).await
+        }
+        "automations.reject" => {
+            automation_decide(automations, actor, request.id, request.params, false).await
+        }
+        "automations.activate" => {
+            automation_activate(automations, actor, request.id, request.params).await
+        }
+        "automations.catch_up" => {
+            automation_catch_up(automation_scheduler, actor, request.id, request.params).await
+        }
         "devices.refresh" => match application.refresh().await {
             Ok(integrations) => {
                 let devices = application.registry().list().await;
@@ -552,6 +675,257 @@ fn require_commands<'a>(
             None,
         ))
     })
+}
+
+fn require_automations<'a>(
+    automations: Option<&'a AutomationLifecycleService>,
+    id: &Value,
+) -> Result<&'a AutomationLifecycleService, Box<RpcResponse>> {
+    automations.ok_or_else(|| {
+        Box::new(RpcResponse::error(
+            id.clone(),
+            -32040,
+            "Automation service unavailable",
+            None,
+        ))
+    })
+}
+
+async fn automation_draft_put(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationDraftPutParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .put_draft(actor, params.document, params.expected_revision)
+        .await
+    {
+        Ok(draft) => RpcResponse::success(id, json!({"draft": draft})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_draft_get(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationIdParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.draft(actor, &params.automation_id).await {
+        Ok(draft) => RpcResponse::success(id, json!({"draft": draft})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_validate(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationIdParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.validate(actor, &params.automation_id).await {
+        Ok(version) => RpcResponse::success(id, json!({"version": version})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_version_get(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationVersionParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .version(actor, &params.automation_id, params.version)
+        .await
+    {
+        Ok(version) => RpcResponse::success(id, json!({"version": version})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_simulate(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationSimulateParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .simulate(actor, &params.automation_id, params.version, params.input)
+        .await
+    {
+        Ok(simulation) => RpcResponse::success(id, json!({"simulation": simulation})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_decide(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+    approved: bool,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationDecisionParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .decide(
+            actor,
+            &params.automation_id,
+            params.version,
+            approved,
+            params.rationale,
+        )
+        .await
+    {
+        Ok(version) => RpcResponse::success(id, json!({"version": version})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_activate(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationActivateParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service
+        .activate(
+            actor,
+            &params.automation_id,
+            params.version,
+            params.expected_revision,
+        )
+        .await
+    {
+        Ok(identity) => RpcResponse::success(id, json!({"automation": identity})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_catch_up(
+    scheduler: Option<&AutomationScheduler>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let Some(scheduler) = scheduler else {
+        return RpcResponse::error(id, -32040, "Automation service unavailable", None);
+    };
+    let params = match parse_params::<AutomationCatchUpParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match scheduler
+        .request_catch_up(
+            &params.automation_id,
+            params.scheduled_for,
+            actor.id.clone(),
+            params.idempotency_key,
+        )
+        .await
+    {
+        Ok(occurrence) => RpcResponse::success(id, json!({"occurrence": occurrence})),
+        Err(error) => automation_scheduler_error(id, &error),
+    }
+}
+
+fn automation_error(id: Value, error: AutomationLifecycleError) -> RpcResponse {
+    match error {
+        AutomationLifecycleError::NotAuthorized => {
+            RpcResponse::error(id, -32041, "Automation access denied", None)
+        }
+        AutomationLifecycleError::NotFound => {
+            RpcResponse::error(id, -32042, "Automation not found", None)
+        }
+        AutomationLifecycleError::InvalidState => {
+            RpcResponse::error(id, -32043, "Automation state conflict", None)
+        }
+        AutomationLifecycleError::Validation(error) => RpcResponse::error(
+            id,
+            -32044,
+            "Automation validation failed",
+            Some(json!({"findings": error.findings})),
+        ),
+        AutomationLifecycleError::Simulation(_) | AutomationLifecycleError::CanonicalInput => {
+            RpcResponse::error(id, -32045, "Automation simulation failed", None)
+        }
+        AutomationLifecycleError::Repository(_) | AutomationLifecycleError::Foundation(_) => {
+            RpcResponse::error(id, -32046, "Automation persistence failed", None)
+        }
+    }
+}
+
+fn automation_scheduler_error(id: Value, error: &AutomationSchedulerError) -> RpcResponse {
+    match error {
+        AutomationSchedulerError::AutomationNotActive => {
+            RpcResponse::error(id, -32042, "Automation not found", None)
+        }
+        AutomationSchedulerError::InvalidCatchUpInstant
+        | AutomationSchedulerError::ScheduleNotMissed => {
+            RpcResponse::error(id, -32047, "Automation catch-up rejected", None)
+        }
+        AutomationSchedulerError::InvalidSchedule
+        | AutomationSchedulerError::DurationOverflow
+        | AutomationSchedulerError::Repository(_) => {
+            RpcResponse::error(id, -32046, "Automation persistence failed", None)
+        }
+    }
 }
 
 async fn command_execute(
@@ -1247,6 +1621,8 @@ mod tests {
             application: application(),
             authenticator: Arc::new(FixedAuthenticator(expected.clone())),
             commands: None,
+            automations: None,
+            automation_scheduler: None,
         };
         let missing = HeaderMap::new();
         let missing_status = match authenticate(&state, &missing).await {
@@ -1423,6 +1799,78 @@ mod tests {
             Some(-32021),
             "cross-actor lookup must be indistinguishable from absence"
         );
+    }
+
+    #[tokio::test]
+    async fn automation_draft_rpc_should_match_internal_state_and_derive_actor() {
+        let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+        let repository = Arc::new(
+            SqliteRepository::open(directory.path().join("automation-api.sqlite3"))
+                .unwrap_or_else(|error| panic!("repository: {error}")),
+        );
+        let application = HomeMagicApplication::from_repository(
+            repository.clone(),
+            Arc::new(NoopDomainEventSink),
+            [],
+        )
+        .await
+        .unwrap_or_else(|error| panic!("application: {error}"));
+        let owner = actor();
+        let mut document: AutomationDocument = serde_json::from_str(include_str!(
+            "../../../docs/api/examples/automation-document-v1.json"
+        ))
+        .unwrap_or_else(|error| panic!("automation document: {error}"));
+        document.id = AutomationId::new();
+        document.provenance.author_id = owner.id.clone();
+        let lifecycle = AutomationLifecycleService::new(
+            repository.clone(),
+            repository.clone(),
+            Arc::new(SystemClock),
+        );
+        let scheduler = AutomationScheduler::new(repository, Arc::new(SystemClock));
+        let response = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &owner,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(1),
+                method: "automations.drafts.put".to_owned(),
+                params: json!({
+                    "document": document,
+                    "expected_revision": null,
+                    "actor_id": ActorId::new()
+                }),
+            },
+        )
+        .await;
+        let internal = lifecycle
+            .draft(&owner, &document.id)
+            .await
+            .unwrap_or_else(|error| panic!("internal draft: {error}"));
+
+        assert_eq!(response.result, Some(json!({"draft": internal})));
+        let stranger = Actor {
+            id: ActorId::new(),
+            ..owner
+        };
+        let denied = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &stranger,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(2),
+                method: "automations.drafts.get".to_owned(),
+                params: json!({"automation_id": document.id}),
+            },
+        )
+        .await;
+        assert_eq!(denied.error.map(|error| error.code), Some(-32041));
     }
 
     async fn application_with_device() -> (HomeMagicApplication, DeviceId) {
