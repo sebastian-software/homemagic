@@ -7,7 +7,7 @@ cover the next five milestones after the M0 discovery prototype.
 
 | Epic | Milestone | Status | Depends on | Outcome |
 | --- | --- | --- | --- | --- |
-| [EPIC-001](001-reliable-device-foundation.md) | M1 | In progress | M0 | Durable, continuously updated Shelly registry |
+| [EPIC-001](001-reliable-device-foundation.md) | M1 | Done | M0 | Durable, continuously updated Shelly registry |
 | [EPIC-002](002-safe-command-control-plane.md) | M2 | Planned | EPIC-001 | Authorized and audited device control |
 | [EPIC-003](003-agent-authored-automation-engine.md) | M3 | Done | EPIC-002 | Governed automation authoring and execution |
 | [EPIC-004](004-matter-controller-integration.md) | M4 | Planned; feasibility may start early | EPIC-001 and EPIC-002 | Production-capable Matter controller integration |

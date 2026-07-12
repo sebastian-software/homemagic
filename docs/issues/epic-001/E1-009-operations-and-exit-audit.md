@@ -2,12 +2,12 @@
 id: E1-009
 epic: EPIC-001
 title: Ship operations, compatibility evidence, and exit audit
-status: in_progress
+status: done
 priority: high
 depends_on: [E1-008]
 adrs: []
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # E1-009: Operations and Exit Audit
@@ -35,7 +35,7 @@ gate on supported platforms.
 - [x] A clean-checkout operator can back up and restore an installation.
 - [x] Smoke reports are reproducible and contain no secrets.
 - [x] Required hardware evidence is committed or linked with exact versions.
-- [ ] Supported-platform quality gates pass.
+- [x] Supported-platform quality gates pass.
 - [x] Every EPIC-001 checklist item is either evidenced or explicitly unresolved.
 
 ## Verification
@@ -57,3 +57,7 @@ gate on supported platforms.
   D-Bus build packages.
 - 2026-07-11: Exit audit completed; live Linux CI remains the only unresolved
   supported-platform gate.
+- 2026-07-12: Closed the supported-platform gate with a read-only official Rust
+  container running on `x86_64-unknown-linux-gnu`. Format, strict all-target
+  Clippy, the complete workspace/all-features suite, doc tests, and all five
+  migration fixtures passed.

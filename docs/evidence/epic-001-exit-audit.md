@@ -1,8 +1,8 @@
 # EPIC-001 Exit Audit
 
-- Audit date: 2026-07-11
+- Audit date: 2026-07-12
 - Local host: macOS `aarch64`
-- Epic status: In progress pending a live Linux x86_64 CI result
+- Epic status: Done
 
 ## Acceptance criteria
 
@@ -25,7 +25,7 @@
 | Operator and API documentation match behavior | Pass | `docs/operations/shelly-prototype.md`, hardware report schema, and `docs/api/json-rpc.md` |
 | No plaintext secret in fixtures or diagnostics | Pass | `scripts/scan-secrets.sh` completed without matches after the hardware report was generated |
 | macOS ARM full workspace quality gate | Pass | format, strict Clippy, workspace tests, migration tests, and doc tests completed locally |
-| Linux x86_64 full workspace quality gate | Pending | GitHub Actions job is configured with D-Bus build dependencies and all required gates; no live run is available in this local-only workflow |
+| Linux x86_64 full workspace quality gate | Pass | Official `rust:1-bookworm` image under `x86_64-unknown-linux-gnu` Rust 1.97.0: format, strict all-target Clippy, complete workspace tests/all features, doc tests, and all five migration fixtures passed |
 | EPIC-002 references finalized contracts | Pass | `docs/epics/002-safe-command-control-plane.md` foundation-contract section |
 
 ## Hardware evidence summary
@@ -53,7 +53,7 @@ cargo run --locked -- hardware-smoke --discovery-seconds 8 --output docs/evidenc
 ./scripts/scan-secrets.sh
 ```
 
-The attempted local cross-target compile did not reach project code because the
-macOS host has no Linux C compiler or D-Bus sysroot. The resulting native package
-requirements were added explicitly to Linux CI. This is not recorded as a Linux
-pass.
+The original direct cross-target attempt could not supply a Linux C compiler or
+D-Bus sysroot from macOS. On 2026-07-12 the unchanged read-only checkout was
+instead validated under an isolated official Rust Linux x86_64 container with
+`libdbus-1-dev` and `pkg-config`, matching the CI dependency contract.

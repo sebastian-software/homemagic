@@ -1,7 +1,7 @@
 # EPIC-001: Reliable Device Foundation
 
 - Milestone: M1
-- Status: In progress
+- Status: Done
 - Depends on: M0 discovery prototype
 - Unlocks: EPIC-002, Matter feasibility work in EPIC-004
 
@@ -153,8 +153,8 @@ debug logs.
   identity. Evidence: metadata application test and JSON-RPC dispatch tests.
 - [x] Add structured repair records and a read API for them. Evidence:
   `repairs.list`, `repairs.get`, and device detail repairs.
-- [ ] Document database location, backup, credential setup, and recovery.
-- [ ] Add a repeatable hardware smoke-test command that emits a redacted report.
+- [x] Document database location, backup, credential setup, and recovery.
+- [x] Add a repeatable hardware smoke-test command that emits a redacted report.
 
 ## Test and verification checklist
 
@@ -175,9 +175,9 @@ debug logs.
 - [x] Network-loss tests prove reconnect plus stale/offline and durable recovery.
   Evidence: `failed_session_should_reconnect_until_recovered` and
   `freshness_should_change_metadata_without_changing_observed_values`.
-- [ ] macOS Apple Silicon hardware test covers at least one switch, dimmer, and
+- [x] macOS Apple Silicon hardware test covers at least one switch, dimmer, and
   cover.
-- [ ] Linux x86_64 CI runs format, Clippy, unit tests, integration tests, and
+- [x] Linux x86_64 CI runs format, Clippy, unit tests, integration tests, and
   migrations.
 
 ## Acceptance criteria
@@ -212,7 +212,7 @@ debug logs.
 - [x] Operator and API documentation match the shipped behavior.
 - [x] No plaintext secret appears in repository fixtures or captured diagnostics.
   Evidence: sanitized challenge fixtures and captured diagnostic canary tests.
-- [ ] The full workspace quality gate passes on macOS ARM and Linux x86_64.
+- [x] The full workspace quality gate passes on macOS ARM and Linux x86_64.
 - [x] EPIC-002 is updated with the finalized repository, event, and credential
   contracts.
 
@@ -248,3 +248,6 @@ debug logs.
   details, metadata/repair RPCs, and bounded JSON-RPC WebSocket subscriptions.
 - 2026-07-11: E1-009 operations and macOS ARM hardware evidence completed; the
   EPIC-001 exit audit leaves only a live Linux x86_64 quality run unresolved.
+- 2026-07-12: Completed E1-009 and EPIC-001 after format, strict Clippy, full
+  workspace/all-features tests, doc tests, and all migrations passed under an
+  isolated Linux x86_64 Rust environment.

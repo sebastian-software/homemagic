@@ -2,12 +2,12 @@
 id: EPIC-001-ISSUES
 epic: EPIC-001
 title: Reliable Device Foundation issue index
-status: in_progress
+status: done
 priority: critical
 depends_on: []
 adrs: [ADR-0001, ADR-0002, ADR-0005, ADR-0006]
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # EPIC-001 Issue Index
@@ -25,7 +25,7 @@ the dependency graph and repository edits do not overlap.
 | [E1-006](E1-006-shelly-managed-sessions.md) | Done | E1-004, E1-005 | Live observations |
 | [E1-007](E1-007-runtime-resilience.md) | Done | E1-004, E1-006 | Bounded recovery |
 | [E1-008](E1-008-read-api-and-repairs.md) | Done | E1-003, E1-007 | Stable operational API |
-| [E1-009](E1-009-operations-and-exit-audit.md) | In progress | E1-008 | Release evidence |
+| [E1-009](E1-009-operations-and-exit-audit.md) | Done | E1-008 | Release evidence |
 
 ## Progress log
 
@@ -40,3 +40,5 @@ the dependency graph and repository edits do not overlap.
 - 2026-07-11: E1-008 completed; E1-009 is ready.
 - 2026-07-11: E1-009 software, operations, and macOS ARM hardware evidence
   completed; live Linux x86_64 CI remains pending.
+- 2026-07-12: E1-009 and EPIC-001 closed after the complete Linux x86_64
+  quality gate passed in an isolated official Rust container.
