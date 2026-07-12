@@ -1,0 +1,38 @@
+{
+  "schema": "homemagic.matter.matter-js-candidate-report.v1",
+  "candidate": "matter-js",
+  "source": {
+    "repository": "https://github.com/matter-js/matter.js.git",
+    "revision": "b539372ff41fea24344760d69172508e9df931a2",
+    "license": "Apache-2.0",
+    "package_lock_sha256": "0ddd261356cccd3024a2d07e6a65d9e6188741d406e7aab8d6d646a87a9adc42"
+  },
+  "host": {
+    "captured_at": "2026-07-12T23:04:36Z",
+    "os": "Darwin",
+    "architecture": "arm64"
+  },
+  "toolchain": {
+    "node": "v24.18.0",
+    "npm": "11.16.0"
+  },
+  "build": {
+    "result": "pass",
+    "seconds": 28,
+    "source_checkout_kib": 63960,
+    "node_modules_kib": 593892,
+    "built_distribution_kib": 127476,
+    "installed_package_manifests": 874,
+    "native_addons": 59
+  },
+  "source_inventory": {
+    "typescript_lines": 954088,
+    "commissioning_controller_lines": 1004
+  },
+  "boundary": {
+    "controller_import_smoke": "pass",
+    "production_sidecar": false,
+    "stable_private_protocol": false,
+    "lifecycle_interop": "not_run"
+  }
+}
