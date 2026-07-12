@@ -3,7 +3,7 @@ id: E4-007-04-02
 epic: EPIC-004
 parent: E4-007-04
 title: Derive durable subscription freshness and repair guidance
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-04-01]
 adrs: [ADR-0033, ADR-0034, ADR-0041]
@@ -37,3 +37,8 @@ evaluation time.
 
 - [ ] Fresh, stale, sleepy, waiting, exhausted, and reopen matrices pass.
 - [ ] Boundary timestamps and retry counters are deterministic.
+
+## Progress log
+
+- 2026-07-12: E4-007-04-01 completed with public cross-platform CI. This issue
+  is ready.

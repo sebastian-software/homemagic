@@ -41,8 +41,8 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-03-04](E4-007-03-04-node-inventory.md) | Done | E4-007-03-02 | Authenticated bounded node inventory |
 | [E4-007-03-05](E4-007-03-05-node-removal.md) | Done | E4-007-03-03, E4-007-03-04 | Removal with visible partial cleanup |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | In progress | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
-| [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | In progress | E4-007-03 | Authenticated bounded read-only diagnostics |
-| [E4-007-04-02](E4-007-04-02-subscription-status.md) | Planned | E4-007-04-01 | Deterministic subscription status |
+| [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Done | E4-007-03 | Authenticated bounded read-only diagnostics |
+| [E4-007-04-02](E4-007-04-02-subscription-status.md) | Ready | E4-007-04-01 | Deterministic subscription status |
 | [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Planned | E4-007-04-02 | Explicit gap-read and resubscribe repair |
 | [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Planned | E4-007-04-03 | Restart and exhaustion reconciliation |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
@@ -150,3 +150,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   explicit bounded subscription repair. E4-007-04-01 is ready.
 - 2026-07-12: E4-007-04-01 bounded read-only diagnostics are implemented and
   local CI-equivalent gates pass. Public CI remains pending.
+- 2026-07-12: E4-007-04-01 passed public Linux x86_64 and macOS ARM64 CI and is
+  done. E4-007-04-02 is ready.

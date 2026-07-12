@@ -3,7 +3,7 @@ id: E4-007-04-01
 epic: EPIC-004
 parent: E4-007-04
 title: Expose bounded read-only Matter diagnostics
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-03]
 adrs: [ADR-0013, ADR-0033, ADR-0034, ADR-0041]
@@ -39,7 +39,7 @@ controller evidence without triggering any mutation.
 - [x] Controller call counting proves diagnostics are read-only and bounded.
 - [x] Diagnostic JSON passes setup, secret, native-address, and SDK canaries.
 - [x] Full local workspace, strict Clippy, boundary, and secret-scan gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -48,4 +48,6 @@ controller evidence without triggering any mutation.
   subscription, actor-operation, and repair health. All 45 Matter repository
   contracts and complete local CI-equivalent gates pass. Controller call-count
   evidence confirms one bounded status read per diagnostic snapshot and zero
-  controller mutations. Commit, push, and public CI remain pending.
+  controller mutations.
+- 2026-07-12: Commits `9ca6bfd` and `b40d11b` passed public CI run
+  `29206011230` on Linux x86_64 and macOS ARM64. This slice is done.
