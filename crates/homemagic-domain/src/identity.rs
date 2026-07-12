@@ -19,6 +19,7 @@ const MATTER_SUBSCRIPTION_NAMESPACE: Uuid =
     Uuid::from_u128(0xa3dc_5970_14c9_5c2e_9d68_2bd5_5080_aa50);
 const MATTER_CONTROLLER_EVENT_NAMESPACE: Uuid =
     Uuid::from_u128(0x01dd_63a7_1269_55ee_8b87_f84d_fda8_4477);
+const MATTER_FABRIC_NAMESPACE: Uuid = Uuid::from_u128(0xc5fa_c01d_3025_5b0e_b2b1_8f68_9b93_7fb4);
 const LEGACY_INSTALLATION: Uuid = Uuid::from_u128(0xc776_218d_d377_5a5e_b6a7_9384_dc1c_da37);
 
 /// Stable opaque identifier for a `HomeMagic` installation.
@@ -249,6 +250,17 @@ uuid_identity!(
     MatterFabricId,
     "Stable identity for one HomeMagic-owned Matter fabric."
 );
+
+impl MatterFabricId {
+    /// Derives the single HomeMagic-owned fabric identity for an installation.
+    #[must_use]
+    pub fn from_installation(installation_id: &InstallationId) -> Self {
+        Self(Uuid::new_v5(
+            &MATTER_FABRIC_NAMESPACE,
+            installation_id.to_string().as_bytes(),
+        ))
+    }
+}
 uuid_identity!(
     MatterProjectionId,
     "Stable identity for one versioned Matter capability projection."
@@ -568,6 +580,20 @@ mod tests {
         let repeated = MatterProjectionId::from_key(&fabric_id, 42, 1, "on_off", 1);
 
         assert_eq!(first, repeated);
+    }
+
+    #[test]
+    fn matter_fabric_id_should_be_stable_per_installation() {
+        let installation = InstallationId::new();
+
+        assert_eq!(
+            MatterFabricId::from_installation(&installation),
+            MatterFabricId::from_installation(&installation)
+        );
+        assert_ne!(
+            MatterFabricId::from_installation(&installation),
+            MatterFabricId::from_installation(&InstallationId::new())
+        );
     }
 
     #[test]

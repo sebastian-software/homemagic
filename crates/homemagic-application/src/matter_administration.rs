@@ -91,6 +91,25 @@ impl MatterAdministrationService {
         Self { matter, commands }
     }
 
+    /// Revalidates one exact installation-scoped Matter administration action.
+    ///
+    /// # Errors
+    ///
+    /// Fails for a missing or disabled actor, a non-administration action, or
+    /// an absent exact installation grant.
+    pub async fn authorize_installation_action(
+        &self,
+        authenticated_actor: &Actor,
+        action: CommandAction,
+    ) -> Result<InstallationId, MatterAdministrationError> {
+        if !is_matter_administration_action(action) {
+            return Err(MatterAdministrationError::Denied);
+        }
+        let security = self.security(authenticated_actor).await?;
+        authorize(&security.actor, &security.grants, action)?;
+        Ok(security.actor.installation_id)
+    }
+
     /// Authorizes and durably admits one idempotent operation before controller work.
     ///
     /// # Errors
@@ -294,6 +313,27 @@ impl MatterAdministrationService {
             .map_err(MatterAdministrationError::Repository)?
             .ok_or(MatterAdministrationError::ActorNotFound)
     }
+
+    pub(crate) async fn owned_operation_for_action(
+        &self,
+        authenticated_actor: &Actor,
+        operation_id: &MatterOperationId,
+        action: CommandAction,
+    ) -> Result<MatterOperation, MatterAdministrationError> {
+        let security = self.security(authenticated_actor).await?;
+        authorize(&security.actor, &security.grants, action)?;
+        let (operation, binding) = self
+            .matter
+            .matter_administration_operation(operation_id)
+            .await
+            .map_err(MatterAdministrationError::Repository)?
+            .ok_or(MatterAdministrationError::OperationNotFound)?;
+        if binding.actor_id == security.actor.id && binding.action == action {
+            Ok(operation)
+        } else {
+            Err(MatterAdministrationError::OperationNotFound)
+        }
+    }
 }
 
 fn authorize(
@@ -318,6 +358,20 @@ fn authorize(
     } else {
         Err(MatterAdministrationError::Denied)
     }
+}
+
+const fn is_matter_administration_action(action: CommandAction) -> bool {
+    matches!(
+        action,
+        CommandAction::MatterRead
+            | CommandAction::MatterCreateFabric
+            | CommandAction::MatterCommissionNode
+            | CommandAction::MatterCancelOperation
+            | CommandAction::MatterRemoveNode
+            | CommandAction::MatterExportFabric
+            | CommandAction::MatterRestoreFabric
+            | CommandAction::MatterRepairSubscription
+    )
 }
 
 fn target_fabric(target: &MatterOperationTarget) -> &homemagic_domain::MatterFabricId {

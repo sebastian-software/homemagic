@@ -16,6 +16,8 @@ const MATTER_UNLOCK_BINDINGS_SCHEMA: &str =
     include_str!("../migrations/0007_matter_unlock_bindings.sql");
 const MATTER_OPERATION_BINDINGS_SCHEMA: &str =
     include_str!("../migrations/0008_matter_operation_bindings.sql");
+const MATTER_FABRIC_STAGING_SCHEMA: &str =
+    include_str!("../migrations/0009_matter_fabric_staging.sql");
 
 struct Migration {
     version: u32,
@@ -64,9 +66,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "matter_operation_bindings",
         sql: MATTER_OPERATION_BINDINGS_SCHEMA,
     },
+    Migration {
+        version: 9,
+        name: "matter_fabric_staging",
+        sql: MATTER_FABRIC_STAGING_SCHEMA,
+    },
 ];
 
-pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 9;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let found = schema_version(connection)?;

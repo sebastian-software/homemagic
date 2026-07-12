@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_application::{
     BoxError, MatterDesiredCommandSlot, MatterDesiredSlotOutcome, MatterDesiredStateWrite,
-    MatterDispatchWrite, MatterOperationBinding, MatterOperationCreateOutcome,
+    MatterDispatchWrite, MatterFabricStage, MatterOperationBinding, MatterOperationCreateOutcome,
     MatterOperationProgress, MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention,
     MatterRetentionResult, MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric,
     StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
@@ -26,6 +26,60 @@ const MAX_QUERY_PAGE: usize = 1_000;
 
 #[async_trait]
 impl MatterRepository for SqliteRepository {
+    async fn store_matter_fabric_stage(
+        &self,
+        stage: MatterFabricStage,
+        expected_revision: Option<u64>,
+    ) -> Result<(), BoxError> {
+        run_write(&self.connection, move |transaction| {
+            store_fabric_stage(transaction, &stage, expected_revision)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn matter_fabric_stage(
+        &self,
+        fabric_id: &MatterFabricId,
+    ) -> Result<Option<MatterFabricStage>, BoxError> {
+        let fabric_id = fabric_id.to_string();
+        run_read(&self.connection, move |connection| {
+            load_payload(
+                connection,
+                "SELECT payload_json FROM matter_fabric_stages WHERE fabric_id = ?1",
+                &fabric_id,
+            )
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn delete_attached_matter_fabric_stage(
+        &self,
+        fabric_id: &MatterFabricId,
+    ) -> Result<(), BoxError> {
+        let fabric_id = fabric_id.to_string();
+        run_write(&self.connection, move |transaction| {
+            let attached = transaction.query_row(
+                "SELECT COUNT(*) FROM matter_fabrics WHERE id = ?1",
+                [&fabric_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            if attached != 1 {
+                return Err(StorageError::InvalidMatter(
+                    "fabric stage cannot be removed before attachment",
+                ));
+            }
+            transaction.execute(
+                "DELETE FROM matter_fabric_stages WHERE fabric_id = ?1",
+                [&fabric_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn store_matter_fabric(
         &self,
         fabric: StoredMatterFabric,
@@ -415,6 +469,38 @@ where
     })
     .await
     .map_err(|error| StorageError::Worker(error.to_string()))?
+}
+
+fn store_fabric_stage(
+    transaction: &Transaction<'_>,
+    stage: &MatterFabricStage,
+    expected_revision: Option<u64>,
+) -> Result<(), StorageError> {
+    let id = stage.fabric_id.to_string();
+    validate_revision(
+        "fabric stage",
+        current_revision(transaction, "matter_fabric_stages", &id)?,
+        expected_revision,
+        stage.revision,
+    )?;
+    transaction.execute(
+        "INSERT INTO matter_fabric_stages(
+            fabric_id, installation_id, actor_id, state, revision, updated_at, payload_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(fabric_id) DO UPDATE SET
+            state = excluded.state, revision = excluded.revision,
+            updated_at = excluded.updated_at, payload_json = excluded.payload_json",
+        params![
+            id,
+            stage.installation_id.to_string(),
+            stage.actor_id.to_string(),
+            enum_name(&stage.state)?,
+            to_i64(stage.revision)?,
+            stage.updated_at,
+            encode(stage)?,
+        ],
+    )?;
+    Ok(())
 }
 
 fn store_fabric(
@@ -1554,6 +1640,7 @@ fn current_revision(
 ) -> Result<Option<u64>, StorageError> {
     let sql = match table {
         "matter_fabrics" => "SELECT revision FROM matter_fabrics WHERE id = ?1",
+        "matter_fabric_stages" => "SELECT revision FROM matter_fabric_stages WHERE fabric_id = ?1",
         "matter_projections" => "SELECT revision FROM matter_projections WHERE id = ?1",
         "matter_subscriptions" => "SELECT revision FROM matter_subscriptions WHERE id = ?1",
         "matter_operations" => "SELECT revision FROM matter_operations WHERE id = ?1",

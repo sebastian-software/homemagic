@@ -14,6 +14,7 @@ mod command_service;
 mod matter_administration;
 mod matter_commands;
 mod matter_controller;
+mod matter_fabric_workflow;
 mod matter_projection;
 mod matter_repository;
 mod matter_subscription;
@@ -83,6 +84,7 @@ pub use command_service::{
 pub use matter_administration::*;
 pub use matter_commands::*;
 pub use matter_controller::*;
+pub use matter_fabric_workflow::*;
 pub use matter_projection::*;
 pub use matter_repository::*;
 pub use matter_subscription::*;

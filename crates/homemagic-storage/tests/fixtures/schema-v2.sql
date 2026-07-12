@@ -1,3 +1,4 @@
+DROP TABLE matter_fabric_stages;
 DROP TABLE matter_operation_bindings;
 DROP TABLE matter_unlock_authorization_bindings;
 DROP TABLE matter_command_supersessions;
@@ -21,5 +22,5 @@ DROP TABLE automation_approvals;
 DROP TABLE automation_versions;
 DROP TABLE automation_drafts;
 DROP TABLE automation_identities;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8);
+DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9);
 PRAGMA user_version = 2;

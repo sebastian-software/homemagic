@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -15,11 +16,14 @@ use homemagic_application::{
     FoundationRepository, FoundationWrite, MatterAdministrationError, MatterAdministrationRequest,
     MatterAdministrationService, MatterCommandDispatchControl, MatterCommissioningRequest,
     MatterController, MatterCreateFabricRequest, MatterDesiredCommandSlot, MatterDesiredStateWrite,
-    MatterDispatchAdmission, MatterDispatchWrite, MatterFabricSecretRefs, MatterFabricState,
+    MatterDispatchAdmission, MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat,
+    MatterFabricSecretRefs, MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
     MatterOperationCreateOutcome, MatterOperationProgress, MatterRepairRecord, MatterRepairStatus,
-    MatterRepository, MatterRetention, MatterSupersededCommand, MatterUnlockAuthorization,
-    MatterUnlockConsumption, SecretValue, StoredMatterFabric, StoredMatterNode,
-    StoredMatterProjection, StoredMatterSubscription, StoredMatterSubscriptionState,
+    MatterRepository, MatterRestoreRequest, MatterRetention, MatterSimulatorRestoreInput,
+    MatterSupersededCommand, MatterUnlockAuthorization, MatterUnlockConsumption,
+    MatterWorkflowEvidence, MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue,
+    StoredMatterFabric, StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
+    StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, AuditId, CapabilityDescriptor, CapabilitySnapshot,
@@ -96,6 +100,194 @@ struct IgnoreAudits;
 impl CommandAuditSink for IgnoreAudits {
     async fn publish(&self, _audit: &CommandAuditRecord) -> Result<(), BoxError> {
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct MemorySecretStore(Mutex<BTreeMap<String, Vec<u8>>>);
+
+impl MemorySecretStore {
+    fn values(&self) -> Vec<Vec<u8>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
+    }
+}
+
+struct FailOnceSecretStore {
+    remaining_failures: AtomicUsize,
+    values: Mutex<BTreeMap<String, Vec<u8>>>,
+}
+
+impl FailOnceSecretStore {
+    fn new() -> Self {
+        Self {
+            remaining_failures: AtomicUsize::new(1),
+            values: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SecretStore for FailOnceSecretStore {
+    fn backend(&self) -> &'static str {
+        "fail-once-test"
+    }
+
+    async fn put(&self, reference: &SecretRef, value: SecretValue) -> Result<(), SecretStoreError> {
+        if self
+            .remaining_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                value.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(SecretStoreError {
+                backend: "fail-once-test",
+                operation: "put",
+                code: "injected",
+            });
+        }
+        self.values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(reference.as_str().to_owned(), value.expose().to_vec());
+        Ok(())
+    }
+
+    async fn get(&self, reference: &SecretRef) -> Result<SecretValue, SecretStoreError> {
+        self.values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(reference.as_str())
+            .cloned()
+            .map(SecretValue::new)
+            .ok_or(SecretStoreError {
+                backend: "fail-once-test",
+                operation: "get",
+                code: "not_found",
+            })
+    }
+
+    async fn delete(&self, reference: &SecretRef) -> Result<(), SecretStoreError> {
+        self.values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(reference.as_str());
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl SecretStore for MemorySecretStore {
+    fn backend(&self) -> &'static str {
+        "memory-test"
+    }
+
+    async fn put(&self, reference: &SecretRef, value: SecretValue) -> Result<(), SecretStoreError> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(reference.as_str().to_owned(), value.expose().to_vec());
+        Ok(())
+    }
+
+    async fn get(&self, reference: &SecretRef) -> Result<SecretValue, SecretStoreError> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(reference.as_str())
+            .cloned()
+            .map(SecretValue::new)
+            .ok_or(SecretStoreError {
+                backend: "memory-test",
+                operation: "get",
+                code: "not_found",
+            })
+    }
+
+    async fn delete(&self, reference: &SecretRef) -> Result<(), SecretStoreError> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(reference.as_str());
+        Ok(())
+    }
+}
+
+struct FabricWorkflowFixture {
+    _directory: TempDir,
+    path: PathBuf,
+    repository: Arc<SqliteRepository>,
+    actor: Actor,
+    secrets: Arc<MemorySecretStore>,
+}
+
+impl FabricWorkflowFixture {
+    async fn new() -> TestResult<Self> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("matter-fabric-workflow.sqlite3");
+        let repository = Arc::new(SqliteRepository::open(&path)?);
+        let now = Utc::now();
+        let installation_id = InstallationId::new();
+        repository
+            .apply(FoundationWrite {
+                installations: vec![Installation {
+                    id: installation_id.clone(),
+                    name: "Fabric workflow home".to_owned(),
+                    created_at: now,
+                }],
+                ..FoundationWrite::default()
+            })
+            .await?;
+        let actor = Actor {
+            id: homemagic_domain::ActorId::new(),
+            installation_id: installation_id.clone(),
+            kind: homemagic_domain::ActorKind::User,
+            name: "Fabric operator".to_owned(),
+            enabled: true,
+            created_at: now,
+        };
+        repository.store_actor(actor.clone(), None).await?;
+        repository
+            .replace_actor_grants(
+                &actor.id,
+                vec![ActorGrant {
+                    id: GrantId::new(),
+                    actor_id: actor.id.clone(),
+                    actions: BTreeSet::from([
+                        CommandAction::MatterRead,
+                        CommandAction::MatterCreateFabric,
+                        CommandAction::MatterExportFabric,
+                        CommandAction::MatterRestoreFabric,
+                    ]),
+                    scope: GrantScope::Installation {
+                        installation_id: installation_id.clone(),
+                    },
+                    maximum_risk: RiskClass::Security,
+                    enabled: true,
+                }],
+            )
+            .await?;
+        Ok(Self {
+            _directory: directory,
+            path,
+            repository,
+            actor,
+            secrets: Arc::new(MemorySecretStore::default()),
+        })
+    }
+
+    fn workflow(&self, controller: Arc<dyn MatterController>) -> MatterFabricWorkflowService {
+        MatterFabricWorkflowService::new(
+            MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
+            self.repository.clone(),
+            controller,
+            self.secrets.clone(),
+        )
     }
 }
 
@@ -548,6 +740,15 @@ fn progress(operation: &MatterOperation) -> MatterOperationProgress {
     }
 }
 
+fn sqlite_artifact_bytes(path: &std::path::Path) -> TestResult<Vec<u8>> {
+    let mut bytes = std::fs::read(path)?;
+    let wal = PathBuf::from(format!("{}-wal", path.display()));
+    if wal.exists() {
+        bytes.extend(std::fs::read(wal)?);
+    }
+    Ok(bytes)
+}
+
 #[tokio::test]
 async fn matter_identity_and_incomplete_operation_should_survive_reopen() -> TestResult {
     let fixture = Fixture::new().await?;
@@ -907,6 +1108,704 @@ async fn controller_failures_should_be_normalized_with_repair_evidence() -> Test
     assert_eq!(repair_required.phase, MatterOperationPhase::RepairRequired);
     assert_eq!(recovery.repairs.len(), 1);
     assert_eq!(recovery.repairs[0].operation_id, repairing.id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn fabric_secret_failure_should_leave_restart_safe_stage_and_retry_cleanly() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let secrets = Arc::new(FailOnceSecretStore::new());
+    let workflow = MatterFabricWorkflowService::new(
+        MatterAdministrationService::new(fixture.repository.clone(), fixture.repository.clone()),
+        fixture.repository.clone(),
+        simulator,
+        secrets,
+    );
+    let first = workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("staged-secret-retry")?,
+            now,
+        )
+        .await;
+    let fabric_id = MatterFabricId::from_installation(&fixture.actor.installation_id);
+    let failed_stage = fixture
+        .repository
+        .matter_fabric_stage(&fabric_id)
+        .await?
+        .ok_or("failed fabric stage missing")?;
+    let retry = workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("staged-secret-retry")?,
+            now + TimeDelta::milliseconds(1),
+        )
+        .await?;
+    let attached = fixture.repository.matter_fabric(&fabric_id).await?;
+    let removed_stage = fixture.repository.matter_fabric_stage(&fabric_id).await?;
+
+    assert!(first.is_err());
+    assert_eq!(failed_stage.state, MatterFabricStageState::CleanupRequired);
+    assert!(matches!(retry, MatterOperationCreateOutcome::Created(_)));
+    assert!(attached.is_some());
+    assert!(removed_stage.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn fabric_create_should_be_idempotent_secret_safe_and_restart_visible() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let workflow = fixture.workflow(simulator.clone());
+    let MatterOperationCreateOutcome::Created(created) = workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("create-simulator-fabric")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("fabric create operation was not created".into());
+    };
+    let equivalent = workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("create-simulator-fabric")?,
+            now + TimeDelta::milliseconds(1),
+        )
+        .await?;
+    let pending = workflow.status(&fixture.actor).await?;
+    let outcome = workflow
+        .run_create(
+            &fixture.actor,
+            &created.id,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?;
+    let MatterWorkflowOutcome::Completed { operation, value } = outcome else {
+        return Err("fabric creation did not complete".into());
+    };
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let restarted = MatterFabricWorkflowService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        simulator,
+        fixture.secrets.clone(),
+    );
+    let durable_after_reopen = restarted.status(&fixture.actor).await?;
+    let database = sqlite_artifact_bytes(&fixture.path)?;
+    let secret_values = fixture.secrets.values();
+
+    assert!(matches!(
+        equivalent,
+        MatterOperationCreateOutcome::ExistingEquivalent(ref existing)
+            if existing.id == created.id
+    ));
+    assert_eq!(
+        pending.durable.as_ref().map(|fabric| fabric.state),
+        Some(MatterFabricState::Unavailable)
+    );
+    assert!(pending.controller.is_none());
+    assert_eq!(operation.phase, MatterOperationPhase::Completed);
+    assert_eq!(
+        value.evidence,
+        MatterWorkflowEvidence::DeterministicSimulator
+    );
+    assert_eq!(
+        durable_after_reopen
+            .durable
+            .as_ref()
+            .map(|fabric| fabric.state),
+        Some(MatterFabricState::Active)
+    );
+    assert_eq!(secret_values.len(), 3);
+    assert!(secret_values.iter().all(|secret| {
+        secret.len() == 32
+            && !database
+                .windows(secret.len())
+                .any(|window| window == secret)
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn fabric_create_restart_should_reconcile_without_duplicate_controller_work() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let workflow = fixture.workflow(simulator.clone());
+    let MatterOperationCreateOutcome::Created(mut operation) = workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("restart-create-fabric")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("restart create operation was not created".into());
+    };
+    let expected_revision = operation.revision;
+    operation.transition(
+        MatterOperationPhase::CreatingFabric,
+        now + TimeDelta::milliseconds(1),
+    )?;
+    fixture
+        .repository
+        .transition_matter_operation(
+            operation.clone(),
+            expected_revision,
+            progress(&operation),
+            None,
+        )
+        .await?;
+    let fabric = fixture
+        .repository
+        .matter_fabric(&MatterFabricId::from_installation(
+            &fixture.actor.installation_id,
+        ))
+        .await?
+        .ok_or("provisioned fabric missing")?;
+    simulator
+        .create_fabric(MatterCreateFabricRequest {
+            operation_id: operation.id.clone(),
+            fabric_id: fabric.fabric_id,
+            secrets: fabric.secrets,
+        })
+        .await?;
+    drop(workflow);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let restarted = MatterFabricWorkflowService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        simulator.clone(),
+        fixture.secrets.clone(),
+    );
+    let outcome = restarted
+        .run_create(
+            &fixture.actor,
+            &operation.id,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?;
+    let trace = String::from_utf8(simulator.normalized_trace_json().await?)?;
+
+    assert!(matches!(
+        outcome,
+        MatterWorkflowOutcome::Completed {
+            operation: MatterOperation {
+                phase: MatterOperationPhase::Completed,
+                ..
+            },
+            ..
+        }
+    ));
+    assert_eq!(trace.matches("\"type\":\"fabric_created\"").count(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn fabric_export_restart_should_require_repair_without_regenerating_key() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let workflow = fixture.workflow(simulator.clone());
+    let MatterOperationCreateOutcome::Created(create) = workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("create-before-export-restart")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("create operation was not created".into());
+    };
+    workflow
+        .run_create(&fixture.actor, &create.id, now + TimeDelta::milliseconds(1))
+        .await?;
+    let MatterOperationCreateOutcome::Created(mut export) = workflow
+        .start_export(
+            &fixture.actor,
+            IdempotencyKey::new("lost-export-output")?,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?
+    else {
+        return Err("export operation was not created".into());
+    };
+    let expected_revision = export.revision;
+    export.transition(
+        MatterOperationPhase::Exporting,
+        now + TimeDelta::milliseconds(3),
+    )?;
+    fixture
+        .repository
+        .transition_matter_operation(export.clone(), expected_revision, progress(&export), None)
+        .await?;
+    let _lost_sensitive_output = simulator
+        .export_fabric(MatterExportRequest {
+            operation_id: export.id.clone(),
+            fabric_id: MatterFabricId::from_installation(&fixture.actor.installation_id),
+        })
+        .await?;
+    let outcome = workflow
+        .run_export(&fixture.actor, &export.id, now + TimeDelta::milliseconds(4))
+        .await?;
+    let trace = String::from_utf8(simulator.normalized_trace_json().await?)?;
+
+    assert!(matches!(
+        outcome,
+        MatterWorkflowOutcome::Terminal(MatterOperation {
+            phase: MatterOperationPhase::RepairRequired,
+            ..
+        })
+    ));
+    assert_eq!(trace.matches("\"type\":\"fabric_exported\"").count(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn fabric_restore_should_reject_duplicate_active_controller_state() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let workflow = fixture.workflow(simulator.clone());
+    let MatterOperationCreateOutcome::Created(create) = workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("create-before-duplicate-restore")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("create operation was not created".into());
+    };
+    workflow
+        .run_create(&fixture.actor, &create.id, now + TimeDelta::milliseconds(1))
+        .await?;
+    let MatterOperationCreateOutcome::Created(restore) = workflow
+        .start_restore(
+            &fixture.actor,
+            IdempotencyKey::new("duplicate-active-restore")?,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?
+    else {
+        return Err("restore operation was not created".into());
+    };
+    let outcome = workflow
+        .run_simulator_restore(
+            &fixture.actor,
+            &restore.id,
+            MatterSimulatorRestoreInput::new(
+                SecretValue::new(b"unused-envelope".to_vec()),
+                SecretValue::new(b"unused-key".to_vec()),
+            ),
+            now + TimeDelta::milliseconds(3),
+        )
+        .await?;
+    let trace = String::from_utf8(simulator.normalized_trace_json().await?)?;
+
+    assert!(matches!(
+        outcome,
+        MatterWorkflowOutcome::Terminal(MatterOperation {
+            phase: MatterOperationPhase::Failed,
+            ..
+        })
+    ));
+    assert_eq!(trace.matches("\"type\":\"fabric_restored\"").count(), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn fabric_restore_restart_should_reconcile_without_duplicate_restore() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let source_simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let source = fixture.workflow(source_simulator);
+    let MatterOperationCreateOutcome::Created(create) = source
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("create-before-restore-restart")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("create operation was not created".into());
+    };
+    source
+        .run_create(&fixture.actor, &create.id, now + TimeDelta::milliseconds(1))
+        .await?;
+    let MatterOperationCreateOutcome::Created(export) = source
+        .start_export(
+            &fixture.actor,
+            IdempotencyKey::new("export-before-restore-restart")?,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?
+    else {
+        return Err("export operation was not created".into());
+    };
+    let MatterWorkflowOutcome::Completed { value, .. } = source
+        .run_export(&fixture.actor, &export.id, now + TimeDelta::milliseconds(3))
+        .await?
+    else {
+        return Err("export did not complete".into());
+    };
+    let envelope = value.envelope().to_vec();
+    let recovery_key = value.recovery_key().to_vec();
+    let target_simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let target = fixture.workflow(target_simulator.clone());
+    let MatterOperationCreateOutcome::Created(mut restore) = target
+        .start_restore(
+            &fixture.actor,
+            IdempotencyKey::new("restore-restart-reconcile")?,
+            now + TimeDelta::milliseconds(4),
+        )
+        .await?
+    else {
+        return Err("restore operation was not created".into());
+    };
+    let expected_revision = restore.revision;
+    restore.transition(
+        MatterOperationPhase::Restoring,
+        now + TimeDelta::milliseconds(5),
+    )?;
+    fixture
+        .repository
+        .transition_matter_operation(restore.clone(), expected_revision, progress(&restore), None)
+        .await?;
+    target_simulator
+        .restore_fabric(MatterRestoreRequest::new(
+            restore.id.clone(),
+            MatterFabricId::from_installation(&fixture.actor.installation_id),
+            MatterFabricExportFormat::SimulatorV1,
+            SecretValue::new(envelope.clone()),
+            SecretValue::new(recovery_key.clone()),
+        ))
+        .await?;
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let restarted = MatterFabricWorkflowService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        target_simulator.clone(),
+        fixture.secrets.clone(),
+    );
+    let outcome = restarted
+        .run_simulator_restore(
+            &fixture.actor,
+            &restore.id,
+            MatterSimulatorRestoreInput::new(
+                SecretValue::new(envelope),
+                SecretValue::new(recovery_key),
+            ),
+            now + TimeDelta::milliseconds(6),
+        )
+        .await?;
+    let trace = String::from_utf8(target_simulator.normalized_trace_json().await?)?;
+
+    assert!(matches!(
+        outcome,
+        MatterWorkflowOutcome::Completed {
+            operation: MatterOperation {
+                phase: MatterOperationPhase::Completed,
+                ..
+            },
+            ..
+        }
+    ));
+    assert_eq!(trace.matches("\"type\":\"fabric_restored\"").count(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the restore crash fixture must first produce the exact simulator-only sensitive artifact"
+)]
+async fn fabric_restore_restart_should_reconcile_without_reusing_sensitive_input() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let source_simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let source = fixture.workflow(source_simulator);
+    let MatterOperationCreateOutcome::Created(create) = source
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("create-before-restore-restart")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("create operation was not created".into());
+    };
+    source
+        .run_create(&fixture.actor, &create.id, now + TimeDelta::milliseconds(1))
+        .await?;
+    let MatterOperationCreateOutcome::Created(export_operation) = source
+        .start_export(
+            &fixture.actor,
+            IdempotencyKey::new("export-before-restore-restart")?,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?
+    else {
+        return Err("export operation was not created".into());
+    };
+    let MatterWorkflowOutcome::Completed { value: export, .. } = source
+        .run_export(
+            &fixture.actor,
+            &export_operation.id,
+            now + TimeDelta::milliseconds(3),
+        )
+        .await?
+    else {
+        return Err("export did not complete".into());
+    };
+    let envelope = export.envelope().to_vec();
+    let recovery_key = export.recovery_key().to_vec();
+    let restore_simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let restore = fixture.workflow(restore_simulator.clone());
+    let MatterOperationCreateOutcome::Created(mut operation) = restore
+        .start_restore(
+            &fixture.actor,
+            IdempotencyKey::new("restore-restart")?,
+            now + TimeDelta::milliseconds(4),
+        )
+        .await?
+    else {
+        return Err("restore operation was not created".into());
+    };
+    let expected_revision = operation.revision;
+    operation.transition(
+        MatterOperationPhase::Restoring,
+        now + TimeDelta::milliseconds(5),
+    )?;
+    fixture
+        .repository
+        .transition_matter_operation(
+            operation.clone(),
+            expected_revision,
+            progress(&operation),
+            None,
+        )
+        .await?;
+    restore_simulator
+        .restore_fabric(homemagic_application::MatterRestoreRequest::new(
+            operation.id.clone(),
+            MatterFabricId::from_installation(&fixture.actor.installation_id),
+            MatterFabricExportFormat::SimulatorV1,
+            SecretValue::new(envelope),
+            SecretValue::new(recovery_key),
+        ))
+        .await?;
+    drop(restore);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let restarted = MatterFabricWorkflowService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        restore_simulator.clone(),
+        fixture.secrets.clone(),
+    );
+    let outcome = restarted
+        .run_simulator_restore(
+            &fixture.actor,
+            &operation.id,
+            MatterSimulatorRestoreInput::new(
+                SecretValue::new(b"discarded-after-status-proof".to_vec()),
+                SecretValue::new(b"discarded-after-status-proof".to_vec()),
+            ),
+            now + TimeDelta::milliseconds(6),
+        )
+        .await?;
+    let trace = String::from_utf8(restore_simulator.normalized_trace_json().await?)?;
+
+    assert!(matches!(
+        outcome,
+        MatterWorkflowOutcome::Completed {
+            operation: MatterOperation {
+                phase: MatterOperationPhase::Completed,
+                ..
+            },
+            ..
+        }
+    ));
+    assert_eq!(trace.matches("\"type\":\"fabric_restored\"").count(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the explicit simulator portability contract keeps valid and corrupt sensitive paths together"
+)]
+async fn simulator_export_restore_should_be_labelled_redacted_and_fail_closed() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let source_simulator = Arc::new(DeterministicMatterSimulator::new(now));
+    let source = fixture.workflow(source_simulator);
+    let MatterOperationCreateOutcome::Created(create) = source
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("create-for-export")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("source fabric operation was not created".into());
+    };
+    source
+        .run_create(&fixture.actor, &create.id, now + TimeDelta::milliseconds(1))
+        .await?;
+    let MatterOperationCreateOutcome::Created(export_operation) = source
+        .start_export(
+            &fixture.actor,
+            IdempotencyKey::new("export-simulator-fabric")?,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?
+    else {
+        return Err("export operation was not created".into());
+    };
+    let MatterWorkflowOutcome::Completed { value: export, .. } = source
+        .run_export(
+            &fixture.actor,
+            &export_operation.id,
+            now + TimeDelta::milliseconds(3),
+        )
+        .await?
+    else {
+        return Err("simulator export did not complete".into());
+    };
+    let envelope = export.envelope().to_vec();
+    let recovery_key = export.recovery_key().to_vec();
+    let debug = format!("{export:?}");
+
+    assert_eq!(export.format(), MatterFabricExportFormat::SimulatorV1);
+    assert_eq!(
+        export.evidence,
+        MatterWorkflowEvidence::DeterministicSimulator
+    );
+    assert!(!debug.contains(&String::from_utf8_lossy(&recovery_key).to_string()));
+    assert!(debug.contains("[REDACTED]"));
+    assert!(
+        MatterFabricWorkflowService::validate_production_restore_format(
+            MatterFabricExportFormat::SimulatorV1
+        )
+        .is_err()
+    );
+    assert!(
+        MatterFabricWorkflowService::validate_production_restore_format(
+            MatterFabricExportFormat::ProtectedV1
+        )
+        .is_ok()
+    );
+
+    let restored = fixture.workflow(Arc::new(DeterministicMatterSimulator::new(now)));
+    let MatterOperationCreateOutcome::Created(restore_operation) = restored
+        .start_restore(
+            &fixture.actor,
+            IdempotencyKey::new("restore-simulator-fabric")?,
+            now + TimeDelta::milliseconds(4),
+        )
+        .await?
+    else {
+        return Err("restore operation was not created".into());
+    };
+    let valid = restored
+        .run_simulator_restore(
+            &fixture.actor,
+            &restore_operation.id,
+            MatterSimulatorRestoreInput::new(
+                SecretValue::new(envelope.clone()),
+                SecretValue::new(recovery_key.clone()),
+            ),
+            now + TimeDelta::milliseconds(5),
+        )
+        .await?;
+    assert!(matches!(valid, MatterWorkflowOutcome::Completed { .. }));
+
+    let invalid_key_workflow = fixture.workflow(Arc::new(DeterministicMatterSimulator::new(now)));
+    let MatterOperationCreateOutcome::Created(invalid_key_operation) = invalid_key_workflow
+        .start_restore(
+            &fixture.actor,
+            IdempotencyKey::new("restore-invalid-key")?,
+            now + TimeDelta::milliseconds(6),
+        )
+        .await?
+    else {
+        return Err("invalid-key operation was not created".into());
+    };
+    let invalid_key = invalid_key_workflow
+        .run_simulator_restore(
+            &fixture.actor,
+            &invalid_key_operation.id,
+            MatterSimulatorRestoreInput::new(
+                SecretValue::new(envelope.clone()),
+                SecretValue::new(b"wrong-recovery-key".to_vec()),
+            ),
+            now + TimeDelta::milliseconds(7),
+        )
+        .await?;
+    assert!(matches!(
+        invalid_key,
+        MatterWorkflowOutcome::Terminal(MatterOperation {
+            phase: MatterOperationPhase::Failed,
+            ..
+        })
+    ));
+
+    let corrupt_workflow = fixture.workflow(Arc::new(DeterministicMatterSimulator::new(now)));
+    let MatterOperationCreateOutcome::Created(corrupt_operation) = corrupt_workflow
+        .start_restore(
+            &fixture.actor,
+            IdempotencyKey::new("restore-malformed-case")?,
+            now + TimeDelta::milliseconds(8),
+        )
+        .await?
+    else {
+        return Err("corrupt-envelope operation was not created".into());
+    };
+    let corrupt = corrupt_workflow
+        .run_simulator_restore(
+            &fixture.actor,
+            &corrupt_operation.id,
+            MatterSimulatorRestoreInput::new(
+                SecretValue::new(b"sensitive-corrupt-envelope-canary".to_vec()),
+                SecretValue::new(recovery_key.clone()),
+            ),
+            now + TimeDelta::milliseconds(9),
+        )
+        .await?;
+    assert!(matches!(
+        corrupt,
+        MatterWorkflowOutcome::Terminal(MatterOperation {
+            phase: MatterOperationPhase::Failed,
+            ..
+        })
+    ));
+    let database = sqlite_artifact_bytes(&fixture.path)?;
+    assert!(
+        !database
+            .windows(envelope.len())
+            .any(|window| window == envelope)
+    );
+    assert!(
+        !database
+            .windows(recovery_key.len())
+            .any(|window| window == recovery_key)
+    );
+    assert!(
+        !database
+            .windows(b"wrong-recovery-key".len())
+            .any(|window| window == b"wrong-recovery-key")
+    );
+    assert!(
+        !database
+            .windows(b"sensitive-corrupt-envelope-canary".len())
+            .any(|window| window == b"sensitive-corrupt-envelope-canary")
+    );
     Ok(())
 }
 

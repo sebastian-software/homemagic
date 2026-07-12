@@ -16,6 +16,37 @@ use crate::{
     MatterOperationBinding, MatterOperationCreateOutcome,
 };
 
+/// Durable pre-attachment state for one installation fabric's secret references.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatterFabricStageState {
+    /// References are durable but secret writes have not all succeeded.
+    PendingSecrets,
+    /// Every referenced secret value was written successfully.
+    SecretsReady,
+    /// At least one secret write failed and explicit retry or cleanup is required.
+    CleanupRequired,
+}
+
+/// Restart-safe staging facts created before fabric metadata attachment.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MatterFabricStage {
+    /// Installation that will own the fabric.
+    pub installation_id: InstallationId,
+    /// Stable one-per-installation fabric identity.
+    pub fabric_id: MatterFabricId,
+    /// Authenticated actor that requested staging.
+    pub actor_id: ActorId,
+    /// Opaque references reserved for the future fabric.
+    pub secrets: MatterFabricSecretRefs,
+    /// Current staging outcome.
+    pub state: MatterFabricStageState,
+    /// Optimistic revision starting at one.
+    pub revision: u64,
+    /// Last durable stage transition.
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Durable fabric metadata containing references, never secret values.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StoredMatterFabric {
@@ -311,6 +342,25 @@ pub struct MatterRetentionResult {
 /// Durable Matter repository owned by the application layer.
 #[async_trait]
 pub trait MatterRepository: Send + Sync {
+    /// Inserts or optimistically replaces one pre-attachment fabric stage.
+    async fn store_matter_fabric_stage(
+        &self,
+        stage: MatterFabricStage,
+        expected_revision: Option<u64>,
+    ) -> Result<(), BoxError>;
+
+    /// Loads one restart-safe fabric stage.
+    async fn matter_fabric_stage(
+        &self,
+        fabric_id: &MatterFabricId,
+    ) -> Result<Option<MatterFabricStage>, BoxError>;
+
+    /// Removes a stage only after matching fabric metadata was attached.
+    async fn delete_attached_matter_fabric_stage(
+        &self,
+        fabric_id: &MatterFabricId,
+    ) -> Result<(), BoxError>;
+
     /// Inserts or optimistically replaces one fabric.
     async fn store_matter_fabric(
         &self,
