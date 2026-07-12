@@ -12,7 +12,9 @@ mod automation_scheduler;
 mod automation_simulator;
 mod command_service;
 mod matter_controller;
+mod matter_projection;
 mod matter_repository;
+mod matter_subscription;
 mod memory;
 mod policy;
 mod ports;
@@ -77,7 +79,9 @@ pub use command_service::{
     DomainEventCommandAuditSink, NoopCommandAuditSink,
 };
 pub use matter_controller::*;
+pub use matter_projection::*;
 pub use matter_repository::*;
+pub use matter_subscription::*;
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use policy::{
     CommandLimitCapacities, CommandLimitConfig, CommandLimitConfigError, CommandLimits,

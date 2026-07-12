@@ -9,10 +9,10 @@ use homemagic_application::{
     MatterControllerCommand, MatterCreateFabricRequest, MatterExportRequest,
     MatterFabricExportFormat, MatterFabricSecretRefs, MatterInvokeRequest, MatterReadRequest,
     MatterRemovalOutcome, MatterRemoveNodeRequest, MatterRestoreRequest, MatterSubscriptionRequest,
-    SecretValue,
+    SecretValue, project_matter_node,
 };
 use homemagic_domain::{
-    MatterAttributePath, MatterAttributeValue, MatterControllerError,
+    InstallationId, MatterAttributePath, MatterAttributeValue, MatterControllerError,
     MatterControllerErrorCategory, MatterControllerErrorCode, MatterControllerEventKind,
     MatterEndpointNumber, MatterFabricId, MatterLockState, MatterNodeId, MatterOperationId,
     MatterOperationPhase, MatterProjectionId, MatterRetryability, MatterStateRevision,
@@ -107,6 +107,27 @@ async fn ready() -> TestResult<ReadySimulator> {
         },
         light_operation_id,
     })
+}
+
+#[tokio::test]
+async fn simulator_descriptors_should_project_to_common_light_and_lock_capabilities() -> TestResult
+{
+    let setup = ready().await?;
+    let installation_id = InstallationId::from_str("00000000-0000-4000-8000-000000000001")?;
+    let nodes = setup.simulator.nodes(&setup.fabric_id).await?;
+    let schemas = nodes
+        .as_slice()
+        .iter()
+        .flat_map(|descriptor| {
+            project_matter_node(&installation_id, descriptor)
+                .capabilities
+                .into_iter()
+                .map(|projection| projection.capability.schema())
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(schemas, vec!["on_off.v1", "access_control.v1"]);
+    Ok(())
 }
 
 fn selection(
