@@ -45,10 +45,10 @@ const watchdog = setTimeout(() => {
     report.error = {
         phase: "timeout",
         name: "TimeoutError",
-        message: "Lifecycle process exceeded the 75 second evidence budget",
+        message: "Lifecycle process exceeded the 180 second evidence budget",
     };
     persist().finally(() => process.exit(0));
-}, 75_000);
+}, 180_000);
 
 let controller;
 try {
