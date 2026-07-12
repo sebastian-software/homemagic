@@ -5,7 +5,8 @@ use std::str::FromStr;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
-    MatterAttributeSelection, MatterProjectionRule, MatterProjectionValidity,
+    MAX_MATTER_ATTRIBUTE_PATHS_PER_REQUEST, MatterAttributeSelection,
+    MatterControllerContractError, MatterProjectionRule, MatterProjectionValidity,
     MatterReportCausation, MatterReportDecision, MatterReportRejection, MatterSubscriptionRecovery,
     MatterSubscriptionRecoveryAction, MatterSubscriptionRecoveryOutcome,
     MatterSubscriptionRecoveryPolicy, StoredMatterSubscription, StoredMatterSubscriptionState,
@@ -368,6 +369,29 @@ fn selection() -> Result<MatterAttributeSelection, Box<dyn Error + Send + Sync>>
     Ok(MatterAttributeSelection::new(vec![
         report(1, 1, false)?.path,
     ])?)
+}
+
+#[test]
+fn subscription_selection_should_reject_wildcard_scale_path_expansion() -> TestResult {
+    let node_id = MatterNodeId::new(42)?;
+    let paths = (0..=MAX_MATTER_ATTRIBUTE_PATHS_PER_REQUEST)
+        .filter_map(|attribute_id| {
+            u32::try_from(attribute_id)
+                .ok()
+                .map(|attribute_id| MatterAttributePath {
+                    node_id,
+                    endpoint: MatterEndpointNumber::new(1),
+                    cluster_id: ON_OFF_CLUSTER,
+                    attribute_id,
+                })
+        })
+        .collect();
+
+    assert_eq!(
+        MatterAttributeSelection::new(paths),
+        Err(MatterControllerContractError::TooManyAttributePaths)
+    );
+    Ok(())
 }
 
 fn recovery_policy() -> Result<MatterSubscriptionRecoveryPolicy, Box<dyn Error + Send + Sync>> {

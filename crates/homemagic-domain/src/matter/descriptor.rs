@@ -590,4 +590,32 @@ mod tests {
 
         assert!(result.is_err(), "oversized command list should be rejected");
     }
+
+    #[test]
+    fn cluster_should_reject_duplicate_and_oversized_attribute_lists() {
+        let duplicate = MatterClusterDescriptor::with_attributes(6, 1, 0, Vec::new(), vec![0, 0]);
+        let oversized = MatterClusterDescriptor::with_attributes(
+            6,
+            1,
+            0,
+            Vec::new(),
+            (0..=MAX_MATTER_ATTRIBUTES_PER_CLUSTER)
+                .filter_map(|value| u32::try_from(value).ok())
+                .collect(),
+        );
+
+        assert_eq!(
+            duplicate,
+            Err(MatterDescriptorError::DuplicateIdentifier {
+                collection: MatterDescriptorCollection::Attributes,
+            })
+        );
+        assert_eq!(
+            oversized,
+            Err(MatterDescriptorError::TooManyItems {
+                collection: MatterDescriptorCollection::Attributes,
+                maximum: MAX_MATTER_ATTRIBUTES_PER_CLUSTER,
+            })
+        );
+    }
 }
