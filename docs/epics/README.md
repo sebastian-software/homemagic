@@ -10,7 +10,7 @@ cover the next five milestones after the M0 discovery prototype.
 | [EPIC-001](001-reliable-device-foundation.md) | M1 | Done | M0 | Durable, continuously updated Shelly registry |
 | [EPIC-002](002-safe-command-control-plane.md) | M2 | In progress | EPIC-001 | Authorized and audited device control |
 | [EPIC-003](003-agent-authored-automation-engine.md) | M3 | Done | EPIC-002 | Governed automation authoring and execution |
-| [EPIC-004](004-matter-controller-integration.md) | M4 | Planned; feasibility may start early | EPIC-001 and EPIC-002 | Production-capable Matter controller integration |
+| [EPIC-004](004-matter-controller-integration.md) | M4 | In progress | EPIC-001 and EPIC-002 | Production-capable Matter controller integration |
 | [EPIC-005](005-mcp-intent-driven-interaction.md) | M5 | Planned | EPIC-003; EPIC-004 for Matter coverage | Agent-first control and automation lifecycle |
 
 The critical delivery path is:
@@ -22,8 +22,9 @@ M0 prototype
   -> EPIC-003 automation engine
   -> EPIC-005 MCP and intent-driven interaction
 
-EPIC-004 Matter feasibility can run during EPIC-001.
-Full Matter delivery depends on EPIC-002 command and policy contracts.
+EPIC-004 is active with an SDK-neutral simulation-first track.
+Full Matter delivery depends on EPIC-002 command and policy contracts and keeps
+production, reference-interoperability, and physical-device evidence separate.
 ```
 
 ## Status rules

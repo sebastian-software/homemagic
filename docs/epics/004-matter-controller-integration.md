@@ -1,9 +1,12 @@
 # EPIC-004: Matter Controller Integration
 
 - Milestone: M4
-- Status: Planned; feasibility work may start during EPIC-001
+- Status: Active; simulation-first implementation planning complete
 - Depends on: EPIC-001 for identity/lifecycle and EPIC-002 for full command delivery
 - Unlocks: Matter device coverage in EPIC-005
+- Design: [Matter Controller Simulation-First Design](../superpowers/specs/2026-07-12-matter-controller-simulation-first-design.md)
+- Plan: [EPIC-004 Matter Controller Implementation Plan](../plans/2026-07-12-epic-004-matter-controller.md)
+- Issues: [EPIC-004 issue index](../issues/epic-004/README.md)
 
 ## Objective
 
@@ -179,3 +182,10 @@ fabric without learning Matter cluster internals.
 
 - 2026-07-11: Epic created; feasibility may start before EPIC-002, production
   command delivery may not.
+- 2026-07-12: User-approved SDK-neutral, simulation-first controller design
+  committed. The first fixture slice is light plus door lock; unlock requires
+  short-lived interactive authorization. Non-Rust reference tools are allowed
+  only in development and CI.
+- 2026-07-12: Eleven dependency-ordered issues planned across simulator,
+  candidate, production-adapter, interoperability, and physical evidence. No
+  hardware or production compatibility criterion is complete yet.

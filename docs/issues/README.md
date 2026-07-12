@@ -28,3 +28,4 @@ progress log.
 - [EPIC-001 issue index](epic-001/README.md)
 - [EPIC-002 issue index](epic-002/README.md)
 - [EPIC-003 issue index](epic-003/README.md)
+- [EPIC-004 issue index](epic-004/README.md)
