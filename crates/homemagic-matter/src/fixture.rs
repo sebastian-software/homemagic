@@ -68,11 +68,12 @@ impl SimulatorFixture {
             vec![MatterEndpointDescriptor::new(
                 endpoint,
                 vec![MatterDeviceType::new(device_type, 1)?],
-                vec![MatterClusterDescriptor::new(
+                vec![MatterClusterDescriptor::with_attributes(
                     cluster_id,
                     1,
                     0,
                     accepted_commands,
+                    vec![0],
                 )?],
                 Vec::new(),
             )?],

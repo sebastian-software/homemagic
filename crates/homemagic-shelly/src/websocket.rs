@@ -369,6 +369,7 @@ fn observation_from_capability(
                 )),
             );
         }
+        CapabilitySnapshot::AccessControl { .. } => {}
     }
     (!values.is_empty()).then(|| CapabilityObservation {
         device_id: device.snapshot.id.clone(),

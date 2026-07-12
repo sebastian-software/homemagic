@@ -14,6 +14,8 @@ pub const MAX_MATTER_DEVICE_TYPES_PER_ENDPOINT: usize = 16;
 pub const MAX_MATTER_CLUSTERS_PER_ENDPOINT: usize = 128;
 /// Maximum accepted command identifiers on one cluster.
 pub const MAX_MATTER_COMMANDS_PER_CLUSTER: usize = 128;
+/// Maximum accepted attribute identifiers on one cluster.
+pub const MAX_MATTER_ATTRIBUTES_PER_CLUSTER: usize = 256;
 
 /// Fabric-scoped operational Matter node identifier.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -153,6 +155,7 @@ pub struct MatterClusterDescriptor {
     revision: u16,
     feature_map: u32,
     accepted_commands: Vec<u32>,
+    attributes: Vec<u32>,
 }
 
 impl MatterClusterDescriptor {
@@ -167,6 +170,21 @@ impl MatterClusterDescriptor {
         feature_map: u32,
         accepted_commands: Vec<u32>,
     ) -> Result<Self, MatterDescriptorError> {
+        Self::with_attributes(id, revision, feature_map, accepted_commands, Vec::new())
+    }
+
+    /// Creates a bounded cluster declaration including available attributes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects revision zero, excessive identifiers, or duplicates.
+    pub fn with_attributes(
+        id: u32,
+        revision: u16,
+        feature_map: u32,
+        accepted_commands: Vec<u32>,
+        attributes: Vec<u32>,
+    ) -> Result<Self, MatterDescriptorError> {
         if revision == 0 {
             return Err(MatterDescriptorError::ZeroRevision);
         }
@@ -175,11 +193,17 @@ impl MatterClusterDescriptor {
             MAX_MATTER_COMMANDS_PER_CLUSTER,
             MatterDescriptorCollection::Commands,
         )?;
+        ensure_bounded_unique(
+            &attributes,
+            MAX_MATTER_ATTRIBUTES_PER_CLUSTER,
+            MatterDescriptorCollection::Attributes,
+        )?;
         Ok(Self {
             id,
             revision,
             feature_map,
             accepted_commands,
+            attributes,
         })
     }
 
@@ -206,6 +230,12 @@ impl MatterClusterDescriptor {
     pub fn accepted_commands(&self) -> &[u32] {
         &self.accepted_commands
     }
+
+    /// Returns bounded available attribute identifiers.
+    #[must_use]
+    pub fn attributes(&self) -> &[u32] {
+        &self.attributes
+    }
 }
 
 #[derive(Deserialize)]
@@ -214,6 +244,8 @@ struct MatterClusterDescriptorData {
     revision: u16,
     feature_map: u32,
     accepted_commands: Vec<u32>,
+    #[serde(default)]
+    attributes: Vec<u32>,
 }
 
 impl<'de> Deserialize<'de> for MatterClusterDescriptor {
@@ -222,11 +254,12 @@ impl<'de> Deserialize<'de> for MatterClusterDescriptor {
         D: Deserializer<'de>,
     {
         let data = MatterClusterDescriptorData::deserialize(deserializer)?;
-        Self::new(
+        Self::with_attributes(
             data.id,
             data.revision,
             data.feature_map,
             data.accepted_commands,
+            data.attributes,
         )
         .map_err(D::Error::custom)
     }
@@ -426,6 +459,8 @@ pub enum MatterDescriptorCollection {
     ClientClusters,
     /// Cluster accepted-command list.
     Commands,
+    /// Cluster available-attribute list.
+    Attributes,
 }
 
 /// Invalid bounded Matter descriptor data.

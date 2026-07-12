@@ -104,6 +104,11 @@ pub enum CapabilitySnapshot {
         /// Risk applied to future state-changing commands.
         risk: RiskClass,
     },
+    /// Security-sensitive lock state exposed through governed actions.
+    AccessControl {
+        /// Whether the secured state is currently reported.
+        locked: Option<bool>,
+    },
     /// A normalized level in percent.
     Level {
         /// Current level from zero through one hundred.
@@ -150,6 +155,7 @@ impl CapabilitySnapshot {
         match self {
             Self::Availability { .. } => "availability.v1",
             Self::OnOff { .. } => "on_off.v1",
+            Self::AccessControl { .. } => "access_control.v1",
             Self::Level { .. } => "level.v1",
             Self::Position { .. } => "position.v1",
             Self::Power { .. } => "power.v1",
@@ -171,6 +177,7 @@ impl CapabilitySnapshot {
             Self::OnOff { risk, .. } | Self::Level { risk, .. } | Self::Position { risk, .. } => {
                 (self.schema().trim_end_matches(".v1"), *risk)
             }
+            Self::AccessControl { .. } => ("access_control", RiskClass::Security),
         };
         CapabilityDescriptor {
             name: name.to_owned(),
