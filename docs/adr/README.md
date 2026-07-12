@@ -51,3 +51,5 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0036: Supersede undispatched state and converge after dispatch](0036-converge-state-setting-commands.md)
 - [ADR-0037: Own Matter fabrics and export them only through protected envelopes](0037-own-and-port-matter-fabric-secrets.md)
 - [ADR-0038: Start with on-network commissioning and a fixed controller scorecard](0038-start-matter-on-network-and-fix-evaluation.md)
+- ADR-0039 is reserved for the controller selection required by ADR-0038.
+- [ADR-0040: Target commissioning before node identity exists](0040-target-commissioning-before-node-identity.md)

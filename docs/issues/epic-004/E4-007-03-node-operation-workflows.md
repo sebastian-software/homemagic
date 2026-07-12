@@ -6,12 +6,22 @@ title: Orchestrate commissioning and node removal durably
 status: ready
 priority: high
 depends_on: [E4-007-01, E4-007-02]
-adrs: [ADR-0033, ADR-0034, ADR-0037]
+adrs: [ADR-0033, ADR-0034, ADR-0037, ADR-0040]
 created: 2026-07-12
 updated: 2026-07-12
 ---
 
 # E4-007-03: Node Operation Workflows
+
+## Child issues
+
+| Issue | Status | Outcome |
+| --- | --- | --- |
+| [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | Ready | Fabric-scoped commissioning admission and sensitive input boundary |
+| [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Planned | Atomic node, projection, subscription, and operation-result commit |
+| [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Planned | Best-effort cancellation and phase-by-phase restart reconciliation |
+| [E4-007-03-04](E4-007-03-04-node-inventory.md) | Planned | Authenticated bounded durable node inventory |
+| [E4-007-03-05](E4-007-03-05-node-removal.md) | Planned | Idempotent removal with visible partial cleanup |
 
 ## Outcome
 
@@ -45,3 +55,6 @@ visible and repairable.
 
 - 2026-07-12: E4-007-02 completed with public cross-platform CI. This issue is
   ready for decomposition before implementation.
+- 2026-07-12: Decomposed into five dependency-ordered slices. ADR-0040 resolves
+  the pre-commissioning identity gap without inventing a node ID; E4-007-03-01
+  is ready.
