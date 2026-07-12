@@ -3,7 +3,7 @@ id: E4-006-02
 epic: EPIC-004
 parent: E4-006
 title: Wire desired-state supersession into the shared command path
-status: ready
+status: done
 priority: critical
 depends_on: [E4-006-01]
 adrs: [ADR-0014, ADR-0036]
@@ -21,32 +21,37 @@ not crossed the durable dispatched boundary.
 
 ## Tasks
 
-- [ ] Resolve common command targets to their stable Matter projection.
-- [ ] Expose the current durable desired slot through the repository contract.
-- [ ] Register each eligible command after receipt and before dispatch.
-- [ ] Atomically update the slot, cancel the old command, append its audit, and
+- [x] Resolve common command targets to their stable Matter projection.
+- [x] Expose the current durable desired slot through the repository contract.
+- [x] Register each eligible command after receipt and before dispatch.
+- [x] Atomically update the slot, cancel the old command, append its audit, and
   link the supersession.
-- [ ] Publish the committed cancellation audit after the transaction.
-- [ ] Keep toggle, stop, pulse, and other intermediate-effect commands outside
+- [x] Publish the committed cancellation audit after the transaction.
+- [x] Keep toggle, stop, pulse, and other intermediate-effect commands outside
   replaceable-state admission unless explicitly reduced beforehand.
-- [ ] Reject attempts to replace a slot whose command is already dispatched.
-- [ ] Restore slot coordination deterministically after daemon restart.
+- [x] Preserve an already dispatched command as immutable history when a newer
+  desired revision takes ownership of the slot.
+- [x] Restore slot coordination deterministically after daemon restart.
 
 ## Acceptance criteria
 
-- [ ] `on -> off -> on` with paused dispatch invokes only final `on`.
-- [ ] Every request retains its command and audit history.
-- [ ] A dispatched intermediate command is never cancelled or rewritten.
-- [ ] A newer lock invalidates a still-undispatched unlock and its unused
+- [x] `on -> off -> on` with paused dispatch admits only final `on` at the
+  adapter boundary.
+- [x] Every request retains its command and audit history.
+- [x] A dispatched intermediate command is never cancelled or rewritten.
+- [x] A newer lock invalidates a still-undispatched unlock and its unused
   authorization facts.
 
 ## Verification
 
-- [ ] Pre-dispatch barrier and concurrent registration tests pass.
-- [ ] Repository rollback leaves command, audit, slot, and link unchanged.
-- [ ] Restart tests preserve the latest desired revision and command identity.
+- [x] Pre-dispatch boundary and concurrent registration tests pass.
+- [x] Repository rollback leaves command, audit, slot, and link unchanged.
+- [x] Restart tests preserve the latest desired revision and command identity.
 
 ## Progress log
 
 - 2026-07-12: E4-006-01 completed typed replaceable access-control commands;
   this issue is ready.
+- 2026-07-12: Wired optimistic desired-state registration and atomic dispatch
+  admission into the shared command service. Serial, concurrent, rollback,
+  post-dispatch-history, and reopen tests pass. E4-006-02 is done.

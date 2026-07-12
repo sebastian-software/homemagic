@@ -17,8 +17,8 @@ updated: 2026-07-12
 | Issue | Status | Outcome |
 | --- | --- | --- |
 | [E4-006-01](E4-006-01-access-control-command-contract.md) | Done | Typed access-control commands and explicit user approval authority |
-| [E4-006-02](E4-006-02-desired-state-supersession.md) | Ready | Shared monotonic desired slot and pre-dispatch supersession |
-| [E4-006-03](E4-006-03-matter-command-adapters.md) | Planned | SDK-neutral dispatch and observation-only confirmation |
+| [E4-006-02](E4-006-02-desired-state-supersession.md) | Done | Shared monotonic desired slot and pre-dispatch supersession |
+| [E4-006-03](E4-006-03-matter-command-adapters.md) | Ready | SDK-neutral dispatch and observation-only confirmation |
 | [E4-006-04](E4-006-04-interactive-unlock-authorization.md) | Planned | Exact sixty-second single-use unlock authorization |
 
 ## Outcome

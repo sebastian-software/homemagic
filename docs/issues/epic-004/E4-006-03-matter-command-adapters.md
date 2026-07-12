@@ -3,7 +3,7 @@ id: E4-006-03
 epic: EPIC-004
 parent: E4-006
 title: Implement governed Matter dispatch and confirmation adapters
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-006-01, E4-006-02]
 adrs: [ADR-0014, ADR-0015, ADR-0034, ADR-0036]
@@ -47,3 +47,7 @@ acknowledgement remains distinct from observation-backed confirmation.
 - [ ] Mismatch, missing report, bounded-read fallback, and restart tests pass.
 - [ ] Invocation traces contain only typed SDK-neutral controller commands.
 
+## Progress log
+
+- 2026-07-12: E4-006-02 completed durable desired-state coordination and atomic
+  dispatch admission; this issue is ready.
