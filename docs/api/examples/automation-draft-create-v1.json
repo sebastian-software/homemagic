@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": 30,
+  "method": "automations.drafts.create",
+  "params": {
+    "draft": {
+      "name": "Evening presence reminder",
+      "agent_id": "home-agent",
+      "source_request": "Every evening, wait briefly before evaluating the next step.",
+      "rationale": "A minimal executable example that requires no copied internal IDs.",
+      "triggers": [
+        {
+          "type": "schedule",
+          "schedule": {
+            "cron": "0 18 * * *",
+            "timezone": "Europe/Berlin",
+            "occurrence_window_ms": 60000
+          }
+        }
+      ],
+      "condition": null,
+      "actions": [{"type": "delay", "duration_ms": 1000}],
+      "run_mode": {"mode": "single"},
+      "self_trigger": "suppress_same_version"
+    }
+  }
+}

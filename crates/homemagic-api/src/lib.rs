@@ -12,9 +12,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use homemagic_application::{
-    ApplicationError, AuthenticateActor, AutomationLifecycleError, AutomationLifecycleService,
-    AutomationScheduler, AutomationSchedulerError, AutomationSimulationInput, CommandRequest,
-    CommandService, CommandServiceError, DeviceMetadataUpdate, HomeMagicApplication,
+    ApplicationError, AuthenticateActor, AutomationDraftCreateInput, AutomationLifecycleError,
+    AutomationLifecycleService, AutomationScheduler, AutomationSchedulerError,
+    AutomationSimulationInput, CommandRequest, CommandService, CommandServiceError,
+    DeviceMetadataUpdate, HomeMagicApplication,
 };
 use homemagic_domain::{
     Actor, AutomationDocument, AutomationId, AutomationRunId, AutomationVersion, AvailabilityState,
@@ -521,6 +522,11 @@ struct AutomationDraftPutParams {
 }
 
 #[derive(Deserialize)]
+struct AutomationDraftCreateParams {
+    draft: AutomationDraftCreateInput,
+}
+
+#[derive(Deserialize)]
 struct AutomationIdParams {
     automation_id: AutomationId,
 }
@@ -621,6 +627,10 @@ async fn dispatch_with_commands(
     dispatch_with_services(application, commands, None, None, actor, request).await
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the explicit JSON-RPC method table keeps transport routing auditable"
+)]
 async fn dispatch_with_services(
     application: &HomeMagicApplication,
     commands: Option<&CommandService>,
@@ -658,6 +668,9 @@ async fn dispatch_with_services(
         "commands.audit" => command_audit(commands, actor, request.id, request.params).await,
         "automations.drafts.put" => {
             automation_draft_put(automations, actor, request.id, request.params).await
+        }
+        "automations.drafts.create" => {
+            automation_draft_create(automations, actor, request.id, request.params).await
         }
         "automations.drafts.get" => {
             automation_draft_get(automations, actor, request.id, request.params).await
@@ -775,6 +788,26 @@ async fn automation_draft_put(
         .put_draft(actor, params.document, params.expected_revision)
         .await
     {
+        Ok(draft) => RpcResponse::success(id, json!({"draft": draft})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_draft_create(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationDraftCreateParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.create_draft(actor, params.draft).await {
         Ok(draft) => RpcResponse::success(id, json!({"draft": draft})),
         Err(error) => automation_error(id, error),
     }
@@ -1626,10 +1659,10 @@ mod tests {
     use chrono::{DateTime, Utc};
     use futures_util::{SinkExt, StreamExt};
     use homemagic_application::{
-        ActorAuthenticationError, AuthenticateActor, BroadcastDomainEventSink, CommandDispatcher,
-        CommandLimitConfig, CommandLimits, CommandRepository, CommandServiceDependencies,
-        DeviceRegistry, FoundationRepository, FoundationWrite, MemoryFoundationRepository,
-        NoopCommandAuditSink, NoopDomainEventSink, SystemClock,
+        ActorAuthenticationError, AuthenticateActor, AutomationDraft, BroadcastDomainEventSink,
+        CommandDispatcher, CommandLimitConfig, CommandLimits, CommandRepository,
+        CommandServiceDependencies, DeviceRegistry, FoundationRepository, FoundationWrite,
+        MemoryFoundationRepository, NoopCommandAuditSink, NoopDomainEventSink, SystemClock,
     };
     use homemagic_domain::{
         ActorGrant, ActorId, AdapterAcknowledgement, CapabilitySnapshot, CausationMetadata,
@@ -2139,6 +2172,61 @@ mod tests {
         )
         .await;
         assert_eq!(denied.error.map(|error| error.code), Some(-32041));
+    }
+
+    #[tokio::test]
+    async fn automation_create_rpc_should_generate_every_envelope_field() {
+        let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+        let repository = Arc::new(
+            SqliteRepository::open(directory.path().join("automation-create-api.sqlite3"))
+                .unwrap_or_else(|error| panic!("repository: {error}")),
+        );
+        let application = HomeMagicApplication::from_repository(
+            repository.clone(),
+            Arc::new(NoopDomainEventSink),
+            [],
+        )
+        .await
+        .unwrap_or_else(|error| panic!("application: {error}"));
+        let owner = actor();
+        let lifecycle = AutomationLifecycleService::new(
+            repository.clone(),
+            repository.clone(),
+            Arc::new(SystemClock),
+        );
+        let scheduler = AutomationScheduler::new(repository, Arc::new(SystemClock));
+        let request: RpcRequest = serde_json::from_str(include_str!(
+            "../../../docs/api/examples/automation-draft-create-v1.json"
+        ))
+        .unwrap_or_else(|error| panic!("automation create request: {error}"));
+
+        let response = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &owner,
+            request,
+        )
+        .await;
+        let draft: AutomationDraft = serde_json::from_value(
+            response
+                .result
+                .and_then(|result| result.get("draft").cloned())
+                .unwrap_or_else(|| panic!("draft response missing")),
+        )
+        .unwrap_or_else(|error| panic!("draft response: {error}"));
+
+        assert_eq!(draft.document.provenance.author_id, owner.id);
+        assert_eq!(draft.document.version.get(), 1);
+        assert_eq!(draft.revision, 0);
+        assert_eq!(
+            lifecycle
+                .draft(&owner, &draft.automation_id)
+                .await
+                .unwrap_or_else(|error| panic!("stored draft: {error}")),
+            draft
+        );
     }
 
     async fn application_with_device() -> (HomeMagicApplication, DeviceId) {

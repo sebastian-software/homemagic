@@ -47,8 +47,8 @@ pub use automation_events::{
     AutomationEventProcessor, AutomationEventProcessorError, AutomationEventProcessorTick,
 };
 pub use automation_lifecycle::{
-    AutomationLifecycleError, AutomationLifecycleService, AutomationLifecycleSimulation,
-    AutomationSimulationInput,
+    AutomationDraftCreateInput, AutomationLifecycleError, AutomationLifecycleService,
+    AutomationLifecycleSimulation, AutomationSimulationInput,
 };
 pub use automation_repository::{
     ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationEventCursor,

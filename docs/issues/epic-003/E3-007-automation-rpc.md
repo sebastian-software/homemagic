@@ -5,7 +5,7 @@ title: Expose governed automation lifecycle RPCs
 status: in_progress
 priority: high
 depends_on: [E3-004, E3-005, E3-006]
-adrs: [ADR-0003, ADR-0013, ADR-0016, ADR-0019, ADR-0030]
+adrs: [ADR-0003, ADR-0013, ADR-0016, ADR-0019, ADR-0030, ADR-0031]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -22,7 +22,7 @@ updated: 2026-07-12
 - [ ] Derive Actor exclusively from authentication and enforce ownership/grants.
 - [ ] Stream durable lifecycle/run transitions on the existing event channel.
 - [ ] Add stable error mappings and bounded filters/cursors.
-- [ ] Document executable agent-oriented examples without hand-built internal IDs.
+- [x] Document executable agent-oriented examples without hand-built internal IDs.
 - [ ] Test RPC/internal parity, isolation, conflicts, governance, and redaction.
 
 ## Acceptance criteria
@@ -54,3 +54,6 @@ updated: 2026-07-12
   reactivate a retired identity. Actor-owned run cancellation atomically
   appends its terminal outcome and cancels all pending/ready timers, with trace
   sequencing recovered through bounded cursor pages.
+- 2026-07-12: Accepted ADR-0031 and added `automations.drafts.create`.
+  Authenticated server code now supplies every lifecycle envelope field, while
+  the executable curl/JSON example can author a schedule using no internal IDs.

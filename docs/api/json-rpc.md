@@ -184,6 +184,8 @@ version numbers and exact compiler evidence.
 
 The first lifecycle slice exposes:
 
+- `automations.drafts.create` with authored `draft` content only; the server
+  supplies schema, automation ID, version, authenticated author, and timestamp;
 - `automations.drafts.put` with `document` and optional `expected_revision`;
 - `automations.drafts.get` with `automation_id`, and `automations.drafts.list`
   with a bounded `limit`;
@@ -208,20 +210,20 @@ dispatcher from the caller. Those values are derived by the lifecycle service.
 Catch-up never scans a time range and rejects a schedule whose normal window is
 still open.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 30,
-  "method": "automations.drafts.put",
-  "params": {
-    "document": {"schema":"automation.document.v1","id":"AUTOMATION_ID","version":1},
-    "expected_revision": null
-  }
-}
+An agent can create the first draft without hand-built automation, actor,
+version, schema, or timestamp fields. The executable request is
+`docs/api/examples/automation-draft-create-v1.json`; it also uses no device ID.
+
+```bash
+curl --fail-with-body http://127.0.0.1:8787/rpc \
+  -H "Authorization: Bearer $HOMEMAGIC_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @docs/api/examples/automation-draft-create-v1.json
 ```
 
-The abbreviated document above illustrates the envelope only; use the complete
-published schema and example in `docs/api/examples/automation-document-v1.json`.
+The response returns the generated automation ID. Use
+`docs/api/examples/automation-document-v1.json` as the complete full-document
+shape for subsequent optimistic `automations.drafts.put` updates.
 
 ```json
 {

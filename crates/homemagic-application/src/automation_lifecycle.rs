@@ -4,11 +4,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use homemagic_domain::{
-    Actor, AutomationApprovalId, AutomationApprovalRecord, AutomationApprovalRequirement,
-    AutomationApprovalState, AutomationDocument, AutomationId, AutomationOccurrenceId,
-    AutomationOperationalState, AutomationRun, AutomationRunId, AutomationRunState,
+    Actor, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
+    AutomationApprovalRequirement, AutomationApprovalState, AutomationCondition,
+    AutomationDocument, AutomationDocumentSchema, AutomationId, AutomationOccurrenceId,
+    AutomationOperationalState, AutomationProvenance, AutomationResourceBudget, AutomationRun,
+    AutomationRunId, AutomationRunMode, AutomationRunState, AutomationSelfTriggerPolicy,
     AutomationTimerState, AutomationTraceId, AutomationTraceKind, AutomationTraceStep,
-    AutomationValue, AutomationVersion, AutomationVersionState, CorrelationId,
+    AutomationTrigger, AutomationValue, AutomationVariableDefinition, AutomationVersion,
+    AutomationVersionState, CorrelationId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -32,6 +35,35 @@ pub struct AutomationSimulationInput {
     pub state_changes: Vec<SimulationStateChange>,
     /// Declared command attempt outcomes.
     pub command_outcomes: Vec<SimulationCommandOutcome>,
+}
+
+/// Agent-oriented authored content with all server-owned fields omitted.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutomationDraftCreateInput {
+    /// Installation-local display name.
+    pub name: String,
+    /// Optional stable identity of the authoring agent.
+    pub agent_id: Option<String>,
+    /// Original user request retained for review.
+    pub source_request: String,
+    /// Concise explanation of intended behavior.
+    pub rationale: String,
+    /// Typed variable declarations keyed by stable name.
+    #[serde(default)]
+    pub variables: BTreeMap<String, AutomationVariableDefinition>,
+    /// Authored triggers.
+    pub triggers: Vec<AutomationTrigger>,
+    /// Optional run-level guard.
+    pub condition: Option<AutomationCondition>,
+    /// Bounded action tree.
+    pub actions: Vec<AutomationAction>,
+    /// Trigger concurrency behavior.
+    pub run_mode: AutomationRunMode,
+    /// Self-trigger suppression behavior.
+    pub self_trigger: AutomationSelfTriggerPolicy,
+    /// Explicit hard resource budgets; safe defaults are applied when omitted.
+    #[serde(default)]
+    pub budget: AutomationResourceBudget,
 }
 
 /// Persisted version evidence and deterministic simulation result.
@@ -93,6 +125,42 @@ impl AutomationLifecycleService {
             foundation,
             clock,
         }
+    }
+
+    /// Creates an actor-owned version-one draft with server-owned identity and timestamps.
+    ///
+    /// # Errors
+    ///
+    /// Returns repository failures. Server-owned invariants cannot be supplied by the caller.
+    pub async fn create_draft(
+        &self,
+        actor: &Actor,
+        input: AutomationDraftCreateInput,
+    ) -> Result<AutomationDraft, AutomationLifecycleError> {
+        let created_at = self.clock.now();
+        let version =
+            AutomationVersion::new(1).map_err(|_| AutomationLifecycleError::InvalidState)?;
+        let document = AutomationDocument {
+            schema: AutomationDocumentSchema::V1,
+            id: AutomationId::new(),
+            version,
+            name: input.name,
+            provenance: AutomationProvenance {
+                author_id: actor.id.clone(),
+                agent_id: input.agent_id,
+                source_request: input.source_request,
+                rationale: input.rationale,
+            },
+            variables: input.variables,
+            triggers: input.triggers,
+            condition: input.condition,
+            actions: input.actions,
+            run_mode: input.run_mode,
+            self_trigger: input.self_trigger,
+            budget: input.budget,
+            created_at,
+        };
+        self.put_draft(actor, document, None).await
     }
 
     /// Creates or optimistically updates one actor-owned draft.
