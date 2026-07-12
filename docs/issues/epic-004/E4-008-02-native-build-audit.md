@@ -3,7 +3,7 @@ id: E4-008-02
 epic: EPIC-004
 parent: E4-008
 title: Build and audit native Rust controller candidates
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-008-01]
 adrs: [ADR-0005, ADR-0038]

@@ -16,8 +16,8 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-008-01](E4-008-01-discovery-rubric.md) | In progress | Current candidate screen and frozen detailed rubric |
-| [E4-008-02](E4-008-02-native-build-audit.md) | Planned | Cross-platform native build and footprint evidence |
+| [E4-008-01](E4-008-01-discovery-rubric.md) | Done | Current candidate screen and frozen detailed rubric |
+| [E4-008-02](E4-008-02-native-build-audit.md) | Ready | Cross-platform native build and footprint evidence |
 | [E4-008-03](E4-008-03-contract-reference.md) | Planned | Fixed port contract and independent reference lifecycle |
 | [E4-008-04](E4-008-04-selection-adr.md) | Planned | Evidence matrix and accepted ADR-0039 |
 
@@ -76,3 +76,5 @@ security, packaging, or Rust-majority requirements.
   controller candidate, `rust-matc`; `rs-matter` is a device/server reference,
   not a controller. The detailed rubric was frozen and work decomposed into four
   dependency-ordered children before assigning scores.
+- 2026-07-12: E4-008-01 pin verification passed public CI run `29209739369`;
+  E4-008-02 is ready.

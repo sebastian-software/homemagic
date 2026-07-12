@@ -3,7 +3,7 @@ id: E4-008-01
 epic: EPIC-004
 parent: E4-008
 title: Refresh controller candidates and freeze the detailed rubric
-status: in_progress
+status: done
 priority: critical
 depends_on: [E4-004]
 adrs: [ADR-0005, ADR-0033, ADR-0038]
@@ -29,7 +29,7 @@ detailed immutable 0–5 rubric before candidate scores are assigned.
 ## Verification
 
 - [x] Discovery and manifest checks run from a clean checkout.
-- [ ] Public CI validates the committed candidate pins.
+- [x] Public CI validates the committed candidate pins.
 
 ## Progress log
 
@@ -38,3 +38,6 @@ detailed immutable 0–5 rubric before candidate scores are assigned.
   independent device/reference candidate, and recorded mandatory rejections and
   ADR-0005 contingencies. The detailed rubric, machine-readable pins, and clean
   fetch validation are committed; public CI remains pending.
+- 2026-07-12: Public CI run `29209739369` fetched and verified every exact pin,
+  then passed the full Linux quality and cross-platform simulator gates. This
+  issue is done; E4-008-02 is ready.
