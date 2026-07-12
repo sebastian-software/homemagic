@@ -13,6 +13,13 @@ updated: 2026-07-12
 
 # E4-007-04: Subscription Diagnostics and Repair
 
+## Child issues
+
+| Issue | Status | Outcome |
+| --- | --- | --- |
+| [E4-007-04-01](E4-007-04-01-bounded-diagnostics.md) | Ready | Read-only bounded redacted diagnostics |
+| [E4-007-04-02](E4-007-04-02-explicit-subscription-repair.md) | Planned | Explicit gap-read and resubscribe orchestration |
+
 ## Outcome
 
 Operators can inspect bounded redacted fabric, node, endpoint, operation, and
@@ -43,3 +50,6 @@ raw protocol mutation access.
 
 - 2026-07-12: E4-007-03 completed with public cross-platform CI. This issue is
   ready.
+- 2026-07-12: Decomposed into a read-only diagnostic slice followed by an
+  explicit mutation slice so diagnostic access cannot imply repair authority.
+  E4-007-04-01 is ready.

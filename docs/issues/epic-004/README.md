@@ -41,6 +41,8 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-03-04](E4-007-03-04-node-inventory.md) | Done | E4-007-03-02 | Authenticated bounded node inventory |
 | [E4-007-03-05](E4-007-03-05-node-removal.md) | Done | E4-007-03-03, E4-007-03-04 | Removal with visible partial cleanup |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Ready | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
+| [E4-007-04-01](E4-007-04-01-bounded-diagnostics.md) | Ready | E4-007-03 | Read-only bounded redacted diagnostics |
+| [E4-007-04-02](E4-007-04-02-explicit-subscription-repair.md) | Planned | E4-007-04-01 | Explicit bounded subscription repair |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
 | [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
@@ -142,3 +144,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 - 2026-07-12: Public CI run `29205464608` passed Linux x86_64 quality and
   simulator hashes on Linux x86_64 and macOS ARM64. E4-007-03 and all five
   children are done; E4-007-04 is ready.
+- 2026-07-12: E4-007-04 was decomposed into read-only diagnostics followed by
+  explicit bounded subscription repair. E4-007-04-01 is ready.
