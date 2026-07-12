@@ -440,6 +440,8 @@ pub enum CommandErrorCode {
     IdempotencyConflict,
     /// Default-deny policy rejected the command.
     PolicyDenied,
+    /// A newer desired revision replaced this command before dispatch.
+    SupersededBeforeDispatch,
     /// Actor exceeded its bounded request rate.
     RateLimited,
     /// Another command already owns the device dispatch slot.

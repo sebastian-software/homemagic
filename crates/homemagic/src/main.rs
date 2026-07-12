@@ -15,7 +15,8 @@ use homemagic_application::{
     AutomationScheduler, BroadcastDomainEventSink, CommandLimitConfig, CommandLimits,
     CommandRepository, CommandService, CommandServiceDependencies, DeviceRegistry,
     DomainEventCommandAuditSink, FoundationWrite, HomeMagicApplication, IntegrationScanner,
-    RepositoryLiveObservationSink, SecretStore, SecretValue, SystemClock,
+    MatterCommandDispatchControl, RepositoryLiveObservationSink, SecretStore, SecretValue,
+    SystemClock,
 };
 use homemagic_domain::{
     ActorGrant, ActorId, CapabilitySnapshot, CommandAction, FreshnessPolicy, GrantId, GrantScope,
@@ -795,7 +796,8 @@ async fn durable_application(
         },
         CommandLimits::new(CommandLimitConfig::default()),
         freshness_policy,
-    );
+    )
+    .with_dispatch_control(matter_command_control(&repository));
     let AutomationComponents {
         engine: automation,
         lifecycle: automation_lifecycle,
@@ -810,6 +812,13 @@ async fn durable_application(
         automation_lifecycle,
         automation_scheduler,
     })
+}
+
+fn matter_command_control(repository: &Arc<SqliteRepository>) -> Arc<MatterCommandDispatchControl> {
+    Arc::new(MatterCommandDispatchControl::new(
+        repository.clone(),
+        repository.clone(),
+    ))
 }
 
 struct AutomationComponents {

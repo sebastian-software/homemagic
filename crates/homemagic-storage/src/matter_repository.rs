@@ -90,6 +90,31 @@ impl MatterRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn matter_projection_for_target(
+        &self,
+        device_id: &homemagic_domain::DeviceId,
+        endpoint_id: &homemagic_domain::EndpointId,
+        capability_schema: &str,
+    ) -> Result<Option<StoredMatterProjection>, BoxError> {
+        let device_id = device_id.to_string();
+        let endpoint_id = endpoint_id.as_str().to_owned();
+        let capability_schema = capability_schema.to_owned();
+        run_read(&self.connection, move |connection| {
+            connection
+                .query_row(
+                    "SELECT payload_json FROM matter_projections
+                     WHERE device_id = ?1 AND endpoint_id = ?2 AND capability_schema = ?3",
+                    params![device_id, endpoint_id, capability_schema],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|payload| decode(&payload))
+                .transpose()
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn store_matter_subscription(
         &self,
         subscription: StoredMatterSubscription,
@@ -187,6 +212,44 @@ impl MatterRepository for SqliteRepository {
     ) -> Result<MatterDesiredSlotOutcome, BoxError> {
         run_write(&self.connection, move |transaction| {
             replace_desired_slot(transaction, &slot, superseded.as_ref())
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn matter_desired_slot(
+        &self,
+        projection_id: &MatterProjectionId,
+    ) -> Result<Option<MatterDesiredCommandSlot>, BoxError> {
+        let projection_id = projection_id.clone();
+        run_read(&self.connection, move |connection| {
+            let row = connection
+                .query_row(
+                    "SELECT desired_revision, command_id, dispatched_at, updated_at
+                     FROM matter_desired_command_slots WHERE projection_id = ?1",
+                    [projection_id.to_string()],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<DateTime<Utc>>>(2)?,
+                            row.get::<_, DateTime<Utc>>(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((desired_revision, command_id, dispatched_at, updated_at)) = row else {
+                return Ok(None);
+            };
+            Ok(Some(MatterDesiredCommandSlot {
+                projection_id,
+                desired_revision: to_u64(desired_revision)?,
+                command_id: command_id
+                    .parse()
+                    .map_err(|_| StorageError::InvalidMatter("invalid desired command ID"))?,
+                dispatched_at,
+                updated_at,
+            }))
         })
         .await
         .map_err(boxed)
@@ -799,37 +862,43 @@ fn replace_desired_slot(
             ));
         }
         if current_command_id != slot.command_id.to_string() {
-            if dispatched_at.is_some() {
+            if dispatched_at.is_none() {
+                let replacement = superseded.ok_or(StorageError::InvalidMatter(
+                    "missing superseded command transition",
+                ))?;
+                if replacement.command.envelope.id.to_string() != current_command_id
+                    || replacement.command.state != CommandState::Cancelled
+                {
+                    return Err(StorageError::InvalidMatter("superseded command mismatch"));
+                }
+                transition_command(
+                    transaction,
+                    &replacement.command,
+                    replacement.expected_version,
+                    &replacement.audit,
+                )?;
+                transaction.execute(
+                    "INSERT INTO matter_command_supersessions(
+                        old_command_id, new_command_id, projection_id, occurred_at
+                     ) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        current_command_id,
+                        slot.command_id.to_string(),
+                        slot.projection_id.to_string(),
+                        slot.updated_at,
+                    ],
+                )?;
+                superseded_command_id = Some(replacement.command.envelope.id.clone());
+            } else if superseded.is_some() {
                 return Err(StorageError::InvalidMatter(
-                    "dispatched desired command cannot be superseded",
+                    "dispatched command must remain historical",
                 ));
             }
-            let replacement = superseded.ok_or(StorageError::InvalidMatter(
-                "missing superseded command transition",
-            ))?;
-            if replacement.command.envelope.id.to_string() != current_command_id
-                || replacement.command.state != CommandState::Cancelled
-            {
-                return Err(StorageError::InvalidMatter("superseded command mismatch"));
-            }
-            transition_command(
-                transaction,
-                &replacement.command,
-                replacement.expected_version,
-                &replacement.audit,
-            )?;
             transaction.execute(
-                "INSERT INTO matter_command_supersessions(
-                    old_command_id, new_command_id, projection_id, occurred_at
-                 ) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    current_command_id,
-                    slot.command_id.to_string(),
-                    slot.projection_id.to_string(),
-                    slot.updated_at,
-                ],
+                "DELETE FROM matter_unlock_authorizations
+                 WHERE command_id = ?1 AND consumed_at IS NULL",
+                [&current_command_id],
             )?;
-            superseded_command_id = Some(replacement.command.envelope.id.clone());
         } else if superseded.is_some() {
             return Err(StorageError::InvalidMatter("unexpected superseded command"));
         }

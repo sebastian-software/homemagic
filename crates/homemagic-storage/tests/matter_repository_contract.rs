@@ -3,27 +3,30 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
-    ActorCredential, CanonicalRequestHash, CommandCreateOutcome, CommandRepository,
-    FoundationRepository, FoundationWrite, MatterDesiredCommandSlot, MatterDispatchWrite,
-    MatterFabricSecretRefs, MatterFabricState, MatterOperationProgress, MatterRepairRecord,
-    MatterRepairStatus, MatterRepository, MatterRetention, MatterSupersededCommand,
-    MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode,
-    StoredMatterProjection, StoredMatterSubscription, StoredMatterSubscriptionState,
+    ActorCredential, CanonicalRequestHash, CommandCreateOutcome, CommandDispatchControl,
+    CommandRepository, DesiredStateRegistration, FoundationRepository, FoundationWrite,
+    MatterCommandDispatchControl, MatterDesiredCommandSlot, MatterDispatchAdmission,
+    MatterDispatchWrite, MatterFabricSecretRefs, MatterFabricState, MatterOperationProgress,
+    MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRetention,
+    MatterSupersededCommand, MatterUnlockAuthorization, MatterUnlockConsumption,
+    StoredMatterFabric, StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
+    StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
     Actor, AuditId, CapabilityDescriptor, CapabilitySnapshot, CommandAggregate, CommandAuditRecord,
-    CommandEnvelope, CommandId, CommandPayload, CommandState, CorrelationId, DeviceId,
-    DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot, IdempotencyKey, Installation,
-    InstallationId, IntegrationId, IntegrationInstance, MatterClusterDescriptor, MatterConvergence,
-    MatterDescriptorRevision, MatterDesiredState, MatterDeviceType, MatterEndpointDescriptor,
-    MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor, MatterNodeId, MatterOperation,
-    MatterOperationKind, MatterOperationPhase, MatterOperationTarget, MatterProjectedState,
-    MatterProjectionId, MatterStateFreshness, MatterStateRevision, MatterStateValue,
-    MatterSubscriptionId, MatterUnlockAuthorizationId, OnOffCommand, PolicyDecision, PolicyReason,
-    RepairId, RiskClass, SecretRef,
+    CommandEnvelope, CommandErrorCode, CommandId, CommandPayload, CommandState, CorrelationId,
+    DeviceId, DeviceRecord, DeviceSnapshot, EndpointId, EndpointSnapshot, IdempotencyKey,
+    Installation, InstallationId, IntegrationId, IntegrationInstance, MatterClusterDescriptor,
+    MatterConvergence, MatterDescriptorRevision, MatterDesiredState, MatterDeviceType,
+    MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor,
+    MatterNodeId, MatterOperation, MatterOperationKind, MatterOperationPhase,
+    MatterOperationTarget, MatterProjectedState, MatterProjectionId, MatterStateFreshness,
+    MatterStateRevision, MatterStateValue, MatterSubscriptionId, MatterUnlockAuthorizationId,
+    OnOffCommand, PolicyDecision, PolicyReason, RepairId, RiskClass, SecretRef,
 };
 use homemagic_storage::SqliteRepository;
 use rusqlite::Connection;
@@ -273,6 +276,23 @@ fn allow(at: DateTime<Utc>) -> PolicyDecision {
         reasons: BTreeSet::from([PolicyReason::AllowedByGrant]),
         evaluated_at: at,
     }
+}
+
+async fn validate_command(
+    repository: &SqliteRepository,
+    mut command: CommandAggregate,
+    at: DateTime<Utc>,
+) -> TestResult<CommandAggregate> {
+    command.policy = Some(allow(at));
+    command.transition(CommandState::Validated, at)?;
+    repository
+        .transition_command(
+            command.clone(),
+            command.version - 1,
+            audit(&command, Some(CommandState::Received)),
+        )
+        .await?;
+    Ok(command)
 }
 
 fn progress(operation: &MatterOperation) -> MatterOperationProgress {
@@ -680,6 +700,188 @@ async fn desired_state_replacement_and_dispatch_should_be_atomic() -> TestResult
 
     assert_eq!(durable.state, CommandState::Dispatched);
     assert!(dispatch_marker.is_some());
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the scenario keeps pre-dispatch collapse and post-dispatch history in one ordered trace"
+)]
+async fn command_control_should_collapse_undispatched_state_and_preserve_dispatched_history()
+-> TestResult {
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let control = MatterCommandDispatchControl::new(repository.clone(), repository.clone());
+    let now = Utc::now();
+    let first = validate_command(
+        &repository,
+        fixture.create_command("collapse-first", true).await?,
+        now,
+    )
+    .await?;
+    let second = validate_command(
+        &repository,
+        fixture.create_command("collapse-second", false).await?,
+        now + TimeDelta::milliseconds(1),
+    )
+    .await?;
+    let third = validate_command(
+        &repository,
+        fixture.create_command("collapse-third", true).await?,
+        now + TimeDelta::milliseconds(2),
+    )
+    .await?;
+
+    assert!(matches!(
+        control.register_desired(&first, now).await?,
+        DesiredStateRegistration::Managed {
+            desired_revision: 1,
+            superseded_audit: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        control.register_desired(&first, now).await?,
+        DesiredStateRegistration::Managed {
+            desired_revision: 1,
+            superseded_audit: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        control
+            .register_desired(&second, now + TimeDelta::milliseconds(1))
+            .await?,
+        DesiredStateRegistration::Managed {
+            desired_revision: 2,
+            superseded_audit: Some(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        control
+            .register_desired(&third, now + TimeDelta::milliseconds(2))
+            .await?,
+        DesiredStateRegistration::Managed {
+            desired_revision: 3,
+            superseded_audit: Some(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        control.commit_dispatch(&first, now).await?,
+        MatterDispatchAdmission::Superseded(_)
+    ));
+    assert!(matches!(
+        control.commit_dispatch(&second, now).await?,
+        MatterDispatchAdmission::Superseded(_)
+    ));
+    let MatterDispatchAdmission::Committed {
+        command: dispatched,
+        ..
+    } = control
+        .commit_dispatch(&third, now + TimeDelta::milliseconds(3))
+        .await?
+    else {
+        return Err("latest desired state should reach dispatch boundary".into());
+    };
+
+    let first = repository
+        .command(&first.envelope.id)
+        .await?
+        .ok_or("first command missing")?;
+    let second = repository
+        .command(&second.envelope.id)
+        .await?
+        .ok_or("second command missing")?;
+    let slot = repository
+        .matter_desired_slot(&fixture.projection_id)
+        .await?
+        .ok_or("desired slot missing")?;
+    assert_eq!(first.state, CommandState::Cancelled);
+    assert_eq!(
+        first.failure.map(|failure| failure.code),
+        Some(CommandErrorCode::SupersededBeforeDispatch)
+    );
+    assert_eq!(second.state, CommandState::Cancelled);
+    assert_eq!(dispatched.state, CommandState::Dispatched);
+    assert_eq!(slot.desired_revision, 3);
+    assert_eq!(slot.command_id, third.envelope.id);
+    assert!(slot.dispatched_at.is_some());
+
+    let fourth = validate_command(
+        &repository,
+        fixture.create_command("after-dispatch", false).await?,
+        now + TimeDelta::milliseconds(4),
+    )
+    .await?;
+    control
+        .register_desired(&fourth, now + TimeDelta::milliseconds(4))
+        .await?;
+    let historical = repository
+        .command(&dispatched.envelope.id)
+        .await?
+        .ok_or("dispatched history missing")?;
+    let latest = repository
+        .matter_desired_slot(&fixture.projection_id)
+        .await?
+        .ok_or("latest desired slot missing")?;
+
+    assert_eq!(historical.state, CommandState::Dispatched);
+    assert_eq!(latest.desired_revision, 4);
+    assert_eq!(latest.command_id, fourth.envelope.id);
+    assert!(latest.dispatched_at.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_desired_registration_should_serialize_monotonic_revisions() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let control = MatterCommandDispatchControl::new(repository.clone(), repository.clone());
+    let now = Utc::now();
+    let first = validate_command(
+        &repository,
+        fixture.create_command("concurrent-first", true).await?,
+        now,
+    )
+    .await?;
+    control.register_desired(&first, now).await?;
+    let second = validate_command(
+        &repository,
+        fixture.create_command("concurrent-second", false).await?,
+        now + TimeDelta::milliseconds(1),
+    )
+    .await?;
+    let third = validate_command(
+        &repository,
+        fixture.create_command("concurrent-third", true).await?,
+        now + TimeDelta::milliseconds(2),
+    )
+    .await?;
+
+    let (second_registration, third_registration) = tokio::join!(
+        control.register_desired(&second, now + TimeDelta::milliseconds(1)),
+        control.register_desired(&third, now + TimeDelta::milliseconds(2)),
+    );
+    let revisions = [second_registration?, third_registration?]
+        .into_iter()
+        .filter_map(|registration| match registration {
+            DesiredStateRegistration::Managed {
+                desired_revision, ..
+            } => Some(desired_revision),
+            DesiredStateRegistration::Unmanaged => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let slot = repository
+        .matter_desired_slot(&fixture.projection_id)
+        .await?
+        .ok_or("concurrent desired slot missing")?;
+
+    assert_eq!(revisions, BTreeSet::from([2, 3]));
+    assert_eq!(slot.desired_revision, 3);
+    assert!(slot.command_id == second.envelope.id || slot.command_id == third.envelope.id);
     Ok(())
 }
 

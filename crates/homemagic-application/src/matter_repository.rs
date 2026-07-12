@@ -319,6 +319,14 @@ pub trait MatterRepository: Send + Sync {
         projection_id: &MatterProjectionId,
     ) -> Result<Option<StoredMatterProjection>, BoxError>;
 
+    /// Resolves one common command target to its Matter projection.
+    async fn matter_projection_for_target(
+        &self,
+        device_id: &DeviceId,
+        endpoint_id: &EndpointId,
+        capability_schema: &str,
+    ) -> Result<Option<StoredMatterProjection>, BoxError>;
+
     /// Inserts or optimistically replaces one logical subscription.
     async fn store_matter_subscription(
         &self,
@@ -370,6 +378,12 @@ pub trait MatterRepository: Send + Sync {
         slot: MatterDesiredCommandSlot,
         superseded: Option<MatterSupersededCommand>,
     ) -> Result<MatterDesiredSlotOutcome, BoxError>;
+
+    /// Loads the current desired-state slot for one projection.
+    async fn matter_desired_slot(
+        &self,
+        projection_id: &MatterProjectionId,
+    ) -> Result<Option<MatterDesiredCommandSlot>, BoxError>;
 
     /// Records the command dispatch transition and desired-slot decision atomically.
     async fn record_matter_dispatch(&self, write: MatterDispatchWrite) -> Result<(), BoxError>;

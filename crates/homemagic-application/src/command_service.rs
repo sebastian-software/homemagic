@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
-    AccessControlCommand, Actor, ActorId, AuditId, AutomationCausation, CapabilityDescriptor,
+    AccessControlCommand, Actor, ActorId, AutomationCausation, CapabilityDescriptor,
     CapabilitySnapshot, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode,
     CommandFailure, CommandId, CommandPayload, CommandState, ConstraintState, CorrelationId,
     DeviceId, DomainEvent, DomainEventKind, EndpointId, EventId, ExpectedObservation,
@@ -16,8 +16,9 @@ use thiserror::Error;
 
 use crate::{
     BoxError, CanonicalRequestHash, Clock, CommandAuditSink, CommandConfirmation,
-    CommandConfirmationOutcome, CommandCreateOutcome, CommandDispatcher, CommandLimits,
-    CommandRepository, DomainEventSink, FoundationRepository, FoundationWrite, PolicyEvaluator,
+    CommandConfirmationOutcome, CommandCreateOutcome, CommandDispatchControl, CommandDispatcher,
+    CommandLimits, CommandRepository, DesiredStateRegistration, DomainEventSink,
+    FoundationRepository, FoundationWrite, MatterDispatchAdmission, PolicyEvaluator,
 };
 
 const RECOVERY_PAGE: usize = 256;
@@ -118,6 +119,7 @@ pub struct CommandService {
     limits: CommandLimits,
     freshness: FreshnessPolicy,
     clock: Arc<dyn Clock>,
+    dispatch_control: Option<Arc<dyn CommandDispatchControl>>,
 }
 
 impl CommandService {
@@ -137,7 +139,15 @@ impl CommandService {
             limits,
             freshness,
             clock: dependencies.clock,
+            dispatch_control: None,
         }
+    }
+
+    /// Attaches replaceable desired-state coordination to the shared command path.
+    #[must_use]
+    pub fn with_dispatch_control(mut self, control: Arc<dyn CommandDispatchControl>) -> Self {
+        self.dispatch_control = Some(control);
+        self
     }
 
     /// Validates, authorizes, durably records, and optionally dispatches a command.
@@ -388,8 +398,45 @@ impl CommandService {
         if command.envelope.deadline <= now {
             return self.timeout(command, now).await;
         }
-        self.transition(&mut command, CommandState::Dispatched, now)
-            .await?;
+        if let Some(control) = &self.dispatch_control {
+            match control
+                .register_desired(&command, now)
+                .await
+                .map_err(CommandServiceError::Repository)?
+            {
+                DesiredStateRegistration::Unmanaged
+                | DesiredStateRegistration::Managed {
+                    superseded_audit: None,
+                    ..
+                } => {}
+                DesiredStateRegistration::Managed {
+                    superseded_audit: Some(audit),
+                    ..
+                } => self.publish(&audit).await?,
+            }
+            match control
+                .commit_dispatch(&command, now)
+                .await
+                .map_err(CommandServiceError::Repository)?
+            {
+                MatterDispatchAdmission::Unmanaged => {
+                    self.transition(&mut command, CommandState::Dispatched, now)
+                        .await?;
+                }
+                MatterDispatchAdmission::Committed {
+                    command: dispatched,
+                    audit,
+                } => {
+                    command = *dispatched;
+                    self.publish(&audit).await?;
+                }
+                MatterDispatchAdmission::Superseded(durable) => return Ok(*durable),
+                MatterDispatchAdmission::AwaitingUnlockAuthorization => return Ok(command),
+            }
+        } else {
+            self.transition(&mut command, CommandState::Dispatched, now)
+                .await?;
+        }
         match self.dispatcher.dispatch(&command.envelope).await {
             Ok(acknowledgement) => {
                 command.acknowledgement = Some(acknowledgement);
@@ -733,21 +780,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn audit(command: &CommandAggregate, from: Option<CommandState>) -> CommandAuditRecord {
-    CommandAuditRecord {
-        id: AuditId::new(),
-        command_id: command.envelope.id.clone(),
-        sequence: command.version,
-        from,
-        to: command.state,
-        actor_id: command.envelope.actor_id.clone(),
-        policy: command.policy.clone(),
-        failure: command.failure.clone(),
-        acknowledgement: command.acknowledgement.clone(),
-        confirmation: command.confirmation.clone(),
-        correlation_id: command.envelope.correlation_id.clone(),
-        causation_event_id: command.envelope.causation_event_id.clone(),
-        occurred_at: command.updated_at,
-    }
+    crate::matter_commands::command_audit(command, from)
 }
 
 /// Audit sink used where no live fan-out is configured.
