@@ -3,7 +3,7 @@ id: E4-007-03-04
 epic: EPIC-004
 parent: E4-007-03
 title: Expose authenticated bounded durable node inventory
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-03-02]
 adrs: [ADR-0013, ADR-0033, ADR-0034]
@@ -39,7 +39,7 @@ raw controller objects.
 - [x] Operation-to-node result lookup survives restart.
 - [x] Strict Clippy and the targeted inventory contract pass locally.
 - [x] Full local workspace, migration, boundary, and secret-scan gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -52,3 +52,6 @@ raw controller objects.
 - 2026-07-12: All 38 Matter repository contracts, the complete all-feature
   workspace suite, strict Clippy, Matter boundary checks, and secret scans pass
   locally. Commit, push, and public CI remain pending.
+- 2026-07-12: Commits `fdafdda`, `07f2b79`, and `3a6f420` were pushed to
+  `main`. Public CI run `29204953299` passed Linux x86_64 quality and simulator
+  hashes on Linux x86_64 and macOS ARM64. This child issue is done.

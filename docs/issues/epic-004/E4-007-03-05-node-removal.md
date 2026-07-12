@@ -3,7 +3,7 @@ id: E4-007-03-05
 epic: EPIC-004
 parent: E4-007-03
 title: Remove nodes without hiding partial cleanup
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-03-03, E4-007-03-04]
 adrs: [ADR-0014, ADR-0033, ADR-0037, ADR-0040]
@@ -43,3 +43,8 @@ incomplete outcome stays queryable and repairable.
 - [ ] Restart at `removing_node` and `cleaning_secrets` reaches an explicit
   terminal outcome.
 - [ ] Partial cleanup remains listable after database reopen.
+
+## Progress log
+
+- 2026-07-12: E4-007-03-04 completed with public cross-platform CI. This child
+  issue is ready.
