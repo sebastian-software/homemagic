@@ -14,6 +14,7 @@
       "id": "rs-matter",
       "repository": "https://github.com/project-chip/rs-matter.git",
       "revision": "42d3c2211239f5f388ac7f7449c82bb3347912f5",
+      "generated_lockfile_sha256": "2ef10d247e0c00d5d90e0f250bf804284d76b0ec4eae166e143deb98012e7e7a",
       "license": "Apache-2.0",
       "role": "native_controller_and_independent_device_reference",
       "disposition": "full_spike"

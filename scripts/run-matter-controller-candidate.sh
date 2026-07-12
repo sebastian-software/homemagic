@@ -33,6 +33,10 @@ if ! test -f "$workspace/source/Cargo.lock"; then
   lockfile_origin="generated_from_manifest_ranges"
 fi
 lockfile_sha256="$(shasum -a 256 "$workspace/source/Cargo.lock" | awk '{print $1}')"
+expected_lockfile_sha256="$(jq -r --arg id "$candidate_id" '.candidates[] | select(.id == $id) | .generated_lockfile_sha256 // empty' "$manifest")"
+if test -n "$expected_lockfile_sha256"; then
+  test "$lockfile_sha256" = "$expected_lockfile_sha256"
+fi
 
 if test "$candidate_id" = "rust-matc"; then
   cargo test --quiet --manifest-path "$workspace/source/Cargo.toml" --locked
@@ -60,7 +64,7 @@ rust_bytes="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o 
 other_code_bytes="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' -o -name '*.py' -o -name '*.js' -o -name '*.ts' \) -exec wc -c {} + | awk 'END {print $1 + 0}')"
 total_code_bytes="$((rust_bytes + other_code_bytes))"
 rust_share_basis_points="$((rust_bytes * 10000 / total_code_bytes))"
-unsafe_blocks="$( { rg --count-matches '\bunsafe\s+(fn|impl|trait|extern)|\bunsafe\s*\{' "$workspace/source" -g '*.rs' -g '!target/**' || true; } | awk -F: '{sum += $NF} END {print sum + 0}')"
+unsafe_blocks="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f -name '*.rs' -exec grep -Eho '(^|[^[:alnum:]_])unsafe[[:space:]]+(fn|impl|trait|extern)|(^|[^[:alnum:]_])unsafe[[:space:]]*\{' {} + | wc -l | tr -d ' ')"
 native_files="$(find "$workspace/source" -path "$workspace/source/.git" -prune -o -path "$workspace/source/target" -prune -o -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.m' -o -name '*.mm' -o -name '*.swift' \) -print | wc -l | tr -d ' ')"
 default_tree="$(cargo tree --manifest-path "$workspace/source/Cargo.toml" --locked --workspace -e normal --prefix none)"
 default_dependencies="$(sort -u <<<"$default_tree" | wc -l | tr -d ' ')"
@@ -72,9 +76,11 @@ if test "$candidate_id" = "rust-matc"; then
   else
     transitive_native_packages='["btleplug", "dbus", "libdbus-sys"]'
   fi
+  compiled_unsafe_blocks=0
 else
   all_feature_dependencies=null
   transitive_native_packages='[]'
+  compiled_unsafe_blocks=null
 fi
 binary_bytes="$(wc -c < "$binary" | tr -d ' ')"
 binary_format="$(file -b "$binary")"
@@ -100,6 +106,7 @@ jq -n \
   --argjson other_code_bytes "$other_code_bytes" \
   --argjson rust_share_basis_points "$rust_share_basis_points" \
   --argjson unsafe_blocks "$unsafe_blocks" \
+  --argjson compiled_unsafe_blocks "$compiled_unsafe_blocks" \
   --argjson native_files "$native_files" \
   --argjson default_dependencies "$default_dependencies" \
   --argjson all_feature_dependencies "$all_feature_dependencies" \
@@ -117,7 +124,8 @@ jq -n \
       repository_other_code_bytes: $other_code_bytes,
       repository_rust_share_basis_points: $rust_share_basis_points,
       compiled_first_party_rust_share_basis_points: 10000,
-      compiled_first_party_semantic_unsafe_blocks: $unsafe_blocks,
+      repository_semantic_unsafe_blocks: $unsafe_blocks,
+      compiled_first_party_semantic_unsafe_blocks: $compiled_unsafe_blocks,
       compiled_first_party_native_files: $native_files,
       default_normal_dependencies: $default_dependencies,
       all_feature_normal_dependencies: $all_feature_dependencies,
