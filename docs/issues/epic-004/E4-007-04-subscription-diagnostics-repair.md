@@ -6,12 +6,21 @@ title: Expose bounded diagnostics and subscription repair
 status: ready
 priority: high
 depends_on: [E4-007-01, E4-007-03]
-adrs: [ADR-0033, ADR-0034]
+adrs: [ADR-0033, ADR-0034, ADR-0041]
 created: 2026-07-12
 updated: 2026-07-12
 ---
 
 # E4-007-04: Subscription Diagnostics and Repair
+
+## Child issues
+
+| Issue | Status | Outcome |
+| --- | --- | --- |
+| [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Ready | Authenticated bounded read-only diagnostics |
+| [E4-007-04-02](E4-007-04-02-subscription-status.md) | Planned | Deterministic freshness, budgets, and guidance |
+| [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Planned | Explicit gap-read and resubscribe workflow |
+| [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Planned | Restart, exhaustion, retention, and exit evidence |
 
 ## Child issues
 
@@ -49,6 +58,9 @@ raw protocol mutation access.
 ## Progress log
 
 - 2026-07-12: E4-007-03 completed with public cross-platform CI. This issue is
+  ready.
+- 2026-07-12: Decomposed into four dependency-ordered slices. ADR-0041 fixes
+  the read-only diagnostics versus explicit repair boundary; E4-007-04-01 is
   ready.
 - 2026-07-12: Decomposed into a read-only diagnostic slice followed by an
   explicit mutation slice so diagnostic access cannot imply repair authority.
