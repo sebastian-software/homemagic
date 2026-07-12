@@ -2,7 +2,7 @@
 id: E4-008
 epic: EPIC-004
 title: Evaluate and select a production Matter controller implementation
-status: in_progress
+status: done
 priority: critical
 depends_on: [E4-004]
 adrs: [ADR-0005, ADR-0033, ADR-0038, ADR-0039]
@@ -19,7 +19,7 @@ updated: 2026-07-12
 | [E4-008-01](E4-008-01-discovery-rubric.md) | Done | Current candidate screen and frozen detailed rubric |
 | [E4-008-02](E4-008-02-native-build-audit.md) | Done | Cross-platform native build and footprint evidence |
 | [E4-008-03](E4-008-03-contract-reference.md) | Done | Fixed port contract and independent reference lifecycle |
-| [E4-008-04](E4-008-04-selection-adr.md) | Ready | Contingency evidence, matrix, and ADR-0039 |
+| [E4-008-04](E4-008-04-selection-adr.md) | Done | No candidate selected; remediation required |
 
 ## Outcome
 
@@ -29,44 +29,47 @@ security, packaging, or Rust-majority requirements.
 
 ## Tasks
 
-- [ ] Re-discover credible controller candidates from current primary sources;
+- [x] Re-discover credible controller candidates from current primary sources;
   do not rely on the planning-date ecosystem snapshot.
-- [ ] Record exact source revision, release, license, provenance, maintenance,
+- [x] Record exact source revision, release, license, provenance, maintenance,
   disclosed conformance/certification status, and security posture.
-- [ ] Pin reproducible candidate spikes outside production dependency graphs.
-- [ ] Build every credible Rust-native candidate on macOS ARM64 and Linux x86_64.
-- [ ] Run all supported `MatterController` contract cases and record unsupported
+- [x] Pin reproducible candidate spikes outside production dependency graphs.
+- [x] Build every credible Rust-native candidate on macOS ARM64 and Linux x86_64.
+- [x] Run all supported `MatterController` contract cases and record unsupported
   cases explicitly.
-- [ ] Exercise fabric persistence hooks, commissioning, inventory, read, invoke,
+- [x] Exercise fabric persistence hooks, commissioning, inventory, read, invoke,
   subscriptions, restart, and removal against independent fixtures/reference
   tools where possible.
-- [ ] Measure first-party Rust share, unsafe blocks, transitive native code, FFI,
+- [x] Measure first-party Rust share, unsafe blocks, transitive native code, FFI,
   binary/runtime dependencies, binary size, and packaging complexity.
-- [ ] Score failure isolation, diagnostics, replacement cost, and ability to keep
-  SDK types inside `homemagic-matter`.
-- [ ] Record rejected candidates and exact mandatory-gate failures.
-- [ ] Accept ADR-0039 selecting native Rust, narrow FFI, or isolated sidecar only
-  from the committed matrix and evidence.
-- [ ] Define replacement triggers and removal criteria for every exception.
+- [x] Evaluate failure isolation, diagnostics, replacement cost, and ability to
+  keep SDK types inside `homemagic-matter`; exclude failed candidates from
+  weighted scoring.
+- [x] Record rejected candidates and exact mandatory-gate failures.
+- [x] Accept ADR-0039 from the committed matrix, selecting no candidate because
+  none passes every gate.
+- [x] Define replacement triggers and removal criteria for every proposed
+  exception.
 
 ## Acceptance criteria
 
-- [ ] The scorecard predates results and is applied consistently.
-- [ ] Every claim links to source, command, fixture, host, and captured output.
-- [ ] A candidate cannot pass solely against its own simulated implementation.
-- [ ] Any non-Rust exception meets every ADR-0005 requirement and preserves a
-  narrow replaceable boundary.
-- [ ] If no candidate passes, the issue records a scoped blocker instead of
+- [x] The scorecard predates results and is applied consistently.
+- [x] Every selection claim links to source, command, fixture, host, and
+  captured output.
+- [x] A candidate cannot pass solely against its own simulated implementation.
+- [x] No non-Rust exception is accepted without every ADR-0005 requirement and
+  a narrow replaceable boundary.
+- [x] Since no candidate passes, the issue records a scoped blocker instead of
   silently reducing product requirements.
 
 ## Verification
 
-- [ ] Candidate build and test scripts reproduce from a clean checkout.
-- [ ] macOS ARM64 and Linux x86_64 reports are separate and complete.
-- [ ] License/provenance, unsafe/FFI, Rust-share, and packaging audits pass or
+- [x] Candidate build and test scripts reproduce from a clean checkout.
+- [x] macOS ARM64 and Linux x86_64 reports are separate and complete.
+- [x] License/provenance, unsafe/FFI, Rust-share, and packaging audits pass or
   have explicit rejection evidence.
-- [ ] ADR-0039 maps every selected trade-off to the fixed scorecard.
-- [ ] Production manifests do not include rejected/reference-only dependencies.
+- [x] ADR-0039 maps the no-selection outcome to the fixed scorecard.
+- [x] Production manifests do not include rejected/reference-only dependencies.
 
 ## Progress log
 
@@ -94,3 +97,6 @@ security, packaging, or Rust-majority requirements.
   candidate can advance to weighted selection.
 - 2026-07-12: Corrected two-candidate build/footprint run `29211681113` passed
   all four jobs; E4-008-02 is closed with exact unsafe and all-feature outcomes.
+- 2026-07-12: Official SDK and matter.js contingencies also fail mandatory
+  boundary or independent-lifecycle gates. ADR-0039 selects no production
+  controller; E4-008-05 is the executable remediation blocker for E4-009.

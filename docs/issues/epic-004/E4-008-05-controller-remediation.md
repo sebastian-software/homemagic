@@ -1,0 +1,48 @@
+---
+id: E4-008-05
+epic: EPIC-004
+title: Resolve the Matter controller selection blocker
+status: ready
+priority: critical
+depends_on: [E4-008-04]
+adrs: [ADR-0005, ADR-0038, ADR-0039]
+created: 2026-07-12
+updated: 2026-07-12
+---
+
+# E4-008-05: Controller Selection Remediation
+
+## Outcome
+
+At least one candidate passes every unchanged ADR-0038 mandatory gate, or the
+blocker is narrowed to an upstream protocol defect with a reproducible fixture
+and no production compatibility claim.
+
+## Tasks
+
+- [ ] Add secret-safe commissioning-stage instrumentation around matter.js and
+  record the last completed Matter stage before the independent timeout.
+- [ ] Build a pinned official ConnectedHomeIP on-network all-clusters/light
+  device as a second independent fixture on both hosts.
+- [ ] Run the same commission, inventory, read, subscribe, invoke, process
+  restart, and removal lifecycle against rs-matter and the official fixture.
+- [ ] Classify any implementation-specific incompatibility without weakening
+  the requirement for at least one complete independent lifecycle per host.
+- [ ] If matter.js passes, implement the inherited-pipe private protocol,
+  reverse Rust-owned secret driver, cancellation, partial outcomes, event
+  windows, supervision, and SDK-neutral contract suite.
+- [ ] Produce pruned signed/runtime-package evidence with bundled pinned Node,
+  license closure, upgrade/rollback, crash, missing-runtime, downgrade, and
+  secret-canary tests.
+- [ ] If matter.js still fails, time-box the smallest ConnectedHomeIP opaque C
+  adapter or upstream Rust fixes and repeat the same gates.
+- [ ] Accept a superseding controller-selection ADR only after all evidence is
+  committed and both host jobs pass.
+
+## Verification
+
+- [ ] No setup payload, fabric key, or certificate private material appears in
+  logs, reports, crash output, or ordinary persistence.
+- [ ] Candidate self-tests remain separate from independent interoperability.
+- [ ] Production Cargo manifests remain free of rejected/reference tooling.
+- [ ] E4-009 stays blocked until a superseding ADR names one passing boundary.

@@ -2,9 +2,9 @@
 id: E4-009
 epic: EPIC-004
 title: Integrate the selected production Matter controller
-status: planned
+status: blocked
 priority: critical
-depends_on: [E4-005, E4-006, E4-008]
+depends_on: [E4-005, E4-006, E4-008, E4-008-05]
 adrs: [ADR-0005, ADR-0008, ADR-0033, ADR-0034, ADR-0037, ADR-0038, ADR-0039]
 created: 2026-07-12
 updated: 2026-07-12
@@ -66,3 +66,6 @@ with all SDK/native behavior isolated inside `homemagic-matter`.
 ## Progress log
 
 - 2026-07-12: Planned behind evidence-based ADR-0039 selection.
+- 2026-07-12: ADR-0039 selects no production controller because every candidate
+  fails a mandatory gate. E4-008-05 must produce a passing boundary and a
+  superseding ADR before this issue can become ready.

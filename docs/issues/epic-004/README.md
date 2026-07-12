@@ -50,12 +50,13 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | Done | E4-007-05-01 | Immediate mutations and sensitive exchange |
 | [E4-007-05-03](E4-007-05-03-operation-events.md) | Done | E4-007-05-02 | Actor-filtered operation events |
 | [E4-007-05-04](E4-007-05-04-examples-exit.md) | Done | E4-007-05-03 | Executable examples and Track A exit evidence |
-| [E4-008](E4-008-controller-feasibility.md) | In progress | E4-004 | Reproducible candidate evidence and accepted selection ADR |
+| [E4-008](E4-008-controller-feasibility.md) | Done | E4-004 | Reproducible evidence; no candidate passes mandatory gates |
 | [E4-008-01](E4-008-01-discovery-rubric.md) | Done | E4-004 | Current candidate screen and frozen detailed rubric |
 | [E4-008-02](E4-008-02-native-build-audit.md) | Done | E4-008-01 | Cross-platform native build and footprint evidence |
-| [E4-008-03](E4-008-03-contract-reference.md) | Ready | E4-008-02 | Fixed contract and independent reference lifecycle |
-| [E4-008-04](E4-008-04-selection-adr.md) | Planned | E4-008-03 | Evidence matrix and ADR-0039 |
-| [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
+| [E4-008-03](E4-008-03-contract-reference.md) | Done | E4-008-02 | Fixed contract and independent reference lifecycle |
+| [E4-008-04](E4-008-04-selection-adr.md) | Done | E4-008-03 | No-selection matrix and ADR-0039 |
+| [E4-008-05](E4-008-05-controller-remediation.md) | Ready | E4-008-04 | Resolve independent lifecycle and boundary blockers |
+| [E4-009](E4-009-production-controller-adapter.md) | Blocked | E4-005, E4-006, E4-008, E4-008-05 | Await passing controller selection |
 | [E4-010](E4-010-portability-interoperability.md) | Planned | E4-007, E4-009 | Protected fabric portability and reference interoperability |
 | [E4-011](E4-011-matter-exit-audit.md) | Planned | E4-010 | Operations, compatibility, platform, hardware, and exit evidence |
 
@@ -202,3 +203,6 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   final repository CI.
 - 2026-07-12: E4-008-02 passed final repository CI run `29210237059`;
   E4-008-03 is ready.
+- 2026-07-12: E4-008 completed the fixed gate-first matrix. No candidate passes
+  every mandatory gate, ADR-0039 selects no production controller, E4-008-05 is
+  ready for remediation, and E4-009 is blocked.

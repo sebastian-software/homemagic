@@ -60,10 +60,11 @@ fabric without learning Matter cluster internals.
 
 ## Required decisions
 
-- [ ] E4.D1: Benchmark credible Rust-native controller libraries against required
+- [x] E4.D1: Benchmark credible Rust-native controller libraries against required
   controller, commissioning, subscription, persistence, and platform features.
-- [ ] E4.D2: Accept an ADR selecting native Rust, narrowly scoped FFI, or an
-  isolated sidecar, including the ADR-0005 evidence for any exception.
+- [x] E4.D2: Apply the fixed selection ADR. ADR-0039 selects no production
+  candidate and accepts no ADR-0005 exception because all boundaries fail a
+  mandatory gate.
 - [x] E4.D3: Add an ADR for fabric secret storage, backup, restore, and ownership.
   Evidence: [ADR-0037](../adr/0037-own-and-port-matter-fabric-secrets.md).
 - [x] E4.D4: Define Matter data-model-to-capability mapping and extension rules.
@@ -83,7 +84,8 @@ fabric without learning Matter cluster internals.
 - [ ] Restart the controller and prove fabric/node persistence.
 - [ ] Measure first-party/non-Rust source and binary dependencies.
 - [ ] Document maintenance activity, license, conformance status, and known gaps.
-- [ ] Complete E4.D2 before production adapter implementation.
+- [x] Complete E4.D2 before production adapter implementation. ADR-0039 blocks
+  production work pending E4-008-05.
 
 ## Workstream E4.2: Controller and fabric lifecycle
 
@@ -206,3 +208,7 @@ fabric without learning Matter cluster internals.
   desired/reported state, durable operation contracts, normalized events,
   redacted errors, and an object-safe async controller port. Full workspace and
   Rustdoc gates plus the new dependency guard passed; E4-003 and E4-004 are ready.
+- 2026-07-12: E4-008 completed current candidate discovery and the fixed
+  gate-first evaluation. ADR-0039 selects no production controller; remediation
+  E4-008-05 blocks E4-009 without reducing the Rust, secret, lifecycle, or
+  packaging requirements.

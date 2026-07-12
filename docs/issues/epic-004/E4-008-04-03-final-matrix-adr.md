@@ -3,7 +3,7 @@ id: E4-008-04-03
 epic: EPIC-004
 parent: E4-008-04
 title: Commit the final controller matrix and ADR-0039
-status: planned
+status: done
 priority: critical
 depends_on: [E4-008-04-01, E4-008-04-02]
 adrs: [ADR-0005, ADR-0038, ADR-0039]
@@ -21,9 +21,9 @@ weakening the contract.
 
 ## Verification
 
-- [ ] Failed mandatory gates exclude weighted scoring.
-- [ ] Every remaining score is reproducible from committed per-host evidence.
-- [ ] ADR-0005 exception scope, isolation, Rust share, packaging, replacement
+- [x] Failed mandatory gates exclude weighted scoring.
+- [x] No candidate remains eligible for a weighted score; every gate result
+  links to committed per-host evidence.
+- [x] ADR-0005 exception scope, isolation, Rust share, packaging, replacement
   trigger, and removal criteria are explicit.
-- [ ] E4-009 is marked ready only when a production adapter can satisfy the
-  fixed port; otherwise its blocker names the required remediation issue.
+- [x] E4-009 remains blocked and names E4-008-05 as the required remediation.
