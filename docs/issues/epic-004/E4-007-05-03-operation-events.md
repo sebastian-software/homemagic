@@ -3,7 +3,7 @@ id: E4-007-05-03
 epic: EPIC-004
 parent: E4-007-05
 title: Stream actor-filtered durable Matter operation events
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-05-02]
 adrs: [ADR-0012, ADR-0013, ADR-0032, ADR-0042]

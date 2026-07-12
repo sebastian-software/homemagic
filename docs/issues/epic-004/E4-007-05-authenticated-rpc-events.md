@@ -18,8 +18,8 @@ updated: 2026-07-12
 | Issue | Status | Outcome |
 | --- | --- | --- |
 | [E4-007-05-01](E4-007-05-01-rpc-contracts-reads.md) | Done | Versioned authenticated read contracts |
-| [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | In progress | Immediate mutations and sensitive exchange |
-| [E4-007-05-03](E4-007-05-03-operation-events.md) | Planned | Actor-filtered durable operation events |
+| [E4-007-05-02](E4-007-05-02-sensitive-mutations.md) | Done | Immediate mutations and sensitive exchange |
+| [E4-007-05-03](E4-007-05-03-operation-events.md) | Ready | Actor-filtered durable operation events |
 | [E4-007-05-04](E4-007-05-04-examples-exit.md) | Planned | Executable examples and Track A exit evidence |
 
 ## Outcome
@@ -68,3 +68,5 @@ normal device-action API.
 - 2026-07-12: E4-007-05-02 mutation admission, sensitive exchange, and
   daemon-owned execution handoff are implemented and pass all local gates;
   public CI remains pending.
+- 2026-07-12: E4-007-05-02 passed public CI run `29208555337` and is done;
+  E4-007-05-03 is ready.

@@ -3,7 +3,7 @@ id: E4-007-05-02
 epic: EPIC-004
 parent: E4-007-05
 title: Admit Matter mutations and isolate sensitive exchange
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-05-01]
 adrs: [ADR-0013, ADR-0014, ADR-0035, ADR-0037, ADR-0042]
@@ -39,7 +39,7 @@ common command service.
 
 - [x] Success, duplicate, conflict, denied, timeout, restart, and canary tests pass.
 - [x] Common `commands.execute` still controls simulated light and lock state.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -48,3 +48,6 @@ common command service.
   governed unlock delegation, executable schemas, and SQLite canary coverage.
   Full local workspace tests, strict Clippy, Matter boundaries, and secret scans
   pass; public CI remains pending.
+- 2026-07-12: Public CI run `29208555337` passed Linux x86_64 Rust quality and
+  Linux x86_64/macOS ARM64 simulator verification. This issue is done;
+  E4-007-05-03 is ready.
