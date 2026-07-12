@@ -3,11 +3,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
-    Actor, ActorId, AuditId, AutomationCausation, CapabilityDescriptor, CapabilitySnapshot,
-    CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode, CommandFailure,
-    CommandId, CommandPayload, CommandState, ConstraintState, CorrelationId, DeviceId, DomainEvent,
-    DomainEventKind, EndpointId, EventId, ExpectedObservation, FreshnessPolicy, FreshnessState,
-    IdempotencyKey, OnOffCommand, PolicyInput, PositionCommand, RiskClass,
+    AccessControlCommand, Actor, ActorId, AuditId, AutomationCausation, CapabilityDescriptor,
+    CapabilitySnapshot, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode,
+    CommandFailure, CommandId, CommandPayload, CommandState, ConstraintState, CorrelationId,
+    DeviceId, DomainEvent, DomainEventKind, EndpointId, EventId, ExpectedObservation,
+    FreshnessPolicy, FreshnessState, IdempotencyKey, OnOffCommand, PolicyInput, PositionCommand,
+    RiskClass,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -695,6 +696,9 @@ fn requested_descriptor(
         CommandPayload::OnOff(_) => ("on_off", RiskClass::Comfort),
         CommandPayload::Level(_) => ("level", RiskClass::Comfort),
         CommandPayload::Position(_) => ("position", RiskClass::Mechanical),
+        CommandPayload::AccessControl(
+            AccessControlCommand::Lock | AccessControlCommand::Unlock,
+        ) => ("access_control", RiskClass::Security),
     };
     CapabilityDescriptor::new(name, 1, risk).map_err(|_| CommandServiceError::InvalidDescriptor)
 }

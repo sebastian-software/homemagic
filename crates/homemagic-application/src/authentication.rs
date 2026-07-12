@@ -5,7 +5,7 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::{Algorithm, Argon2, Params, Version};
 use async_trait::async_trait;
 use chrono::Utc;
-use homemagic_domain::{Actor, ActorGrant, ActorId, InstallationId};
+use homemagic_domain::{Actor, ActorGrant, ActorId, ActorKind, InstallationId};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -75,9 +75,25 @@ impl ActorAuthentication {
         installation_id: InstallationId,
         name: impl Into<String>,
     ) -> Result<(Actor, ActorToken), ActorManagementError> {
+        self.bootstrap_principal(installation_id, name, ActorKind::User)
+            .await
+    }
+
+    /// Creates an enabled actor with an explicit non-mutable principal class.
+    ///
+    /// # Errors
+    ///
+    /// Returns a secret-safe management error when hashing or persistence fails.
+    pub async fn bootstrap_principal(
+        &self,
+        installation_id: InstallationId,
+        name: impl Into<String>,
+        kind: ActorKind,
+    ) -> Result<(Actor, ActorToken), ActorManagementError> {
         let actor = Actor {
             id: ActorId::new(),
             installation_id,
+            kind,
             name: name.into(),
             enabled: true,
             created_at: Utc::now(),

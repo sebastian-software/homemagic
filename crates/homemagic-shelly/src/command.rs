@@ -487,6 +487,7 @@ fn status_matches(payload: &CommandPayload, status: &Map<String, Value>) -> bool
             status.get("current_pos").and_then(Value::as_f64),
             status.get("state").and_then(Value::as_str),
         ),
+        CommandPayload::AccessControl(_) => false,
     }
 }
 

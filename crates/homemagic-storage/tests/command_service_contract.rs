@@ -204,6 +204,7 @@ impl Fixture {
         let actor = Actor {
             id: homemagic_domain::ActorId::new(),
             installation_id,
+            kind: homemagic_domain::ActorKind::Agent,
             name: "Agent".to_owned(),
             enabled: true,
             created_at: now,

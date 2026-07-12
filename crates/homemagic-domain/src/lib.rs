@@ -21,11 +21,11 @@ pub use capability::{
     CapabilityDescriptor, CapabilityDescriptorError, CapabilitySnapshot, RiskClass,
 };
 pub use command::{
-    Actor, ActorGrant, AdapterAcknowledgement, CapacityState, CommandAction, CommandAggregate,
-    CommandAuditRecord, CommandEnvelope, CommandErrorCode, CommandFailure, CommandPayload,
-    CommandState, CommandTransitionError, ConstraintState, ExpectedObservation, GrantScope,
-    IdempotencyKey, IdempotencyKeyError, LevelCommand, ObservedConfirmation, OnOffCommand,
-    PolicyDecision, PolicyInput, PolicyReason, PositionCommand,
+    AccessControlCommand, Actor, ActorGrant, ActorKind, AdapterAcknowledgement, CapacityState,
+    CommandAction, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode,
+    CommandFailure, CommandPayload, CommandState, CommandTransitionError, ConstraintState,
+    ExpectedObservation, GrantScope, IdempotencyKey, IdempotencyKeyError, LevelCommand,
+    ObservedConfirmation, OnOffCommand, PolicyDecision, PolicyInput, PolicyReason, PositionCommand,
 };
 pub use configuration::{Installation, IntegrationInstance, Space};
 pub use device::{

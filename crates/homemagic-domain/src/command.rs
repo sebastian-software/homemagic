@@ -16,12 +16,32 @@ pub struct Actor {
     pub id: ActorId,
     /// Installation this actor can be granted access to.
     pub installation_id: InstallationId,
+    /// Principal class used for non-delegable interactive authorization.
+    #[serde(default)]
+    pub kind: ActorKind,
     /// Mutable operator-facing name.
     pub name: String,
     /// Disabled actors cannot authenticate or execute commands.
     pub enabled: bool,
     /// Creation time retained with audit history.
     pub created_at: DateTime<Utc>,
+}
+
+/// Persisted principal class independent from mutable actor names.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorKind {
+    /// Historical actor whose principal class was not recorded.
+    #[default]
+    Legacy,
+    /// Authenticated human operator eligible for interactive approval.
+    User,
+    /// Agent principal that can never mint non-delegable approval.
+    Agent,
+    /// Automation runtime principal.
+    Automation,
+    /// Internal service or adapter principal.
+    Service,
 }
 
 /// Validated caller-chosen idempotency key scoped to one actor.
@@ -81,6 +101,8 @@ pub enum CommandPayload {
     Level(LevelCommand),
     /// Mechanical position command for `position.v1`.
     Position(PositionCommand),
+    /// Security-sensitive lock state for `access_control.v1`.
+    AccessControl(AccessControlCommand),
 }
 
 impl CommandPayload {
@@ -91,6 +113,7 @@ impl CommandPayload {
             Self::OnOff(_) => "on_off.v1",
             Self::Level(_) => "level.v1",
             Self::Position(_) => "position.v1",
+            Self::AccessControl(_) => "access_control.v1",
         }
     }
 
@@ -102,6 +125,7 @@ impl CommandPayload {
     pub const fn validate(&self) -> Result<(), CommandErrorCode> {
         match self {
             Self::OnOff(_)
+            | Self::AccessControl(_)
             | Self::Position(
                 PositionCommand::Open | PositionCommand::Close | PositionCommand::Stop,
             ) => Ok(()),
@@ -126,6 +150,16 @@ impl CommandPayload {
             }
         }
     }
+}
+
+/// Governed access-control state command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum AccessControlCommand {
+    /// Secure the exact access-control endpoint.
+    Lock,
+    /// Unsecure the endpoint after separate interactive authorization.
+    Unlock,
 }
 
 /// Binary common-capability command.
@@ -438,6 +472,8 @@ pub enum CommandAction {
     Cancel,
     /// Read command transition audit history.
     ReadAudit,
+    /// Interactively authorize one exact pending unlock command.
+    ApproveUnlock,
 }
 
 /// Grant scope; security policy may reject broad scopes despite a match.
@@ -598,6 +634,8 @@ pub enum PolicyReason {
     MechanicalGrantRequired,
     /// Security risk lacked an exact capability grant.
     SecurityExactGrantRequired,
+    /// Non-user principals cannot mint interactive unlock authorization.
+    InteractiveUserRequired,
     /// Current device observation was not fresh enough.
     StateNotFresh,
     /// Required calibration or safety constraint was unavailable.
@@ -667,6 +705,39 @@ mod tests {
         });
         assert_eq!(payload.validate(), Err(CommandErrorCode::ValueOutOfRange));
         assert_eq!(payload.schema(), "level.v1");
+    }
+
+    #[test]
+    fn access_control_payload_should_be_typed_and_schema_bound() {
+        let lock = CommandPayload::AccessControl(AccessControlCommand::Lock);
+        let unlock = CommandPayload::AccessControl(AccessControlCommand::Unlock);
+        let encoded = serde_json::to_value(&unlock)
+            .unwrap_or_else(|error| panic!("access-control payload: {error}"));
+
+        assert_eq!(lock.schema(), "access_control.v1");
+        assert_eq!(unlock.validate(), Ok(()));
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "capability": "access_control",
+                "command": {"action": "unlock"}
+            })
+        );
+    }
+
+    #[test]
+    fn historical_actor_without_kind_should_decode_as_legacy() {
+        let value = serde_json::json!({
+            "id": ActorId::new(),
+            "installation_id": InstallationId::new(),
+            "name": "Historical actor",
+            "enabled": true,
+            "created_at": Utc::now()
+        });
+        let actor = serde_json::from_value::<Actor>(value)
+            .unwrap_or_else(|error| panic!("historical actor: {error}"));
+
+        assert_eq!(actor.kind, ActorKind::Legacy);
     }
 
     #[test]

@@ -1748,6 +1748,7 @@ mod tests {
         Actor {
             id: ActorId::new(),
             installation_id: InstallationId::new(),
+            kind: homemagic_domain::ActorKind::User,
             name: "API test".to_owned(),
             enabled: true,
             created_at: Utc::now(),
@@ -1905,6 +1906,7 @@ mod tests {
         let actor = Actor {
             id: ActorId::new(),
             installation_id,
+            kind: homemagic_domain::ActorKind::Agent,
             name: "Agent".to_owned(),
             enabled: true,
             created_at: now,

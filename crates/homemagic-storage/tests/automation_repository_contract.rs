@@ -159,6 +159,7 @@ fn actor_at(now: chrono::DateTime<Utc>, name: &str) -> Actor {
     Actor {
         id: ActorId::new(),
         installation_id: InstallationId::new(),
+        kind: homemagic_domain::ActorKind::User,
         name: name.to_owned(),
         enabled: true,
         created_at: now,
@@ -185,6 +186,7 @@ async fn lifecycle_sensitive_version_should_require_exact_authenticated_approval
     let actor = Actor {
         id: stored.document.provenance.author_id.clone(),
         installation_id: InstallationId::new(),
+        kind: homemagic_domain::ActorKind::User,
         name: "Sensitive automation owner".to_owned(),
         enabled: true,
         created_at: stored.document.created_at,
@@ -247,6 +249,7 @@ async fn lifecycle_run_cancel_should_atomically_cancel_timer_and_append_outcome(
     let actor = Actor {
         id: stored.document.provenance.author_id.clone(),
         installation_id: InstallationId::new(),
+        kind: homemagic_domain::ActorKind::User,
         name: "Run owner".to_owned(),
         enabled: true,
         created_at: now,

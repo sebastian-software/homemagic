@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    ActorGrant, ActorId, CapacityState, DeviceId, FreshnessState, GrantScope, PolicyDecision,
-    PolicyInput, PolicyReason, RiskClass,
+    ActorGrant, ActorId, ActorKind, CapacityState, CommandAction, DeviceId, FreshnessState,
+    GrantScope, PolicyDecision, PolicyInput, PolicyReason, RiskClass,
 };
 use thiserror::Error;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -22,6 +22,9 @@ impl PolicyEvaluator {
         let mut reasons = BTreeSet::new();
         if !input.actor.enabled {
             reasons.insert(PolicyReason::ActorDisabled);
+        }
+        if input.action == CommandAction::ApproveUnlock && input.actor.kind != ActorKind::User {
+            reasons.insert(PolicyReason::InteractiveUserRequired);
         }
         let scoped = grants
             .iter()
@@ -261,6 +264,7 @@ mod tests {
             actor: Actor {
                 id: ActorId::new(),
                 installation_id: InstallationId::new(),
+                kind: ActorKind::Agent,
                 name: "Agent".to_owned(),
                 enabled: true,
                 created_at: Utc::now(),
@@ -364,6 +368,76 @@ mod tests {
 
         assert!(!PolicyEvaluator::evaluate(&input, &[broad]).allowed);
         assert!(PolicyEvaluator::evaluate(&input, &[exact]).allowed);
+    }
+
+    #[test]
+    fn unlock_approval_should_require_user_principal_and_exact_grant() {
+        let mut input = input(RiskClass::Security);
+        input.actor.kind = ActorKind::User;
+        input.action = CommandAction::ApproveUnlock;
+        input.schema = "access_control.v1".to_owned();
+        let mut exact = grant(
+            &input,
+            GrantScope::Capability {
+                device_id: input.device_id.clone(),
+                endpoint_id: input.endpoint_id.clone(),
+                schema: input.schema.clone(),
+            },
+            RiskClass::Security,
+        );
+        exact.actions = BTreeSet::from([CommandAction::ApproveUnlock]);
+
+        assert!(PolicyEvaluator::evaluate(&input, &[exact]).allowed);
+    }
+
+    #[test]
+    fn unlock_approval_should_reject_every_non_user_principal_and_broad_scope() {
+        let mut input = input(RiskClass::Security);
+        input.action = CommandAction::ApproveUnlock;
+        input.schema = "access_control.v1".to_owned();
+        let kinds = [
+            ActorKind::Legacy,
+            ActorKind::Agent,
+            ActorKind::Automation,
+            ActorKind::Service,
+        ];
+        for kind in kinds {
+            input.actor.kind = kind;
+            let mut exact = grant(
+                &input,
+                GrantScope::Capability {
+                    device_id: input.device_id.clone(),
+                    endpoint_id: input.endpoint_id.clone(),
+                    schema: input.schema.clone(),
+                },
+                RiskClass::Security,
+            );
+            exact.actions = BTreeSet::from([CommandAction::ApproveUnlock]);
+            let decision = PolicyEvaluator::evaluate(&input, &[exact]);
+            assert!(
+                decision
+                    .reasons
+                    .contains(&PolicyReason::InteractiveUserRequired),
+                "{kind:?} unexpectedly passed the interactive-user gate"
+            );
+        }
+
+        input.actor.kind = ActorKind::User;
+        for scope in [
+            GrantScope::Installation {
+                installation_id: input.actor.installation_id.clone(),
+            },
+            GrantScope::Space {
+                space_id: input.spaces.iter().next().cloned().unwrap_or_default(),
+            },
+            GrantScope::Device {
+                device_id: input.device_id.clone(),
+            },
+        ] {
+            let mut broad = grant(&input, scope, RiskClass::Security);
+            broad.actions = BTreeSet::from([CommandAction::ApproveUnlock]);
+            assert!(!PolicyEvaluator::evaluate(&input, &[broad]).allowed);
+        }
     }
 
     #[test]

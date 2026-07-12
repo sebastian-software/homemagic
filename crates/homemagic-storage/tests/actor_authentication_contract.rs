@@ -7,7 +7,7 @@ use chrono::Utc;
 use homemagic_application::{
     ActorAuthentication, CommandRepository, FoundationRepository, FoundationWrite,
 };
-use homemagic_domain::{Installation, InstallationId};
+use homemagic_domain::{ActorKind, Installation, InstallationId};
 use homemagic_storage::SqliteRepository;
 
 type TestResult = Result<(), Box<dyn Error + Send + Sync>>;
@@ -31,7 +31,7 @@ async fn token_should_authenticate_rotate_disable_and_never_persist_raw() -> Tes
         .await?;
     let authentication = ActorAuthentication::new(repository.clone());
     let (actor, token) = authentication
-        .bootstrap(installation_id, "Automation agent")
+        .bootstrap_principal(installation_id, "Automation agent", ActorKind::Agent)
         .await?;
     let token_value = token.expose().to_owned();
     let security = repository
