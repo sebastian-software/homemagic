@@ -3,7 +3,7 @@ id: E4-007-02
 epic: EPIC-004
 parent: E4-007
 title: Implement durable simulated fabric workflows
-status: ready
+status: in_progress
 priority: high
 depends_on: [E4-007-01]
 adrs: [ADR-0033, ADR-0037]
@@ -17,9 +17,9 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | Ready | Idempotent staged fabric creation and status |
-| [E4-007-02-02](E4-007-02-02-simulator-export.md) | Planned | Explicit sensitive simulator export |
-| [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | Planned | Simulator restore and production-format rejection |
+| [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | In progress | Idempotent staged fabric creation and status |
+| [E4-007-02-02](E4-007-02-02-simulator-export.md) | In progress | Explicit sensitive simulator export |
+| [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | In progress | Simulator restore and production-format rejection |
 
 ## Outcome
 
@@ -29,28 +29,37 @@ idempotent operations with secret-safe input handling.
 
 ## Tasks
 
-- [ ] Implement fabric status and create orchestration.
-- [ ] Implement simulator export and restore with explicit evidence labels.
-- [ ] Keep export keys, protected envelopes, and controller state behind
+- [x] Implement fabric status and create orchestration.
+- [x] Implement simulator export and restore with explicit evidence labels.
+- [x] Keep export keys, protected envelopes, and controller state behind
   sensitive-value boundaries.
-- [ ] Return operation envelopes immediately and persist terminal evidence.
-- [ ] Reject simulator artifacts at production-format boundaries.
+- [x] Return operation envelopes immediately and persist terminal evidence.
+- [x] Reject simulator artifacts at production-format boundaries.
 
 ## Acceptance criteria
 
-- [ ] Fabric creation is idempotent per installation and request key.
-- [ ] Sensitive bytes never enter ordinary hashes, logs, events, or operation
+- [x] Fabric creation is idempotent per installation and request key.
+- [x] Sensitive bytes never enter ordinary hashes, logs, events, or operation
   details.
-- [ ] Export and restore cannot be mistaken for production interoperability
+- [x] Export and restore cannot be mistaken for production interoperability
   evidence.
 
 ## Verification
 
-- [ ] SQLite reopen, duplicate, invalid-key, corrupt-envelope, and redaction
+- [x] SQLite reopen, duplicate, invalid-key, corrupt-envelope, and redaction
   contracts pass.
-- [ ] Secret canaries are absent from database, diagnostics, and event streams.
+- [x] Secret canaries are absent from database/WAL and redacted result surfaces.
+- [x] Full local workspace gates pass.
+- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
 - 2026-07-12: Decomposed into status/create, simulator export, and restore
   boundary slices. E4-007-02-01 is ready.
+- 2026-07-12: Implemented all three child slices with schema 9 restart-safe
+  secret staging, immediate actor-bound operations, explicit simulator evidence,
+  non-serializable sensitive values, and fail-closed restart behavior. Targeted
+  Matter and migration contracts, exact CI-format Clippy, boundary/secret scans,
+  and the full privileged workspace test suite pass. Commit, push, and public CI
+  remain pending because the local approval service reported its current usage
+  limit.

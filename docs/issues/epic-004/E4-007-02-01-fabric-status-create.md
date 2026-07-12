@@ -3,7 +3,7 @@ id: E4-007-02-01
 epic: EPIC-004
 parent: E4-007-02
 title: Stage and create the installation Matter fabric idempotently
-status: ready
+status: in_progress
 priority: high
 depends_on: [E4-007-01]
 adrs: [ADR-0033, ADR-0037]
@@ -22,26 +22,36 @@ losing idempotency or claiming success early.
 
 ## Tasks
 
-- [ ] Derive the one stable fabric identity for an installation.
-- [ ] Generate and store bounded root, operational, and controller-state secret
+- [x] Derive the one stable fabric identity for an installation.
+- [x] Generate and store bounded root, operational, and controller-state secret
   material before attaching references.
-- [ ] Stage unavailable reference-only fabric metadata before operation
+- [x] Stage unavailable reference-only fabric metadata before operation
   admission.
-- [ ] Admit create through `MatterAdministrationService` and return `requested`.
-- [ ] Transition to `creating_fabric` before the controller call.
-- [ ] Persist active fabric status and completed progress only after controller
+- [x] Admit create through `MatterAdministrationService` and return `requested`.
+- [x] Transition to `creating_fabric` before the controller call.
+- [x] Persist active fabric status and completed progress only after controller
   success.
-- [ ] Normalize controller or secret-store failure with cleanup/repair evidence.
-- [ ] Expose authenticated status without revealing secret references.
+- [x] Normalize controller or secret-store failure with cleanup/repair evidence.
+- [x] Expose authenticated status without revealing secret references.
 
 ## Acceptance criteria
 
-- [ ] Equivalent retries return the same fabric and operation.
-- [ ] Controller create runs at most once after durable admission.
-- [ ] SQLite contains only opaque secret references.
-- [ ] Crash or failure cannot produce an untracked active fabric claim.
+- [x] Equivalent retries return the same fabric and operation.
+- [x] Controller create runs at most once after durable admission.
+- [x] SQLite contains only opaque secret references.
+- [x] Crash or failure cannot produce an untracked active fabric claim.
 
 ## Verification
 
-- [ ] SQLite-backed request/run/reopen/idempotency/failure contracts pass.
-- [ ] Database and debug secret-canary scans remain clean.
+- [x] SQLite-backed request/run/reopen/idempotency/failure contracts pass.
+- [x] Database and debug secret-canary scans remain clean.
+- [x] Full local workspace gates pass.
+- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+
+## Progress log
+
+- 2026-07-12: Implemented deterministic installation fabric identity,
+  restart-safe secret staging, idempotent create admission, controller
+  reconciliation, redacted status, and failure/repair evidence. Targeted
+  repository and workflow contracts and the full local workspace gate pass;
+  commit, push, and public CI remain pending.

@@ -2,7 +2,7 @@
 id: E4-007
 epic: EPIC-004
 title: Expose simulator-backed durable Matter workflows over RPC
-status: ready
+status: in_progress
 priority: high
 depends_on: [E4-003, E4-005, E4-006]
 adrs: [ADR-0003, ADR-0012, ADR-0013, ADR-0016, ADR-0033, ADR-0035, ADR-0037]
@@ -17,7 +17,7 @@ updated: 2026-07-12
 | Issue | Status | Outcome |
 | --- | --- | --- |
 | [E4-007-01](E4-007-01-administration-service.md) | Done | One authenticated durable administration boundary |
-| [E4-007-02](E4-007-02-fabric-workflows.md) | Ready | Fabric status, create, simulated export, and restore |
+| [E4-007-02](E4-007-02-fabric-workflows.md) | In progress | Fabric status, create, simulated export, and restore |
 | [E4-007-03](E4-007-03-node-operation-workflows.md) | Planned | Commissioning, removal, cancellation, and restart recovery |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Planned | Bounded diagnostics and explicit subscription repair |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | Versioned `matter.*` RPC and actor-filtered operation events |
@@ -31,9 +31,9 @@ capability-oriented.
 
 ## Tasks
 
-- [ ] Add one authenticated application service shared by internal and JSON-RPC
+- [x] Add one authenticated application service shared by internal and JSON-RPC
   callers for every Matter administration mutation.
-- [ ] Implement durable fabric status/create and simulated export/restore
+- [x] Implement durable fabric status/create and simulated export/restore
   workflows with explicit evidence labels.
 - [ ] Implement commissioning start, cancel, get, list, restart recovery, and
   repair-required handling.
@@ -78,3 +78,7 @@ capability-oriented.
   ready.
 - 2026-07-12: E4-007-01 completed authenticated, exact-grant, idempotent Matter
   administration admission and durable operation bindings. E4-007-02 is ready.
+- 2026-07-12: E4-007-02 fabric workflows are implemented locally. Targeted
+  contracts, exact CI-format Clippy, boundary/secret scans, and the full
+  privileged workspace test suite pass. Commit, push, public CI, and issue
+  closure remain pending.

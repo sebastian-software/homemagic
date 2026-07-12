@@ -97,6 +97,15 @@ Equivalent retries return the original operation; conflicting reuse returns its
 ID without creating work. Actor-owned get/list queries join through this binding
 and remain bounded. See [Matter Administration Boundary](matter-administration.md).
 
+## Fabric secret staging
+
+Schema 9 adds one pre-attachment stage per installation and deterministic fabric
+ID. The stage persists only actor identity, opaque `SecretRef` values, state,
+revision, and timestamps. `pending_secrets`, `secrets_ready`, and
+`cleanup_required` make crashes and partial secret writes explicit without
+placing secret values in SQLite. A stage can be deleted only after its fabric
+metadata exists. See [Matter Fabric Workflows](matter-fabric-workflows.md).
+
 ## Secret boundary
 
 The fabric payload contains only three opaque `SecretRef` values. Setup codes,
@@ -132,6 +141,6 @@ authorization-and-dispatch admission, expiry, malformed payloads, retention
 protection, database and backup secret canaries, and stable identity.
 
 `crates/homemagic-storage/tests/migration_fixtures.rs` covers empty and historical
-schemas through the explicit schema-7-to-schema-8 operation-binding upgrade. The workspace also
-runs strict Clippy, all-feature tests, warning-denied Rustdoc, the Matter
-dependency boundary check, and the repository secret scan.
+schemas through the explicit schema-8-to-schema-9 fabric-staging upgrade. The
+workspace also runs strict Clippy, all-feature tests, warning-denied Rustdoc, the
+Matter dependency boundary check, and the repository secret scan.

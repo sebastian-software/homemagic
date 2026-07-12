@@ -3,7 +3,7 @@ id: E4-007-02-02
 epic: EPIC-004
 parent: E4-007-02
 title: Export simulator fabric state through an explicit sensitive workflow
-status: planned
+status: in_progress
 priority: high
 depends_on: [E4-007-02-01]
 adrs: [ADR-0033, ADR-0037]
@@ -21,19 +21,28 @@ persisted, logged, hashed, or emitted as an ordinary event.
 
 ## Tasks
 
-- [ ] Admit and persist export intent without sensitive output fields.
-- [ ] Transition to `exporting` before calling the controller.
-- [ ] Require the deterministic simulator implementation explicitly.
-- [ ] Return envelope and recovery key in a redacted sensitive result type.
-- [ ] Persist completed or structured failed/repair-required progress.
+- [x] Admit and persist export intent without sensitive output fields.
+- [x] Transition to `exporting` before calling the controller.
+- [x] Require the deterministic simulator implementation explicitly.
+- [x] Return envelope and recovery key in a redacted sensitive result type.
+- [x] Persist completed or structured failed/repair-required progress.
 
 ## Acceptance criteria
 
-- [ ] Export format is always visibly `simulator_v1`.
-- [ ] Retry never silently regenerates or persists a recovery key.
-- [ ] Ordinary database backup still contains no usable fabric credentials.
+- [x] Export format is always visibly `simulator_v1`.
+- [x] Retry never silently regenerates or persists a recovery key.
+- [x] Ordinary database backup still contains no usable fabric credentials.
 
 ## Verification
 
-- [ ] Successful, missing-fabric, restart, duplicate, and redaction tests pass.
-- [ ] Secret canaries are absent from SQLite, events, debug, and traces.
+- [x] Successful, missing-fabric, restart, duplicate, and redaction tests pass.
+- [x] Secret canaries are absent from SQLite, events, debug, and traces.
+- [x] Full local workspace gates pass.
+- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+
+## Progress log
+
+- 2026-07-12: Implemented explicit simulator-only export, non-serializable
+  sensitive output, one-time recovery material, and fail-closed restart
+  handling. Targeted workflow and redaction contracts and the full local
+  workspace gate pass; commit, push, and public CI remain pending.
