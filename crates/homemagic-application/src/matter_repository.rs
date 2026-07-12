@@ -260,6 +260,8 @@ pub struct MatterRecovery {
 pub struct MatterRetention {
     /// Installation whose historical rows may be removed.
     pub installation_id: InstallationId,
+    /// Explicit retention evaluation time used to protect unexpired facts.
+    pub now: DateTime<Utc>,
     /// Terminal operation progress older than this may be removed.
     pub terminal_before: DateTime<Utc>,
     /// Resolved repairs older than this may be removed.

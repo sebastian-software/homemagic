@@ -1,3 +1,15 @@
+DROP TABLE matter_command_supersessions;
+DROP TABLE matter_desired_command_slots;
+DROP TABLE matter_unlock_authorizations;
+DROP TABLE matter_repairs;
+DROP TABLE matter_operation_progress;
+DROP TABLE matter_operations;
+DROP TABLE matter_subscriptions;
+DROP TABLE matter_projections;
+DROP TABLE matter_endpoints;
+DROP TABLE matter_nodes;
+DROP TABLE matter_fabrics;
+
 DROP TABLE automation_event_cursor;
 DROP TABLE automation_trace;
 DROP TABLE automation_timers;
@@ -7,5 +19,5 @@ DROP TABLE automation_approvals;
 DROP TABLE automation_versions;
 DROP TABLE automation_drafts;
 DROP TABLE automation_identities;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5);
+DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6);
 PRAGMA user_version = 2;

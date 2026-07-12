@@ -554,6 +554,21 @@ fn transition_operation(
     {
         return Err(StorageError::InvalidMatter("operation progress mismatch"));
     }
+    match (operation.phase, repair) {
+        (homemagic_domain::MatterOperationPhase::RepairRequired, Some(repair))
+            if progress.error.as_ref() == Some(&repair.error) => {}
+        (homemagic_domain::MatterOperationPhase::RepairRequired, _) => {
+            return Err(StorageError::InvalidMatter(
+                "repair-required transition lacks matching repair evidence",
+            ));
+        }
+        (_, Some(_)) => {
+            return Err(StorageError::InvalidMatter(
+                "repair record requires repair-required operation",
+            ));
+        }
+        (_, None) => {}
+    }
     let changed = transaction.execute(
         "UPDATE matter_operations SET
             phase = ?1, revision = ?2, terminal = ?3,
@@ -934,8 +949,8 @@ fn retain(
         "DELETE FROM matter_unlock_authorizations
          WHERE installation_id = ?1
            AND ((consumed_at IS NOT NULL AND consumed_at < ?2)
-                OR (consumed_at IS NULL AND expires_at < ?2))",
-        params![installation_id, policy.authorization_before],
+                OR (consumed_at IS NULL AND expires_at <= ?3 AND expires_at < ?2))",
+        params![installation_id, policy.authorization_before, policy.now],
     )?;
     let repairs_removed = transaction.execute(
         "DELETE FROM matter_repairs
