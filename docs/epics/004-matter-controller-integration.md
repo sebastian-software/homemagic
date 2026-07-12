@@ -64,13 +64,17 @@ fabric without learning Matter cluster internals.
   controller, commissioning, subscription, persistence, and platform features.
 - [ ] E4.D2: Accept an ADR selecting native Rust, narrowly scoped FFI, or an
   isolated sidecar, including the ADR-0005 evidence for any exception.
-- [ ] E4.D3: Add an ADR for fabric secret storage, backup, restore, and ownership.
-- [ ] E4.D4: Define Matter data-model-to-capability mapping and extension rules.
-- [ ] E4.D5: Record supported commissioning transports and Thread/BLE limitations.
+- [x] E4.D3: Add an ADR for fabric secret storage, backup, restore, and ownership.
+  Evidence: [ADR-0037](../adr/0037-own-and-port-matter-fabric-secrets.md).
+- [x] E4.D4: Define Matter data-model-to-capability mapping and extension rules.
+  Evidence: [ADR-0034](../adr/0034-project-matter-through-capability-rules.md).
+- [x] E4.D5: Record supported commissioning transports and Thread/BLE limitations.
+  Evidence: [ADR-0038](../adr/0038-start-matter-on-network-and-fix-evaluation.md).
 
 ## Workstream E4.1: Feasibility spike
 
-- [ ] Define a fixed evaluation matrix before choosing an implementation.
+- [x] Define a fixed evaluation matrix before choosing an implementation.
+  Evidence: ADR-0038 mandatory gates, weighted scorecard, and tie-breaking.
 - [ ] Build each credible Rust controller candidate on macOS ARM and Linux x86_64.
 - [ ] Commission at least one Matter-over-Wi-Fi test device.
 - [ ] Read descriptors, endpoints, device types, clusters, and attributes.
@@ -189,3 +193,7 @@ fabric without learning Matter cluster internals.
 - 2026-07-12: Eleven dependency-ordered issues planned across simulator,
   candidate, production-adapter, interoperability, and physical evidence. No
   hardware or production compatibility criterion is complete yet.
+- 2026-07-12: E4-001 completed with ADR-0033 through ADR-0038. The controller,
+  projection, unlock, convergence, fabric, transport, evidence, and evaluation
+  boundaries are accepted; E4-002 is ready. Candidate benchmarking and selection
+  remain unchecked.

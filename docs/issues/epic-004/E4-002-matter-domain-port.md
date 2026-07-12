@@ -2,7 +2,7 @@
 id: E4-002
 epic: EPIC-004
 title: Define the SDK-neutral Matter domain and controller port
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-001]
 adrs: [ADR-0001, ADR-0002, ADR-0033, ADR-0034]

@@ -18,8 +18,8 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 
 | Issue | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
-| [E4-001](E4-001-matter-decisions.md) | Ready | EPIC-001, EPIC-002 | Accepted controller, projection, security, secret, and transport boundaries |
-| [E4-002](E4-002-matter-domain-port.md) | Planned | E4-001 | SDK-neutral Matter domain and controller port |
+| [E4-001](E4-001-matter-decisions.md) | Done | EPIC-001, EPIC-002 | Accepted controller, projection, security, secret, and transport boundaries |
+| [E4-002](E4-002-matter-domain-port.md) | Ready | E4-001 | SDK-neutral Matter domain and controller port |
 | [E4-003](E4-003-matter-storage.md) | Planned | E4-002 | Durable metadata, operations, authorization, and repair state |
 | [E4-004](E4-004-deterministic-controller-simulator.md) | Planned | E4-002 | Deterministic Rust light/lock simulator and contract suite |
 | [E4-005](E4-005-capability-projection.md) | Planned | E4-003, E4-004 | Stable projection, reports, subscriptions, and gap recovery |
@@ -44,3 +44,7 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 - 2026-07-12: User-approved simulation-first design committed as `9bc214c`.
 - 2026-07-12: Dependency-ordered issue set created. E4-001 is ready; physical
   Nuki validation remains an explicit later authorization gate.
+- 2026-07-12: E4-001 accepted ADR-0033 through ADR-0038 for the controller port,
+  capability projection, unlock authorization, state convergence, fabric
+  portability, transport scope, evidence classes, and fixed candidate scorecard.
+  E4-002 is ready; no SDK has been selected.
