@@ -3,7 +3,7 @@ id: E4-007-03
 epic: EPIC-004
 parent: E4-007
 title: Orchestrate commissioning and node removal durably
-status: ready
+status: in_progress
 priority: high
 depends_on: [E4-007-01, E4-007-02]
 adrs: [ADR-0033, ADR-0034, ADR-0037, ADR-0040]
@@ -17,7 +17,7 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | Ready | Fabric-scoped commissioning admission and sensitive input boundary |
+| [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | In progress | Fabric-scoped commissioning admission and sensitive input boundary |
 | [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Planned | Atomic node, projection, subscription, and operation-result commit |
 | [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Planned | Best-effort cancellation and phase-by-phase restart reconciliation |
 | [E4-007-03-04](E4-007-03-04-node-inventory.md) | Planned | Authenticated bounded durable node inventory |
@@ -58,3 +58,5 @@ visible and repairable.
 - 2026-07-12: Decomposed into five dependency-ordered slices. ADR-0040 resolves
   the pre-commissioning identity gap without inventing a node ID; E4-007-03-01
   is ready.
+- 2026-07-12: E4-007-03-01 is implemented and locally verified. Commit, push,
+  public CI, and child closure remain pending.

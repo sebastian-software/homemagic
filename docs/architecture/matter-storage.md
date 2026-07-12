@@ -106,6 +106,15 @@ revision, and timestamps. `pending_secrets`, `secrets_ready`, and
 placing secret values in SQLite. A stage can be deleted only after its fabric
 metadata exists. See [Matter Fabric Workflows](matter-fabric-workflows.md).
 
+## Commissioning result identity
+
+Schema 10 adds one immutable operation-to-node result for successful
+commissioning. Its foreign keys require an existing operation, stored
+fabric-scoped node, and stable common device. The relation exposes the
+controller-returned node identity without mutating the original fabric-scoped
+commissioning target or including setup input. See
+[Matter Node Workflows](matter-node-workflows.md).
+
 ## Secret boundary
 
 The fabric payload contains only three opaque `SecretRef` values. Setup codes,
@@ -141,6 +150,6 @@ authorization-and-dispatch admission, expiry, malformed payloads, retention
 protection, database and backup secret canaries, and stable identity.
 
 `crates/homemagic-storage/tests/migration_fixtures.rs` covers empty and historical
-schemas through the explicit schema-8-to-schema-9 fabric-staging upgrade. The
+schemas through the explicit schema-9-to-schema-10 commissioning-result upgrade. The
 workspace also runs strict Clippy, all-feature tests, warning-denied Rustdoc, the
 Matter dependency boundary check, and the repository secret scan.

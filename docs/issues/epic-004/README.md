@@ -34,8 +34,8 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | Done | E4-007-01 | Idempotent staged fabric creation and status |
 | [E4-007-02-02](E4-007-02-02-simulator-export.md) | Done | E4-007-02-01 | Explicit sensitive simulator export |
 | [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | Done | E4-007-02-01, E4-007-02-02 | Simulator restore and production format guard |
-| [E4-007-03](E4-007-03-node-operation-workflows.md) | Ready | E4-007-01, E4-007-02 | Commissioning, removal, cancellation, and recovery |
-| [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | Ready | E4-007-02 | Fabric-scoped commissioning admission and sensitive input boundary |
+| [E4-007-03](E4-007-03-node-operation-workflows.md) | In progress | E4-007-01, E4-007-02 | Commissioning, removal, cancellation, and recovery |
+| [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | In progress | E4-007-02 | Fabric-scoped commissioning admission and sensitive input boundary |
 | [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Planned | E4-007-03-01 | Atomic commissioned-node projection commit |
 | [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Planned | E4-007-03-01, E4-007-03-02 | Cancellation and restart reconciliation |
 | [E4-007-03-04](E4-007-03-04-node-inventory.md) | Planned | E4-007-03-02 | Authenticated bounded node inventory |
@@ -113,3 +113,6 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 - 2026-07-12: E4-007-03 was decomposed into five implementation slices. ADR-0040
   makes commissioning fabric-scoped until the controller returns an
   authoritative node ID; E4-007-03-01 is ready.
+- 2026-07-12: E4-007-03-01 implemented schema 10 operation-to-node identity,
+  fabric-scoped admission, and the redacted setup-input boundary. All local
+  gates pass; commit, push, and public CI remain pending.
