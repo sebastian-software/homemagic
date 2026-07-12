@@ -3,7 +3,7 @@ id: E4-007-04-03
 epic: EPIC-004
 parent: E4-007-04
 title: Execute explicit bounded gap-read and resubscribe repair
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-04-02]
 adrs: [ADR-0014, ADR-0033, ADR-0034, ADR-0041]
@@ -38,3 +38,8 @@ repair that performs at most the declared gap-read and resubscribe work.
 - [ ] Success, stale report, gap failure, subscribe retry, exhaustion, duplicate,
   foreign, and atomic rollback tests pass.
 - [ ] Controller calls never exceed the declared policy.
+
+## Progress log
+
+- 2026-07-12: E4-007-04-02 completed with public cross-platform CI. This issue
+  is ready.

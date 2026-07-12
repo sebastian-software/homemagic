@@ -42,8 +42,8 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-03-05](E4-007-03-05-node-removal.md) | Done | E4-007-03-03, E4-007-03-04 | Removal with visible partial cleanup |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | In progress | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
 | [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Done | E4-007-03 | Authenticated bounded read-only diagnostics |
-| [E4-007-04-02](E4-007-04-02-subscription-status.md) | In progress | E4-007-04-01 | Deterministic subscription status |
-| [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Planned | E4-007-04-02 | Explicit gap-read and resubscribe repair |
+| [E4-007-04-02](E4-007-04-02-subscription-status.md) | Done | E4-007-04-01 | Deterministic subscription status |
+| [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Ready | E4-007-04-02 | Explicit gap-read and resubscribe repair |
 | [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Planned | E4-007-04-03 | Restart and exhaustion reconciliation |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
@@ -155,3 +155,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 - 2026-07-12: E4-007-04-02 durable subscription status is implemented with
   restart-preserving bounded recovery facts. All local CI-equivalent gates pass;
   public CI remains pending.
+- 2026-07-12: E4-007-04-02 passed public cross-platform CI and is done.
+  E4-007-04-03 is ready.

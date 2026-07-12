@@ -3,7 +3,7 @@ id: E4-007-04-02
 epic: EPIC-004
 parent: E4-007-04
 title: Derive durable subscription freshness and repair guidance
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-04-01]
 adrs: [ADR-0033, ADR-0034, ADR-0041]
@@ -38,7 +38,7 @@ evaluation time.
 - [x] Fresh, stale, sleepy, waiting, exhausted, and reopen matrices pass.
 - [x] Boundary timestamps and retry counters are deterministic.
 - [x] Full local workspace, strict Clippy, boundary, and secret-scan gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -50,4 +50,5 @@ evaluation time.
   contracts and strict Clippy pass.
 - 2026-07-12: All 45 Matter repository contracts, historical migrations, the
   all-feature workspace, strict Clippy, Matter boundaries, and secret scan pass.
-  Commit, push, and public CI remain pending.
+  Commits `e11e259` and `33a7a20` passed public CI run `29206426040` on Linux
+  x86_64 and macOS ARM64. This slice is done.
