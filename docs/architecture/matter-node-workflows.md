@@ -119,6 +119,34 @@ Projection ordering is stable by endpoint, capability schema, and projection
 identity. Inventory therefore remains byte-equivalent after reopen while newer
 descriptor revisions replace only the durable descriptor payload and revision.
 
+## Node removal
+
+Removal admission reloads the actor's exact installation-scoped
+`matter_remove_node` grant and requires an active durable node in that
+installation. The immutable operation target contains the authoritative fabric
+and node IDs. Actor-scoped idempotency returns the existing equivalent operation
+for the same retry key and rejects reuse against another node.
+
+Execution persists `removing_node` before the controller call. `removed` and
+`not_present` have the same safe durable meaning: the controller no longer owns
+an active node. `partial_outcome`, a still-present node after an error, or
+unbounded controller ambiguity becomes structured `repair_required` evidence
+while retaining every projection and subscription needed for diagnosis.
+
+Once absence is proven, HomeMagic persists `cleaning_secrets` before local
+cleanup. Nodes currently own no secret references separate from their fabric,
+so fabric secrets are deliberately untouched. One SQLite transaction removes
+the active projections and logical subscription, clears the common device's
+capabilities, marks its lifecycle `removed` and availability `offline`, appends
+completed operation progress, and retains the node identity plus commissioning
+link as a tombstone. A failed transaction rolls every cleanup fact back.
+
+Recovery never blindly repeats physical removal. From `removing_node`, one
+bounded controller lookup may prove absence and allow local cleanup; presence or
+unknown evidence requires repair. From `cleaning_secrets`, only the atomic local
+cleanup is resumed. Replaying a completed operation returns immediately without
+calling the controller.
+
 ## Verification
 
 SQLite contracts cover allowed, denied, duplicate, conflicting-key,
