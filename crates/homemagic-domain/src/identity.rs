@@ -260,6 +260,10 @@ uuid_identity!(
     "Stable identity for one durable Matter controller operation."
 );
 uuid_identity!(
+    MatterUnlockAuthorizationId,
+    "Stable identity for one short-lived Matter unlock authorization."
+);
+uuid_identity!(
     MatterControllerEventId,
     "Stable identity for one normalized Matter controller event."
 );

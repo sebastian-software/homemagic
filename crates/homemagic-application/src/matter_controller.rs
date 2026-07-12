@@ -8,6 +8,7 @@ use homemagic_domain::{
     MatterEndpointNumber, MatterFabricId, MatterLockState, MatterNodeDescriptor, MatterNodeId,
     MatterOperationId, MatterProjectionId, MatterStateRevision, MatterSubscriptionId, SecretRef,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::SecretValue;
@@ -55,7 +56,8 @@ impl<T> Default for MatterControllerItems<T> {
 }
 
 /// Live fabric state reported by a controller implementation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MatterFabricState {
     /// Fabric is loaded and controller operations may proceed.
     Active,
@@ -79,7 +81,7 @@ pub struct MatterFabricStatus {
 }
 
 /// Opaque secret references required to create or load a fabric.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MatterFabricSecretRefs {
     /// Root certificate authority private material.
     pub root_ca_key: SecretRef,

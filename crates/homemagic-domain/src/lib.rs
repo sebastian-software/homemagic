@@ -36,7 +36,8 @@ pub use identity::{
     ActorId, AuditId, AutomationApprovalId, AutomationId, AutomationOccurrenceId, AutomationRunId,
     AutomationTimerId, AutomationTraceId, CommandId, CorrelationId, DeviceId, EndpointId, EventId,
     GrantId, InstallationId, IntegrationId, MatterControllerEventId, MatterFabricId,
-    MatterOperationId, MatterProjectionId, MatterSubscriptionId, RepairId, SecretRef, SpaceId,
+    MatterOperationId, MatterProjectionId, MatterSubscriptionId, MatterUnlockAuthorizationId,
+    RepairId, SecretRef, SpaceId,
 };
 pub use lifecycle::{
     Availability, AvailabilityState, DeviceLifecycle, DeviceTimestamps, FreshnessPolicy,
