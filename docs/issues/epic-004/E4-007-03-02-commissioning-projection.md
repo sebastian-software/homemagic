@@ -3,7 +3,7 @@ id: E4-007-03-02
 epic: EPIC-004
 parent: E4-007-03
 title: Commit commissioned nodes and capability projections atomically
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-03-01]
 adrs: [ADR-0033, ADR-0034, ADR-0037, ADR-0040]
@@ -42,3 +42,8 @@ operation.
 - [ ] Light and lock commissioning/reopen/projection contracts pass.
 - [ ] Atomic-failure tests expose neither partial nodes nor partial projections.
 - [ ] Duplicate controller results cannot create duplicate common identities.
+
+## Progress log
+
+- 2026-07-12: E4-007-03-01 completed with public cross-platform CI. This child
+  issue is ready.

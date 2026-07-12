@@ -17,8 +17,8 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | In progress | Fabric-scoped commissioning admission and sensitive input boundary |
-| [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Planned | Atomic node, projection, subscription, and operation-result commit |
+| [E4-007-03-01](E4-007-03-01-commissioning-target-admission.md) | Done | Fabric-scoped commissioning admission and sensitive input boundary |
+| [E4-007-03-02](E4-007-03-02-commissioning-projection.md) | Ready | Atomic node, projection, subscription, and operation-result commit |
 | [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Planned | Best-effort cancellation and phase-by-phase restart reconciliation |
 | [E4-007-03-04](E4-007-03-04-node-inventory.md) | Planned | Authenticated bounded durable node inventory |
 | [E4-007-03-05](E4-007-03-05-node-removal.md) | Planned | Idempotent removal with visible partial cleanup |
@@ -60,3 +60,5 @@ visible and repairable.
   is ready.
 - 2026-07-12: E4-007-03-01 is implemented and locally verified. Commit, push,
   public CI, and child closure remain pending.
+- 2026-07-12: Public CI run `29203093982` verified E4-007-03-01 on Linux x86_64
+  and macOS ARM64. E4-007-03-01 is done and E4-007-03-02 is ready.

@@ -3,7 +3,7 @@ id: E4-007-03-01
 epic: EPIC-004
 parent: E4-007-03
 title: Admit fabric-scoped commissioning without persisting setup input
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-02]
 adrs: [ADR-0013, ADR-0014, ADR-0033, ADR-0037, ADR-0040]
@@ -41,7 +41,7 @@ node identity or setup byte becomes an ordinary durable fact.
   pass.
 - [x] Setup canaries remain absent from database, WAL, debug, events, and hashes.
 - [x] Full local workspace gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -50,3 +50,6 @@ node identity or setup byte becomes an ordinary durable fact.
   identity. Twenty-nine Matter repository contracts, nine migration fixtures,
   the full workspace suite, strict Clippy, boundary checks, and secret scans pass
   locally. Commit, push, and public CI remain pending.
+- 2026-07-12: Commits `857b72d` and `6676fbb` were pushed to `main`. Public CI
+  run `29203093982` passed Linux x86_64 quality and simulator hashes on Linux
+  x86_64 and macOS ARM64. This child issue is done.
