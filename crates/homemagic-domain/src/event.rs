@@ -5,8 +5,16 @@ use crate::{
     AutomationId, AutomationOperationalState, AutomationRunId, AutomationRunState,
     AutomationVersion, AutomationVersionState, AvailabilityState, CapabilityDescriptor, CommandId,
     CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId, EventId, LifecycleTrigger,
-    RepairId,
+    MatterOperationId, MatterOperationKind, MatterOperationPhase, RepairId,
 };
+
+/// Versioned public payload contract for Matter operation transition events.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum MatterOperationTransitionEventSchema {
+    /// Initial secret-free operation transition payload.
+    #[serde(rename = "matter.operation.transition.v1")]
+    V1,
+}
 
 /// Exact automation execution that caused an emitted fact.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -112,6 +120,21 @@ pub enum DomainEventKind {
         /// Versioned capability schema when retained by the producing command.
         #[serde(default)]
         capability: Option<String>,
+    },
+    /// One actor-bound Matter administration operation changed durable phase.
+    MatterOperationTransitioned {
+        /// Versioned payload contract.
+        schema: MatterOperationTransitionEventSchema,
+        /// Stable operation identity.
+        operation_id: MatterOperationId,
+        /// Bounded workflow category without its target.
+        operation_kind: MatterOperationKind,
+        /// Previous durable phase; absent for initial admission.
+        from: Option<MatterOperationPhase>,
+        /// Newly durable phase.
+        to: MatterOperationPhase,
+        /// Operation-local optimistic revision after the transition.
+        revision: u64,
     },
     /// One immutable automation version changed governance state.
     AutomationVersionTransitioned {

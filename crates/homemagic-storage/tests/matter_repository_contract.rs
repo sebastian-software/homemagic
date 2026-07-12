@@ -34,13 +34,14 @@ use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, AuditId, CapabilityDescriptor, CapabilitySnapshot,
     CommandAction, CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandErrorCode,
     CommandFailure, CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceRecord,
-    DeviceSnapshot, EndpointId, EndpointSnapshot, GrantId, GrantScope, IdempotencyKey,
-    Installation, InstallationId, IntegrationId, IntegrationInstance, MatterAttributeReport,
-    MatterClusterDescriptor, MatterControllerError, MatterControllerErrorCategory,
-    MatterControllerErrorCode, MatterConvergence, MatterDescriptorRevision, MatterDesiredState,
-    MatterDeviceType, MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId,
-    MatterLockState, MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId,
-    MatterOperationKind, MatterOperationPhase, MatterOperationTarget, MatterProjectedState,
+    DeviceSnapshot, DomainEventKind, EndpointId, EndpointSnapshot, GrantId, GrantScope,
+    IdempotencyKey, Installation, InstallationId, IntegrationId, IntegrationInstance,
+    MatterAttributeReport, MatterClusterDescriptor, MatterControllerError,
+    MatterControllerErrorCategory, MatterControllerErrorCode, MatterConvergence,
+    MatterDescriptorRevision, MatterDesiredState, MatterDeviceType, MatterEndpointDescriptor,
+    MatterEndpointNumber, MatterFabricId, MatterLockState, MatterNodeDescriptor, MatterNodeId,
+    MatterOperation, MatterOperationId, MatterOperationKind, MatterOperationPhase,
+    MatterOperationTarget, MatterOperationTransitionEventSchema, MatterProjectedState,
     MatterProjectionId, MatterReportedState, MatterRetryability, MatterStateFreshness,
     MatterStateRevision, MatterStateUncertainty, MatterStateValue, MatterSubscriptionId,
     MatterSubscriptionLossReason, MatterUnlockAuthorizationId, OnOffCommand, PolicyDecision,
@@ -3397,6 +3398,15 @@ async fn cancellation_atomic_failure_should_preserve_both_prior_phases() -> Test
         MatterOperationPhase::ValidatingSetup
     );
     assert_eq!(durable_cancellation.phase, MatterOperationPhase::Cancelling);
+    let failed_events = fixture.repository.events_after(0, 100).await?.events;
+    assert!(!failed_events.iter().any(|item| matches!(
+        &item.event.kind,
+        DomainEventKind::MatterOperationTransitioned {
+            operation_id,
+            to: MatterOperationPhase::Cancelled | MatterOperationPhase::Completed,
+            ..
+        } if operation_id == &commissioning.id || operation_id == &cancellation.id
+    )));
 
     let connection = Connection::open(&fixture.path)?;
     connection.execute_batch("DROP TRIGGER fail_terminal_cancellation_progress;")?;
@@ -3405,7 +3415,7 @@ async fn cancellation_atomic_failure_should_preserve_both_prior_phases() -> Test
     let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
     let recovered_workflow = MatterNodeWorkflowService::new(
         MatterAdministrationService::new(reopened.clone(), reopened.clone()),
-        reopened,
+        reopened.clone(),
         controller,
     );
     let recovered = recovered_workflow
@@ -3424,6 +3434,23 @@ async fn cancellation_atomic_failure_should_preserve_both_prior_phases() -> Test
         recovered.cancellation.phase,
         MatterOperationPhase::Completed
     );
+    let recovered_events = reopened.events_after(0, 100).await?.events;
+    assert!(recovered_events.iter().any(|item| matches!(
+        &item.event.kind,
+        DomainEventKind::MatterOperationTransitioned {
+            operation_id,
+            to: MatterOperationPhase::Cancelled,
+            ..
+        } if operation_id == &commissioning.id
+    )));
+    assert!(recovered_events.iter().any(|item| matches!(
+        &item.event.kind,
+        DomainEventKind::MatterOperationTransitioned {
+            operation_id,
+            to: MatterOperationPhase::Completed,
+            ..
+        } if operation_id == &cancellation.id
+    )));
     Ok(())
 }
 
@@ -3542,6 +3569,143 @@ async fn fabric_secret_failure_should_leave_restart_safe_stage_and_retry_cleanly
     assert!(matches!(retry, MatterOperationCreateOutcome::Created(_)));
     assert!(attached.is_some());
     assert!(removed_stage.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one contract keeps the complete phase sequence, disclosure canary, idempotency, and reopen evidence visible"
+)]
+async fn matter_operation_events_should_be_atomic_actor_bound_and_restart_stable() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let fabric = fixture.workflow(controller.clone());
+    let create_key = IdempotencyKey::new("operation-events-fabric")?;
+    let MatterOperationCreateOutcome::Created(create) = fabric
+        .start_create(&fixture.actor, create_key.clone(), now)
+        .await?
+    else {
+        return Err("event fabric operation missing".into());
+    };
+    let _ = fabric.run_create(&fixture.actor, &create.id, now).await?;
+    let node = fixture.node_workflow(controller);
+    let commission_key = IdempotencyKey::new("operation-events-commission")?;
+    let MatterOperationCreateOutcome::Created(commission) = node
+        .start_commission(&fixture.actor, commission_key.clone(), now)
+        .await?
+    else {
+        return Err("event commissioning operation missing".into());
+    };
+    let _ = node
+        .run_commission(
+            &fixture.actor,
+            &commission.id,
+            MatterCommissioningInput::new(SecretValue::new(SIMULATOR_LIGHT_SETUP)),
+            now,
+        )
+        .await?;
+
+    let page = fixture.repository.events_after(0, 100).await?;
+    let operation_events = page
+        .events
+        .iter()
+        .filter_map(|item| match &item.event.kind {
+            DomainEventKind::MatterOperationTransitioned {
+                schema,
+                operation_id,
+                operation_kind,
+                from,
+                to,
+                revision,
+            } => Some((
+                item.cursor,
+                &item.event,
+                *schema,
+                operation_id,
+                *operation_kind,
+                *from,
+                *to,
+                *revision,
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let commissioning_events = operation_events
+        .iter()
+        .filter(|(_, _, _, operation_id, _, _, _, _)| *operation_id == &commission.id)
+        .collect::<Vec<_>>();
+    let expected_phases = [
+        MatterOperationPhase::Requested,
+        MatterOperationPhase::ValidatingSetup,
+        MatterOperationPhase::Discovering,
+        MatterOperationPhase::EstablishingSession,
+        MatterOperationPhase::Commissioning,
+        MatterOperationPhase::Projecting,
+        MatterOperationPhase::Subscribing,
+        MatterOperationPhase::Completed,
+    ];
+    assert_eq!(commissioning_events.len(), expected_phases.len());
+    for (index, (_, event, schema, _, kind, from, to, revision)) in
+        commissioning_events.iter().enumerate()
+    {
+        assert_eq!(*schema, MatterOperationTransitionEventSchema::V1);
+        assert_eq!(*kind, MatterOperationKind::CommissionNode);
+        assert_eq!(*to, expected_phases[index]);
+        assert_eq!(
+            *from,
+            index
+                .checked_sub(1)
+                .map(|previous| expected_phases[previous])
+        );
+        assert_eq!(*revision, u64::try_from(index + 1)?);
+        assert_eq!(
+            event.causation.actor.as_deref(),
+            Some(fixture.actor.id.to_string().as_str())
+        );
+        assert!(event.device_id.is_none());
+        let encoded = serde_json::to_string(&event.kind)?;
+        for forbidden in [
+            "target",
+            "setup_payload",
+            "secret",
+            "controller",
+            "fabric_id",
+            "node_id",
+        ] {
+            assert!(!encoded.contains(forbidden), "event leaked {forbidden}");
+        }
+    }
+    let event_count = operation_events.len();
+    assert!(matches!(
+        node.start_commission(&fixture.actor, commission_key, now)
+            .await?,
+        MatterOperationCreateOutcome::ExistingEquivalent(_)
+    ));
+    assert!(matches!(
+        fabric.start_create(&fixture.actor, create_key, now).await?,
+        MatterOperationCreateOutcome::ExistingEquivalent(_)
+    ));
+    assert_eq!(
+        fixture
+            .repository
+            .events_after(0, 100)
+            .await?
+            .events
+            .iter()
+            .filter(|item| matches!(
+                item.event.kind,
+                DomainEventKind::MatterOperationTransitioned { .. }
+            ))
+            .count(),
+        event_count
+    );
+
+    let reopened = SqliteRepository::open(&fixture.path)?;
+    let reopened_page = reopened.events_after(0, 100).await?;
+    assert_eq!(reopened_page.latest_cursor, page.latest_cursor);
+    assert_eq!(reopened_page.events, page.events);
     Ok(())
 }
 

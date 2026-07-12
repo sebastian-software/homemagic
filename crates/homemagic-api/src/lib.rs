@@ -329,6 +329,9 @@ async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication, 
         return;
     }
 
+    let mut durable_poll = tokio::time::interval(Duration::from_millis(250));
+    durable_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    durable_poll.tick().await;
     loop {
         tokio::select! {
             incoming = socket.recv() => match incoming {
@@ -370,7 +373,8 @@ async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication, 
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-            }
+            },
+            _ = durable_poll.tick() => {}
         }
         if !drain_events(
             &mut socket,
@@ -510,13 +514,14 @@ async fn drain_events(
 }
 
 fn event_visible_to_actor(event: &homemagic_domain::DomainEvent, actor_id: &str) -> bool {
-    let automation_scoped = matches!(
+    let actor_scoped = matches!(
         event.kind,
         DomainEventKind::AutomationVersionTransitioned { .. }
             | DomainEventKind::AutomationOperationalTransitioned { .. }
             | DomainEventKind::AutomationRunTransitioned { .. }
+            | DomainEventKind::MatterOperationTransitioned { .. }
     );
-    !automation_scoped || event.causation.actor.as_deref() == Some(actor_id)
+    !actor_scoped || event.causation.actor.as_deref() == Some(actor_id)
 }
 
 async fn send_response(socket: &mut WebSocket, response: &RpcResponse) -> Result<(), axum::Error> {
@@ -2735,7 +2740,8 @@ mod tests {
         DeviceRecord, DeviceSnapshot, DomainEvent, DomainEventKind, EndpointSnapshot, EventId,
         GrantId, GrantScope, IdempotencyKey, Installation, InstallationId, IntegrationId,
         IntegrationInstance, MatterFabricId, MatterNodeId, MatterOperationKind,
-        MatterOperationTarget, NetworkLocation, OnOffCommand, RiskClass, SecretRef,
+        MatterOperationPhase, MatterOperationTarget, MatterOperationTransitionEventSchema,
+        NetworkLocation, OnOffCommand, RiskClass, SecretRef,
     };
     use homemagic_matter::{DeterministicMatterSimulator, SIMULATOR_LIGHT_SETUP};
     use homemagic_storage::SqliteRepository;
@@ -3017,7 +3023,7 @@ mod tests {
     }
 
     #[test]
-    fn automation_events_should_be_visible_only_to_their_authenticated_owner() {
+    fn actor_scoped_events_should_be_visible_only_to_their_authenticated_owner() {
         let owner = actor();
         let outsider = actor();
         let event = DomainEvent {
@@ -3041,6 +3047,31 @@ mod tests {
 
         assert!(event_visible_to_actor(&event, &owner.id.to_string()));
         assert!(!event_visible_to_actor(&event, &outsider.id.to_string()));
+
+        let matter_event = DomainEvent {
+            id: EventId::new(),
+            device_id: None,
+            occurred_at: Utc::now(),
+            causation: CausationMetadata {
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                actor: Some(owner.id.to_string()),
+                automation: None,
+            },
+            kind: DomainEventKind::MatterOperationTransitioned {
+                schema: MatterOperationTransitionEventSchema::V1,
+                operation_id: MatterOperationId::new(),
+                operation_kind: MatterOperationKind::CreateFabric,
+                from: None,
+                to: MatterOperationPhase::Requested,
+                revision: 1,
+            },
+        };
+        assert!(event_visible_to_actor(&matter_event, &owner.id.to_string()));
+        assert!(!event_visible_to_actor(
+            &matter_event,
+            &outsider.id.to_string()
+        ));
     }
 
     #[tokio::test]

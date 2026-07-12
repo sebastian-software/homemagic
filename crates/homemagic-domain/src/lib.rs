@@ -31,7 +31,10 @@ pub use configuration::{Installation, IntegrationInstance, Space};
 pub use device::{
     DeviceRecord, DeviceSnapshot, DiscoveryCandidate, EndpointSnapshot, NetworkLocation,
 };
-pub use event::{AutomationCausation, CausationMetadata, DomainEvent, DomainEventKind};
+pub use event::{
+    AutomationCausation, CausationMetadata, DomainEvent, DomainEventKind,
+    MatterOperationTransitionEventSchema,
+};
 pub use identity::{
     ActorId, AuditId, AutomationApprovalId, AutomationId, AutomationOccurrenceId, AutomationRunId,
     AutomationTimerId, AutomationTraceId, CommandId, CorrelationId, DeviceId, EndpointId, EventId,

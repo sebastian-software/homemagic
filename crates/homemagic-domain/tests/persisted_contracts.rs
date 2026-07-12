@@ -24,11 +24,11 @@ use homemagic_domain::{
     MatterControllerEvent, MatterControllerEventId, MatterControllerEventKind,
     MatterDescriptorError, MatterDescriptorRevision, MatterDeviceType, MatterEndpointDescriptor,
     MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor, MatterNodeId, MatterOperation,
-    MatterOperationKind, MatterOperationPhase, MatterOperationTarget, MatterProjectedState,
-    MatterProjectionId, MatterRepairAction, MatterRetryability, MatterStateFreshness,
-    MatterStateUncertainty, ObservationMergeError, ObservationSource, ObservationSourceKind,
-    ObservedValue, OnOffCommand, RepairKind, RepairRecord, RepairTransitionError, RiskClass,
-    canonical_automation_hash,
+    MatterOperationKind, MatterOperationPhase, MatterOperationTarget,
+    MatterOperationTransitionEventSchema, MatterProjectedState, MatterProjectionId,
+    MatterRepairAction, MatterRetryability, MatterStateFreshness, MatterStateUncertainty,
+    ObservationMergeError, ObservationSource, ObservationSourceKind, ObservedValue, OnOffCommand,
+    RepairKind, RepairRecord, RepairTransitionError, RiskClass, canonical_automation_hash,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -231,6 +231,25 @@ fn matter_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
     round_trip(&descriptor)?;
     round_trip(&state)?;
     round_trip(&operation)?;
+    round_trip(&DomainEvent {
+        id: EventId::new(),
+        device_id: None,
+        occurred_at: now,
+        causation: CausationMetadata {
+            correlation_id: CorrelationId::from_key(&operation.id.to_string()),
+            causation_event_id: None,
+            actor: Some(ActorId::new().to_string()),
+            automation: None,
+        },
+        kind: DomainEventKind::MatterOperationTransitioned {
+            schema: MatterOperationTransitionEventSchema::V1,
+            operation_id: operation.id.clone(),
+            operation_kind: operation.kind,
+            from: None,
+            to: operation.phase,
+            revision: operation.revision,
+        },
+    })?;
     round_trip(&MatterOperationTarget::Operation {
         fabric_id: fabric_id.clone(),
         operation_id: operation.id.clone(),

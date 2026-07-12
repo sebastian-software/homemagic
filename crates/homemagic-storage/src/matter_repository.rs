@@ -13,11 +13,12 @@ use homemagic_application::{
     StoredMatterFabric, StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
 };
 use homemagic_domain::{
-    AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CommandAction, CommandAggregate,
-    CommandAuditRecord, CommandId, CommandPayload, CommandState, GrantScope, InstallationId,
-    MatterConvergence, MatterFabricId, MatterNodeId, MatterOperation, MatterOperationId,
-    MatterOperationTarget, MatterProjectionId, MatterStateFreshness, MatterStateValue,
-    MatterUnlockAuthorizationId, RiskClass,
+    AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CausationMetadata, CommandAction,
+    CommandAggregate, CommandAuditRecord, CommandId, CommandPayload, CommandState, CorrelationId,
+    DomainEvent, DomainEventKind, EventId, GrantScope, InstallationId, MatterConvergence,
+    MatterFabricId, MatterNodeId, MatterOperation, MatterOperationId, MatterOperationTarget,
+    MatterOperationTransitionEventSchema, MatterProjectionId, MatterStateFreshness,
+    MatterStateValue, MatterUnlockAuthorizationId, RiskClass,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
@@ -273,7 +274,8 @@ impl MatterRepository for SqliteRepository {
         progress: MatterOperationProgress,
     ) -> Result<(), BoxError> {
         run_write(&self.connection, move |transaction| {
-            create_operation(transaction, &operation, &progress)
+            create_operation(transaction, &operation, &progress)?;
+            append_operation_event(transaction, &operation, None, None)
         })
         .await
         .map_err(boxed)
@@ -1227,6 +1229,12 @@ fn create_administration_operation(
             encode(binding)?,
         ],
     )?;
+    append_operation_event(
+        transaction,
+        operation,
+        None,
+        Some(binding.actor_id.to_string()),
+    )?;
     Ok(MatterOperationCreateOutcome::Created(operation.clone()))
 }
 
@@ -1256,6 +1264,12 @@ fn transition_operation(
     repair: Option<&MatterRepairRecord>,
 ) -> Result<(), StorageError> {
     let id = operation.id.to_string();
+    let current = load_payload::<MatterOperation>(
+        transaction,
+        "SELECT payload_json FROM matter_operations WHERE id = ?1",
+        &id,
+    )?
+    .ok_or(StorageError::InvalidMatter("Matter operation is missing"))?;
     validate_revision(
         "operation",
         current_revision(transaction, "matter_operations", &id)?,
@@ -1312,6 +1326,46 @@ fn transition_operation(
         }
         store_repair(transaction, repair, None)?;
     }
+    let actor = transaction
+        .query_row(
+            "SELECT actor_id FROM matter_operation_bindings WHERE operation_id = ?1",
+            [&id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    append_operation_event(transaction, operation, Some(current.phase), actor)
+}
+
+fn append_operation_event(
+    transaction: &Transaction<'_>,
+    operation: &MatterOperation,
+    from: Option<homemagic_domain::MatterOperationPhase>,
+    actor: Option<String>,
+) -> Result<(), StorageError> {
+    let event = DomainEvent {
+        id: EventId::new(),
+        device_id: None,
+        occurred_at: operation.updated_at,
+        causation: CausationMetadata {
+            correlation_id: CorrelationId::from_key(&operation.id.to_string()),
+            causation_event_id: None,
+            actor,
+            automation: None,
+        },
+        kind: DomainEventKind::MatterOperationTransitioned {
+            schema: MatterOperationTransitionEventSchema::V1,
+            operation_id: operation.id.clone(),
+            operation_kind: operation.kind,
+            from,
+            to: operation.phase,
+            revision: operation.revision,
+        },
+    };
+    transaction.execute(
+        "INSERT INTO events(id, device_id, occurred_at, payload_json)
+         VALUES (?1, NULL, ?2, ?3)",
+        params![event.id.to_string(), event.occurred_at, encode(&event)?],
+    )?;
     Ok(())
 }
 
