@@ -1818,7 +1818,7 @@ async fn explicit_subscription_repair_should_be_idempotent_bounded_and_atomic() 
     let (fixture, controller, _node_workflow, node, now) =
         commissioned_node("subscription-repair", SIMULATOR_LIGHT_SETUP).await?;
     let policy = MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?;
-    let workflow = fixture.subscription_repair(controller, policy);
+    let workflow = fixture.subscription_repair(controller.clone(), policy);
     let key = IdempotencyKey::new("subscription-repair-explicit")?;
     let MatterOperationCreateOutcome::Created(operation) = workflow
         .start(
@@ -1880,6 +1880,14 @@ async fn explicit_subscription_repair_should_be_idempotent_bounded_and_atomic() 
             MatterAdministrationError::OperationNotFound
         ))
     ));
+    drop(workflow);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let workflow = MatterSubscriptionRepairService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        controller,
+        policy,
+    );
 
     let MatterSubscriptionRepairOutcome::Completed(completed) = workflow
         .run(
@@ -1982,6 +1990,14 @@ async fn subscription_repair_should_wait_and_exhaust_without_exceeding_policy() 
     assert_eq!(waiting.phase, MatterOperationPhase::Subscribing);
     assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
     assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 1);
+    drop(workflow);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let workflow = MatterSubscriptionRepairService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        counted.clone(),
+        policy,
+    );
     assert!(matches!(
         workflow
             .run(
@@ -2037,6 +2053,25 @@ async fn subscription_repair_should_wait_and_exhaust_without_exceeding_policy() 
     assert!(recovery.repairs.iter().any(|repair| {
         repair.operation_id == operation.id && repair.status == MatterRepairStatus::Open
     }));
+    let retention = fixture
+        .repository
+        .retain_matter(MatterRetention {
+            installation_id: fixture.actor.installation_id.clone(),
+            now: retry_at + TimeDelta::days(1),
+            terminal_before: retry_at + TimeDelta::days(1),
+            resolved_repair_before: retry_at + TimeDelta::days(1),
+            authorization_before: retry_at + TimeDelta::days(1),
+            maximum_terminal_operations: 0,
+        })
+        .await?;
+    assert_eq!(retention.repairs_removed, 0);
+    assert!(
+        fixture
+            .repository
+            .matter_administration_operation(&operation.id)
+            .await?
+            .is_some()
+    );
     Ok(())
 }
 
@@ -2122,6 +2157,141 @@ async fn subscription_repair_phase_commit_should_roll_back_every_related_fact() 
             .await?,
         MatterSubscriptionRepairOutcome::Completed(_)
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn subscription_repair_restart_at_gap_dispatch_should_fail_closed_without_replay()
+-> TestResult {
+    let (fixture, controller, _node_workflow, node, now) =
+        commissioned_node("subscription-repair-gap-restart", SIMULATOR_LIGHT_SETUP).await?;
+    let counted = Arc::new(CountingDiagnosticsController::new(controller));
+    let policy = MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?;
+    let workflow = fixture.subscription_repair(counted.clone(), policy);
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id,
+            node.node_id,
+            IdempotencyKey::new("subscription-repair-gap-restart-explicit")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("subscription repair operation was not created".into());
+    };
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch(&format!(
+        "CREATE TRIGGER fail_subscription_gap_exit
+         BEFORE INSERT ON matter_operation_progress
+         WHEN NEW.operation_id = '{}' AND NEW.phase = 'subscribing'
+         BEGIN
+           SELECT RAISE(ABORT, 'injected subscription gap exit failure');
+         END;",
+        operation.id
+    ))?;
+    drop(connection);
+    assert!(
+        workflow
+            .run(&fixture.actor, &operation.id, now)
+            .await
+            .is_err()
+    );
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 0);
+    let durable = fixture
+        .repository
+        .matter_administration_operation(&operation.id)
+        .await?
+        .ok_or("gap operation missing")?
+        .0;
+    assert_eq!(durable.phase, MatterOperationPhase::ReadingGap);
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch("DROP TRIGGER fail_subscription_gap_exit;")?;
+    drop(connection);
+    drop(workflow);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let workflow = MatterSubscriptionRepairService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        counted.clone(),
+        policy,
+    );
+    assert!(matches!(
+        workflow.run(&fixture.actor, &operation.id, now).await?,
+        MatterSubscriptionRepairOutcome::RepairRequired(_)
+    ));
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn subscription_repair_restart_after_subscribe_dispatch_should_not_redispatch() -> TestResult
+{
+    let (fixture, controller, _node_workflow, node, now) = commissioned_node(
+        "subscription-repair-subscribe-restart",
+        SIMULATOR_LIGHT_SETUP,
+    )
+    .await?;
+    let counted = Arc::new(CountingDiagnosticsController::new(controller));
+    let policy = MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?;
+    let workflow = fixture.subscription_repair(counted.clone(), policy);
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id,
+            node.node_id,
+            IdempotencyKey::new("subscription-repair-subscribe-restart-explicit")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("subscription repair operation was not created".into());
+    };
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch(&format!(
+        "CREATE TRIGGER fail_subscription_completion
+         BEFORE INSERT ON matter_operation_progress
+         WHEN NEW.operation_id = '{}' AND NEW.phase = 'completed'
+         BEGIN
+           SELECT RAISE(ABORT, 'injected subscription completion failure');
+         END;",
+        operation.id
+    ))?;
+    drop(connection);
+    assert!(
+        workflow
+            .run(&fixture.actor, &operation.id, now)
+            .await
+            .is_err()
+    );
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 1);
+    let durable = fixture
+        .repository
+        .matter_administration_operation(&operation.id)
+        .await?
+        .ok_or("subscribe operation missing")?
+        .0;
+    assert_eq!(durable.phase, MatterOperationPhase::Subscribing);
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch("DROP TRIGGER fail_subscription_completion;")?;
+    drop(connection);
+    drop(workflow);
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let workflow = MatterSubscriptionRepairService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        counted.clone(),
+        policy,
+    );
+    assert!(matches!(
+        workflow.run(&fixture.actor, &operation.id, now).await?,
+        MatterSubscriptionRepairOutcome::RepairRequired(_)
+    ));
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

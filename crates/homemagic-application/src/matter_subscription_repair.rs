@@ -120,7 +120,7 @@ impl MatterSubscriptionRepairService {
         operation_id: &MatterOperationId,
         now: DateTime<Utc>,
     ) -> Result<MatterSubscriptionRepairOutcome, MatterSubscriptionRepairError> {
-        let mut operation = self
+        let operation = self
             .administration
             .owned_operation_for_action(
                 actor,
@@ -131,21 +131,30 @@ impl MatterSubscriptionRepairService {
         if operation.kind != MatterOperationKind::RepairSubscription {
             return Err(MatterSubscriptionRepairError::OperationNotFound);
         }
-        loop {
-            operation = match operation.phase {
-                MatterOperationPhase::Requested => self.begin_gap(actor, operation, now).await?,
-                MatterOperationPhase::ReadingGap => self.read_gap(actor, operation, now).await?,
-                MatterOperationPhase::Subscribing => {
-                    return self.subscribe(actor, operation, now).await;
+        match operation.phase {
+            MatterOperationPhase::Requested => {
+                let operation = self.begin_gap(actor, operation, now).await?;
+                let operation = self.read_gap(actor, operation, now).await?;
+                self.subscribe(actor, operation, now, true).await
+            }
+            MatterOperationPhase::ReadingGap => {
+                self.record_ambiguous_dispatch(actor, operation, now).await
+            }
+            MatterOperationPhase::Subscribing => {
+                let (_, subscription) = self.inventory(actor, &operation).await?;
+                if subscription.recovery.retry_at.is_some() {
+                    self.subscribe(actor, operation, now, false).await
+                } else {
+                    self.record_ambiguous_dispatch(actor, operation, now).await
                 }
-                MatterOperationPhase::Completed => {
-                    return Ok(MatterSubscriptionRepairOutcome::Completed(operation));
-                }
-                MatterOperationPhase::RepairRequired => {
-                    return Ok(MatterSubscriptionRepairOutcome::RepairRequired(operation));
-                }
-                _ => return Err(MatterSubscriptionRepairError::InvalidPhase),
-            };
+            }
+            MatterOperationPhase::Completed => {
+                Ok(MatterSubscriptionRepairOutcome::Completed(operation))
+            }
+            MatterOperationPhase::RepairRequired => {
+                Ok(MatterSubscriptionRepairOutcome::RepairRequired(operation))
+            }
+            _ => Err(MatterSubscriptionRepairError::InvalidPhase),
         }
     }
 
@@ -161,7 +170,7 @@ impl MatterSubscriptionRepairService {
         subscription.recovery = StoredMatterSubscriptionRecovery {
             gap_reason: Some(MatterSubscriptionLossReason::ReportGap),
             sleepy: subscription.recovery.sleepy,
-            gap_reads: 0,
+            gap_reads: 1,
             maximum_gap_reads: self.policy.maximum_gap_reads,
             subscribe_attempts: 0,
             maximum_subscribe_attempts: self.policy.maximum_subscribe_attempts,
@@ -300,7 +309,6 @@ impl MatterSubscriptionRepairService {
                 })
             })
             .collect::<Result<Vec<_>, MatterSubscriptionRepairError>>()?;
-        subscription.recovery.gap_reads = 1;
         subscription.recovery.last_gap_read_at = Some(now);
         subscription.recovery.subscribe_attempts = 1;
         subscription.recovery.retry_at = None;
@@ -322,13 +330,19 @@ impl MatterSubscriptionRepairService {
         Ok(operation)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the phase keeps retry reservation, controller outcome, and atomic exit together"
+    )]
     async fn subscribe(
         &self,
         actor: &Actor,
         mut operation: MatterOperation,
         now: DateTime<Utc>,
+        reserved_attempt: bool,
     ) -> Result<MatterSubscriptionRepairOutcome, MatterSubscriptionRepairError> {
         let (record, mut subscription) = self.inventory(actor, &operation).await?;
+        let mut may_dispatch = reserved_attempt;
         if let Some(retry_at) = subscription.recovery.retry_at {
             if now < retry_at {
                 return Ok(MatterSubscriptionRepairOutcome::Waiting {
@@ -346,6 +360,10 @@ impl MatterSubscriptionRepairService {
                 .store_matter_subscription(subscription.clone(), Some(expected_revision))
                 .await
                 .map_err(MatterSubscriptionRepairError::Repository)?;
+            may_dispatch = true;
+        }
+        if !may_dispatch {
+            return self.record_ambiguous_dispatch(actor, operation, now).await;
         }
         let projected = project_matter_node(&record.node.installation_id, &record.node.descriptor);
         let selection = MatterAttributeSelection::new(
@@ -483,6 +501,52 @@ impl MatterSubscriptionRepairService {
             operation,
             retry_at,
         })
+    }
+
+    async fn record_ambiguous_dispatch(
+        &self,
+        actor: &Actor,
+        mut operation: MatterOperation,
+        now: DateTime<Utc>,
+    ) -> Result<MatterSubscriptionRepairOutcome, MatterSubscriptionRepairError> {
+        let (_, mut subscription) = self.inventory(actor, &operation).await?;
+        let expected_subscription_revision = subscription.revision;
+        subscription.state = StoredMatterSubscriptionState::RepairRequired;
+        subscription.recovery.retry_at = None;
+        subscription.revision = subscription.revision.saturating_add(1);
+        subscription.updated_at = now;
+        let expected_operation_revision = operation.revision;
+        operation
+            .transition(MatterOperationPhase::RepairRequired, now)
+            .map_err(|_| MatterSubscriptionRepairError::InvalidPhase)?;
+        let error = MatterControllerError::new(
+            homemagic_domain::MatterControllerErrorCategory::Conflict,
+            homemagic_domain::MatterControllerErrorCode::OutcomeIndeterminate,
+            homemagic_domain::MatterRetryability::AfterRepair,
+            Some(homemagic_domain::MatterAffectedResource::Operation {
+                operation_id: operation.id.clone(),
+            }),
+            None,
+        );
+        let repair = MatterRepairRecord {
+            id: RepairId::new(),
+            operation_id: operation.id.clone(),
+            status: MatterRepairStatus::Open,
+            error,
+            revision: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        self.commit(
+            operation.clone(),
+            expected_operation_revision,
+            subscription,
+            expected_subscription_revision,
+            Vec::new(),
+            Some(repair),
+        )
+        .await?;
+        Ok(MatterSubscriptionRepairOutcome::RepairRequired(operation))
     }
 
     async fn inventory(
