@@ -6,15 +6,16 @@ use std::sync::{Arc, Mutex};
 use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
     AutomationActivation, AutomationCompiler, AutomationDraft, AutomationEngine,
-    AutomationEventProcessor, AutomationRepository, AutomationRetention, AutomationRuntime,
-    AutomationRuntimeStep, AutomationScheduler, AutomationSimulationEvidence,
-    AutomationSimulationFixture, AutomationSimulationStatus, AutomationSimulator,
-    AutomationStepWrite, AutomationValidationEvidence, BoxError, Clock, FoundationRepository,
-    FoundationSnapshot, FoundationWrite, MemoryFoundationRepository, SimulationTriggerContext,
-    SimulationTriggerKind, StoredAutomationVersion,
+    AutomationEventProcessor, AutomationLifecycleService, AutomationRepository,
+    AutomationRetention, AutomationRuntime, AutomationRuntimeStep, AutomationScheduler,
+    AutomationSimulationEvidence, AutomationSimulationFixture, AutomationSimulationInput,
+    AutomationSimulationStatus, AutomationSimulator, AutomationStepWrite,
+    AutomationValidationEvidence, BoxError, Clock, FoundationRepository, FoundationSnapshot,
+    FoundationWrite, MemoryFoundationRepository, SimulationTriggerContext, SimulationTriggerKind,
+    StoredAutomationVersion,
 };
 use homemagic_domain::{
-    ActorId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
+    Actor, ActorId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
     AutomationApprovalRequirement, AutomationApprovalState, AutomationCausation,
     AutomationComparison, AutomationCondition, AutomationContentHash, AutomationDocument,
     AutomationDocumentSchema, AutomationExpression, AutomationFailurePolicy, AutomationId,
@@ -25,11 +26,84 @@ use homemagic_domain::{
     AutomationTraceKind, AutomationTraceStep, AutomationTrigger, AutomationValue,
     AutomationValueType, AutomationVariableDefinition, AutomationVersion, AutomationVersionState,
     CausationMetadata, CommandId, CommandState, CorrelationId, DeviceId, DomainEvent,
-    DomainEventKind, EventId, IdempotencyKey, canonical_automation_plan_hash,
+    DomainEventKind, EventId, IdempotencyKey, InstallationId, canonical_automation_plan_hash,
 };
 use homemagic_storage::SqliteRepository;
 
 type TestResult = Result<(), BoxError>;
+
+#[tokio::test]
+async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("lifecycle-service.sqlite3"),
+    )?);
+    let foundation = Arc::new(MemoryFoundationRepository::default());
+    let now = Utc
+        .with_ymd_and_hms(2026, 7, 12, 12, 0, 0)
+        .single()
+        .ok_or("valid lifecycle instant")?;
+    let actor = Actor {
+        id: ActorId::new(),
+        installation_id: InstallationId::new(),
+        name: "Automation owner".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    let mut document = document();
+    document.provenance.author_id = actor.id.clone();
+    let service =
+        AutomationLifecycleService::new(repository.clone(), foundation, Arc::new(FixedClock(now)));
+
+    let draft = service.put_draft(&actor, document.clone(), None).await?;
+    assert_eq!(draft.revision, 0);
+    assert!(
+        service
+            .put_draft(&actor, document.clone(), None)
+            .await
+            .is_err()
+    );
+    let stranger = Actor {
+        id: ActorId::new(),
+        ..actor.clone()
+    };
+    assert!(service.draft(&stranger, &document.id).await.is_err());
+    let validated = service.validate(&actor, &document.id).await?;
+    assert_eq!(validated.state, AutomationVersionState::Validated);
+    let simulated = service
+        .simulate(
+            &actor,
+            &document.id,
+            document.version,
+            AutomationSimulationInput {
+                trigger: SimulationTriggerContext {
+                    kind: SimulationTriggerKind::Schedule,
+                    occurred_at: now,
+                    accepted_at: now,
+                    window_ends_at: now + TimeDelta::minutes(1),
+                    explicit_catch_up: false,
+                    active_runs: 0,
+                    queued_triggers: 0,
+                    caused_by_version: None,
+                    same_correlation: false,
+                },
+                initial_state: BTreeMap::new(),
+                state_changes: Vec::new(),
+                command_outcomes: Vec::new(),
+            },
+        )
+        .await?;
+    assert_eq!(
+        simulated.result.status,
+        AutomationSimulationStatus::Completed
+    );
+    assert_eq!(simulated.version.state, AutomationVersionState::Ready);
+    let identity = service
+        .activate(&actor, &document.id, document.version, 0)
+        .await?;
+    assert_eq!(identity.active_version, Some(document.version));
+    Ok(())
+}
 
 #[tokio::test]
 async fn event_cursor_should_advance_optimistically_and_survive_reopen() -> TestResult {

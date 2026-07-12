@@ -5,6 +5,7 @@ mod automation_compiler;
 mod automation_engine;
 mod automation_evaluator;
 mod automation_events;
+mod automation_lifecycle;
 mod automation_repository;
 mod automation_runtime;
 mod automation_scheduler;
@@ -44,6 +45,10 @@ pub use automation_evaluator::{
 };
 pub use automation_events::{
     AutomationEventProcessor, AutomationEventProcessorError, AutomationEventProcessorTick,
+};
+pub use automation_lifecycle::{
+    AutomationLifecycleError, AutomationLifecycleService, AutomationLifecycleSimulation,
+    AutomationSimulationInput,
 };
 pub use automation_repository::{
     ActiveAutomationVersion, AutomationActivation, AutomationDraft, AutomationEventCursor,

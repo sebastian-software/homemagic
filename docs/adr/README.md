@@ -42,3 +42,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0027: Enforce run modes against evolving durable admission state](0027-enforce-durable-run-mode-admission.md)
 - [ADR-0028: Orchestrate automation as bounded durable passes](0028-orchestrate-bounded-automation-passes.md)
 - [ADR-0029: Require an explicit request for schedule catch-up](0029-require-explicit-schedule-catch-up.md)
+- [ADR-0030: Centralize authenticated automation lifecycle operations](0030-centralize-authenticated-automation-lifecycle.md)

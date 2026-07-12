@@ -2,12 +2,12 @@
 id: E3-007
 epic: EPIC-003
 title: Expose governed automation lifecycle RPCs
-status: planned
+status: in_progress
 priority: high
 depends_on: [E3-004, E3-005, E3-006]
-adrs: [ADR-0003, ADR-0013, ADR-0016, ADR-0019]
+adrs: [ADR-0003, ADR-0013, ADR-0016, ADR-0019, ADR-0030]
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # E3-007: Automation RPC
@@ -31,3 +31,11 @@ updated: 2026-07-11
 - [ ] Sensitive profiles cannot activate without explicit version approval.
 - [ ] Comfort and constrained comfort-motion follow the simple auto-ready rule.
 - [ ] Tokens, secrets, vendor payloads, and untrusted actor fields never leak.
+
+## Progress
+
+- 2026-07-12: Accepted ADR-0030 and added the transport-independent
+  `AutomationLifecycleService`. SQLite evidence proves actor ownership,
+  optimistic draft conflicts, exact validation evidence, data-only simulation
+  with internally derived IDs, automatic comfort readiness, and atomic exact
+  activation. RPC query/transition methods remain open.
