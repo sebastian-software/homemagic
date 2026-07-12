@@ -13,6 +13,10 @@ const AUTOMATION_OCCURRENCE_NAMESPACE: Uuid =
 const AUTOMATION_RUN_NAMESPACE: Uuid = Uuid::from_u128(0x4956_eaca_1fa9_597d_9219_77cb_d73e_eaf5);
 const AUTOMATION_TIMER_NAMESPACE: Uuid = Uuid::from_u128(0x6a52_b568_0174_5c08_9f45_b9c0_ee6d_8bc5);
 const CORRELATION_NAMESPACE: Uuid = Uuid::from_u128(0xb5b5_5d91_a4a0_5411_afb2_9ec2_d254_6032);
+const MATTER_PROJECTION_NAMESPACE: Uuid =
+    Uuid::from_u128(0x889a_276a_0df8_5d0a_9daf_3399_d224_6948);
+const MATTER_SUBSCRIPTION_NAMESPACE: Uuid =
+    Uuid::from_u128(0xa3dc_5970_14c9_5c2e_9d68_2bd5_5080_aa50);
 const LEGACY_INSTALLATION: Uuid = Uuid::from_u128(0xc776_218d_d377_5a5e_b6a7_9384_dc1c_da37);
 
 /// Stable opaque identifier for a `HomeMagic` installation.
@@ -239,6 +243,54 @@ uuid_identity!(
     AutomationApprovalId,
     "Stable identity for one immutable automation approval decision."
 );
+uuid_identity!(
+    MatterFabricId,
+    "Stable identity for one HomeMagic-owned Matter fabric."
+);
+uuid_identity!(
+    MatterProjectionId,
+    "Stable identity for one versioned Matter capability projection."
+);
+uuid_identity!(
+    MatterSubscriptionId,
+    "Stable logical identity for one recoverable Matter subscription."
+);
+uuid_identity!(
+    MatterOperationId,
+    "Stable identity for one durable Matter controller operation."
+);
+uuid_identity!(
+    MatterControllerEventId,
+    "Stable identity for one normalized Matter controller event."
+);
+
+impl MatterProjectionId {
+    /// Derives the stable projection identity for one endpoint rule version.
+    #[must_use]
+    pub fn from_key(
+        fabric_id: &MatterFabricId,
+        node_id: u64,
+        endpoint: u16,
+        rule: &str,
+        version: u16,
+    ) -> Self {
+        Self(Uuid::new_v5(
+            &MATTER_PROJECTION_NAMESPACE,
+            format!("{fabric_id}:{node_id}:{endpoint}:{rule}:{version}").as_bytes(),
+        ))
+    }
+}
+
+impl MatterSubscriptionId {
+    /// Derives a stable logical subscription identity for one Matter node.
+    #[must_use]
+    pub fn from_node(fabric_id: &MatterFabricId, node_id: u64) -> Self {
+        Self(Uuid::new_v5(
+            &MATTER_SUBSCRIPTION_NAMESPACE,
+            format!("{fabric_id}:{node_id}").as_bytes(),
+        ))
+    }
+}
 
 /// Stable opaque identifier for a device.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -489,5 +541,25 @@ mod tests {
             AutomationTimerId::from_key(&run, 7, 1_725_000_000_000),
             AutomationTimerId::from_key(&run, 8, 1_725_000_000_000)
         );
+    }
+
+    #[test]
+    fn matter_projection_id_should_be_stable_for_rule_key() {
+        let fabric_id = MatterFabricId::new();
+
+        let first = MatterProjectionId::from_key(&fabric_id, 42, 1, "on_off", 1);
+        let repeated = MatterProjectionId::from_key(&fabric_id, 42, 1, "on_off", 1);
+
+        assert_eq!(first, repeated);
+    }
+
+    #[test]
+    fn matter_projection_id_should_change_with_rule_version() {
+        let fabric_id = MatterFabricId::new();
+
+        let first = MatterProjectionId::from_key(&fabric_id, 42, 1, "door_lock", 1);
+        let changed = MatterProjectionId::from_key(&fabric_id, 42, 1, "door_lock", 2);
+
+        assert_ne!(first, changed);
     }
 }

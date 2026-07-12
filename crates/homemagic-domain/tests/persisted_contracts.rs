@@ -19,9 +19,16 @@ use homemagic_domain::{
     CommandAggregate, CommandAuditRecord, CommandEnvelope, CommandId, CommandPayload, CommandState,
     CommandTransitionError, CorrelationId, DeviceId, DeviceLifecycle, DeviceRecord, DeviceSnapshot,
     DomainEvent, DomainEventKind, EndpointId, EventId, IdempotencyKey, InstallationId,
-    IntegrationId, LifecycleTransitionError, LifecycleTrigger, ObservationMergeError,
-    ObservationSource, ObservationSourceKind, ObservedValue, OnOffCommand, RepairKind,
-    RepairRecord, RepairTransitionError, RiskClass, canonical_automation_hash,
+    IntegrationId, LifecycleTransitionError, LifecycleTrigger, MatterClusterDescriptor,
+    MatterControllerError, MatterControllerErrorCategory, MatterControllerErrorCode,
+    MatterControllerEvent, MatterControllerEventId, MatterControllerEventKind,
+    MatterDescriptorError, MatterDescriptorRevision, MatterDeviceType, MatterEndpointDescriptor,
+    MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor, MatterNodeId, MatterOperation,
+    MatterOperationKind, MatterOperationPhase, MatterOperationTarget, MatterProjectedState,
+    MatterProjectionId, MatterRepairAction, MatterRetryability, MatterStateFreshness,
+    MatterStateUncertainty, ObservationMergeError, ObservationSource, ObservationSourceKind,
+    ObservedValue, OnOffCommand, RepairKind, RepairRecord, RepairTransitionError, RiskClass,
+    canonical_automation_hash,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -167,6 +174,64 @@ fn public_errors_should_serialize_without_runtime_context() -> serde_json::Resul
         from: CommandState::Confirmed,
         to: CommandState::Dispatched,
     })?;
+    round_trip(&MatterDescriptorError::ZeroNodeId)?;
+    round_trip(&MatterControllerError::new(
+        MatterControllerErrorCategory::SecretStore,
+        MatterControllerErrorCode::SecretUnavailable,
+        MatterRetryability::AfterRepair,
+        None,
+        Some(MatterRepairAction::RestoreSecretStore),
+    ))?;
+    Ok(())
+}
+
+#[test]
+fn matter_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Error>> {
+    let now = Utc::now();
+    let fabric_id = MatterFabricId::new();
+    let node_id = MatterNodeId::new(42)?;
+    let endpoint = MatterEndpointDescriptor::new(
+        MatterEndpointNumber::new(1),
+        vec![MatterDeviceType::new(0x0100, 1)?],
+        vec![MatterClusterDescriptor::new(6, 4, 0, vec![0, 1, 2])?],
+        Vec::new(),
+    )?;
+    let descriptor = MatterNodeDescriptor::new(
+        fabric_id.clone(),
+        node_id,
+        vec![endpoint],
+        MatterDescriptorRevision::new(1)?,
+    )?;
+    let projection_id = MatterProjectionId::from_key(&fabric_id, node_id.get(), 1, "on_off", 1);
+    let state = MatterProjectedState::new(
+        projection_id,
+        None,
+        None,
+        None,
+        MatterStateFreshness::Unknown,
+        homemagic_domain::MatterConvergence::NoDesiredState,
+        Some(MatterStateUncertainty::SubscriptionLost),
+    )?;
+    let operation = MatterOperation::new(
+        MatterOperationKind::CommissionNode,
+        MatterOperationTarget::Fabric {
+            fabric_id: fabric_id.clone(),
+        },
+        now,
+    );
+    let event = MatterControllerEvent {
+        id: MatterControllerEventId::new(),
+        occurred_at: now,
+        kind: MatterControllerEventKind::OperationProgress {
+            operation_id: operation.id.clone(),
+            phase: MatterOperationPhase::Requested,
+        },
+    };
+
+    round_trip(&descriptor)?;
+    round_trip(&state)?;
+    round_trip(&operation)?;
+    round_trip(&event)?;
     Ok(())
 }
 

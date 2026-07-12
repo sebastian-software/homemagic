@@ -12,6 +12,7 @@ mod device;
 mod event;
 mod identity;
 mod lifecycle;
+mod matter;
 mod observation;
 mod repair;
 
@@ -34,13 +35,15 @@ pub use event::{AutomationCausation, CausationMetadata, DomainEvent, DomainEvent
 pub use identity::{
     ActorId, AuditId, AutomationApprovalId, AutomationId, AutomationOccurrenceId, AutomationRunId,
     AutomationTimerId, AutomationTraceId, CommandId, CorrelationId, DeviceId, EndpointId, EventId,
-    GrantId, InstallationId, IntegrationId, RepairId, SecretRef, SpaceId,
+    GrantId, InstallationId, IntegrationId, MatterControllerEventId, MatterFabricId,
+    MatterOperationId, MatterProjectionId, MatterSubscriptionId, RepairId, SecretRef, SpaceId,
 };
 pub use lifecycle::{
     Availability, AvailabilityState, DeviceLifecycle, DeviceTimestamps, FreshnessPolicy,
     FreshnessPolicyError, FreshnessState, LifecycleTransitionError, LifecycleTrigger,
     TimestampError,
 };
+pub use matter::*;
 pub use observation::{
     CapabilityObservation, ObservationMergeError, ObservationSource, ObservationSourceKind,
     ObservedValue,
