@@ -1027,6 +1027,17 @@ fn store_subscription(
     subscription: &StoredMatterSubscription,
     expected_revision: Option<u64>,
 ) -> Result<(), StorageError> {
+    let recovery = &subscription.recovery;
+    if recovery.maximum_gap_reads == 0
+        || recovery.maximum_subscribe_attempts == 0
+        || recovery.sleepy_read_interval_millis == 0
+        || recovery.gap_reads > recovery.maximum_gap_reads
+        || recovery.subscribe_attempts > recovery.maximum_subscribe_attempts
+    {
+        return Err(StorageError::InvalidMatter(
+            "subscription recovery budget is invalid",
+        ));
+    }
     let id = subscription.subscription_id.to_string();
     validate_revision(
         "subscription",

@@ -7,11 +7,13 @@ use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_application::{
     MAX_MATTER_ATTRIBUTE_PATHS_PER_REQUEST, MatterAttributeSelection,
     MatterControllerContractError, MatterProjectionRule, MatterProjectionValidity,
-    MatterReportCausation, MatterReportDecision, MatterReportRejection, MatterSubscriptionRecovery,
+    MatterReportCausation, MatterReportDecision, MatterReportRejection,
+    MatterSubscriptionDiagnosticState, MatterSubscriptionRecovery,
     MatterSubscriptionRecoveryAction, MatterSubscriptionRecoveryOutcome,
-    MatterSubscriptionRecoveryPolicy, StoredMatterSubscription, StoredMatterSubscriptionState,
+    MatterSubscriptionRecoveryPolicy, MatterSubscriptionRemediation, StoredMatterSubscription,
+    StoredMatterSubscriptionRecovery, StoredMatterSubscriptionState,
     advance_matter_projected_state, initial_stored_matter_projection, matter_subscription_id,
-    normalize_matter_report, project_matter_node, projection_validity,
+    matter_subscription_status, normalize_matter_report, project_matter_node, projection_validity,
 };
 use homemagic_domain::{
     InstallationId, MatterAttributePath, MatterAttributeReport, MatterAttributeValue,
@@ -491,6 +493,10 @@ fn restart_should_preserve_logical_identity_and_sleepy_device_read_bound() -> Te
         state: StoredMatterSubscriptionState::Established,
         report_sequence: 12,
         stale_after: now()?,
+        recovery: StoredMatterSubscriptionRecovery {
+            sleepy: true,
+            ..StoredMatterSubscriptionRecovery::default()
+        },
         revision: 3,
         updated_at: now()?,
     };
@@ -499,7 +505,6 @@ fn restart_should_preserve_logical_identity_and_sleepy_device_read_bound() -> Te
         selection()?,
         0,
         5_000,
-        true,
         recovery_policy()?,
     );
     let now = now()?;
@@ -520,6 +525,160 @@ fn restart_should_preserve_logical_identity_and_sleepy_device_read_bound() -> Te
     };
     assert_eq!(request.subscription_id, subscription_id);
     assert_eq!(request.selection.paths().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn subscription_status_should_be_pure_bounded_and_deterministic_at_boundaries() -> TestResult {
+    let evaluated_at = now()?;
+    let fabric_id = fabric_id()?;
+    let mut stored = StoredMatterSubscription {
+        subscription_id: matter_subscription_id(&fabric_id, MatterNodeId::new(42)?),
+        fabric_id,
+        node_id: MatterNodeId::new(42)?,
+        state: StoredMatterSubscriptionState::Established,
+        report_sequence: 12,
+        stale_after: evaluated_at + TimeDelta::seconds(1),
+        recovery: StoredMatterSubscriptionRecovery::default(),
+        revision: 3,
+        updated_at: evaluated_at,
+    };
+
+    let fresh = matter_subscription_status(&stored, evaluated_at);
+    assert_eq!(fresh.state, MatterSubscriptionDiagnosticState::Established);
+    assert_eq!(fresh.remediation, MatterSubscriptionRemediation::None);
+    assert!(!fresh.stale);
+
+    stored.stale_after = evaluated_at;
+    let stale = matter_subscription_status(&stored, evaluated_at);
+    assert_eq!(stale.state, MatterSubscriptionDiagnosticState::Stale);
+    assert_eq!(
+        stale.remediation,
+        MatterSubscriptionRemediation::RequestGapRepair
+    );
+
+    stored.recovery.sleepy = true;
+    stored.recovery.last_gap_read_at = Some(evaluated_at);
+    let allowed_at = evaluated_at + TimeDelta::milliseconds(60_000);
+    let sleepy = matter_subscription_status(&stored, evaluated_at);
+    assert_eq!(sleepy.state, MatterSubscriptionDiagnosticState::Waiting);
+    assert_eq!(
+        sleepy.remediation,
+        MatterSubscriptionRemediation::WaitForSleepyRead
+    );
+    assert_eq!(sleepy.next_gap_read_at, Some(allowed_at));
+    assert_eq!(
+        matter_subscription_status(&stored, allowed_at).remediation,
+        MatterSubscriptionRemediation::RequestGapRepair
+    );
+
+    stored.recovery.gap_reads = stored.recovery.maximum_gap_reads;
+    assert_eq!(
+        matter_subscription_status(&stored, allowed_at).remediation,
+        MatterSubscriptionRemediation::RequestResubscribe
+    );
+    stored.recovery.retry_at = Some(allowed_at + TimeDelta::seconds(1));
+    let waiting = matter_subscription_status(&stored, allowed_at);
+    assert_eq!(waiting.state, MatterSubscriptionDiagnosticState::Waiting);
+    assert_eq!(
+        waiting.remediation,
+        MatterSubscriptionRemediation::WaitForRetry
+    );
+
+    stored.recovery.subscribe_attempts = stored.recovery.maximum_subscribe_attempts;
+    let exhausted = matter_subscription_status(&stored, allowed_at);
+    assert_eq!(
+        exhausted.state,
+        MatterSubscriptionDiagnosticState::Exhausted
+    );
+    assert_eq!(
+        exhausted.remediation,
+        MatterSubscriptionRemediation::RetryBudgetExhausted
+    );
+    stored.state = StoredMatterSubscriptionState::RepairRequired;
+    let repair = matter_subscription_status(&stored, allowed_at);
+    assert_eq!(
+        repair.state,
+        MatterSubscriptionDiagnosticState::RepairRequired
+    );
+    assert_eq!(
+        repair.remediation,
+        MatterSubscriptionRemediation::ExplicitRepairRequired
+    );
+    Ok(())
+}
+
+#[test]
+fn recovery_checkpoint_should_preserve_retry_and_gap_budgets_across_restart() -> TestResult {
+    let fabric_id = fabric_id()?;
+    let node_id = MatterNodeId::new(42)?;
+    let evaluated_at = now()?;
+    let policy = recovery_policy()?;
+    let mut first = MatterSubscriptionRecovery::after_loss(
+        matter_subscription_id(&fabric_id, node_id),
+        fabric_id.clone(),
+        node_id,
+        selection()?,
+        0,
+        5_000,
+        MatterSubscriptionLossReason::ReportGap,
+        false,
+        None,
+        policy,
+    );
+    first.record_outcome(
+        MatterSubscriptionRecoveryOutcome::StalePersisted,
+        evaluated_at,
+    )?;
+    first.record_outcome(
+        MatterSubscriptionRecoveryOutcome::GapReadCompleted,
+        evaluated_at,
+    )?;
+    first.record_outcome(
+        MatterSubscriptionRecoveryOutcome::ResubscribeFailed,
+        evaluated_at,
+    )?;
+    let checkpoint = first.checkpoint();
+    let retry_at = checkpoint.retry_at.ok_or("retry deadline missing")?;
+    let stored = StoredMatterSubscription {
+        subscription_id: matter_subscription_id(&fabric_id, node_id),
+        fabric_id,
+        node_id,
+        state: StoredMatterSubscriptionState::Stale,
+        report_sequence: 12,
+        stale_after: evaluated_at,
+        recovery: checkpoint,
+        revision: 4,
+        updated_at: evaluated_at,
+    };
+
+    let mut reopened = MatterSubscriptionRecovery::from_stored(
+        &stored,
+        selection()?,
+        0,
+        5_000,
+        MatterSubscriptionRecoveryPolicy::default(),
+    );
+    assert_eq!(
+        reopened.next_action(evaluated_at),
+        MatterSubscriptionRecoveryAction::WaitUntil(retry_at)
+    );
+    assert!(matches!(
+        reopened.next_action(retry_at),
+        MatterSubscriptionRecoveryAction::Resubscribe(_)
+    ));
+    reopened.record_outcome(
+        MatterSubscriptionRecoveryOutcome::ResubscribeFailed,
+        retry_at,
+    )?;
+    assert_eq!(
+        reopened.next_action(retry_at),
+        MatterSubscriptionRecoveryAction::RepairRequired
+    );
+    let exhausted = reopened.checkpoint();
+    assert_eq!(exhausted.gap_reads, 1);
+    assert_eq!(exhausted.subscribe_attempts, 2);
+    assert_eq!(exhausted.maximum_subscribe_attempts, 2);
     Ok(())
 }
 

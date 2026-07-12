@@ -5,14 +5,16 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
     Actor, CommandAction, DeviceId, MatterDescriptorRevision, MatterFabricId, MatterOperationId,
-    MatterOperationKind, MatterOperationPhase,
+    MatterOperationKind, MatterOperationPhase, MatterSubscriptionLossReason,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     BoxError, MatterAdministrationError, MatterAdministrationService, MatterController,
-    MatterFabricState, MatterRepository, StoredMatterSubscriptionState,
+    MatterFabricState, MatterRepository, MatterSubscriptionDiagnosticState,
+    MatterSubscriptionRemediation, StoredMatterSubscription, StoredMatterSubscriptionState,
+    matter_subscription_status,
 };
 
 const MAX_DIAGNOSTIC_PAGE: usize = 256;
@@ -82,16 +84,51 @@ pub struct MatterNodeDiagnostic {
 pub struct MatterSubscriptionDiagnostic {
     /// Durable recovery state.
     pub state: StoredMatterSubscriptionState,
+    /// Deterministic public status derived from durable facts.
+    pub status: MatterSubscriptionDiagnosticState,
+    /// Freshness at the snapshot's explicit evaluation time.
+    pub freshness: MatterSubscriptionFreshness,
     /// Whether the report deadline is currently exceeded.
     pub stale: bool,
     /// Whether an explicit repair operation is currently meaningful.
     pub repair_eligible: bool,
     /// Latest normalized report sequence.
     pub report_sequence: u64,
+    /// Stable reason for the current report gap, when known.
+    pub gap_reason: Option<MatterSubscriptionLossReason>,
+    /// Durable gap-read budget.
+    pub gap_reads: MatterSubscriptionBudgetDiagnostic,
+    /// Durable resubscribe-attempt budget.
+    pub subscribe_attempts: MatterSubscriptionBudgetDiagnostic,
+    /// Earliest time at which the recommended action may proceed.
+    pub next_action_at: Option<DateTime<Utc>>,
+    /// Stable adapter-independent remediation code.
+    pub remediation: MatterSubscriptionRemediation,
     /// Expected report or verification deadline.
     pub stale_after: DateTime<Utc>,
     /// Last durable subscription change.
     pub updated_at: DateTime<Utc>,
+}
+
+/// Subscription freshness at an explicit evaluation time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatterSubscriptionFreshness {
+    /// The established subscription remains inside its report deadline.
+    Fresh,
+    /// The subscription is absent, non-established, or past its deadline.
+    Stale,
+}
+
+/// One finite durable recovery budget.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MatterSubscriptionBudgetDiagnostic {
+    /// Units already consumed.
+    pub used: u8,
+    /// Fixed limit captured for the recovery cycle.
+    pub maximum: u8,
+    /// Saturating remaining units.
+    pub remaining: u8,
 }
 
 /// Secret-free actor-owned operation health without resource target identifiers.
@@ -208,19 +245,9 @@ impl MatterDiagnosticsService {
                         .into_iter()
                         .map(|projection| projection.capability_schema)
                         .collect(),
-                    subscription: record.subscription.map(|subscription| {
-                        let stale = subscription.state
-                            != StoredMatterSubscriptionState::Established
-                            || subscription.stale_after <= now;
-                        MatterSubscriptionDiagnostic {
-                            state: subscription.state,
-                            stale,
-                            repair_eligible: stale,
-                            report_sequence: subscription.report_sequence,
-                            stale_after: subscription.stale_after,
-                            updated_at: subscription.updated_at,
-                        }
-                    }),
+                    subscription: record
+                        .subscription
+                        .map(|subscription| diagnose_subscription(&subscription, now)),
                     updated_at: record.node.updated_at,
                 })
                 .collect(),
@@ -237,6 +264,61 @@ impl MatterDiagnosticsService {
             unresolved_repairs: recovery.repairs.len(),
             evaluated_at: now,
         })
+    }
+}
+
+/// Derives subscription health without reading a clock, repository, or controller.
+#[must_use]
+pub fn diagnose_subscription(
+    subscription: &StoredMatterSubscription,
+    now: DateTime<Utc>,
+) -> MatterSubscriptionDiagnostic {
+    let recovery = &subscription.recovery;
+    let status = matter_subscription_status(subscription, now);
+    let freshness = if subscription.state == StoredMatterSubscriptionState::Established
+        && subscription.stale_after > now
+    {
+        MatterSubscriptionFreshness::Fresh
+    } else {
+        MatterSubscriptionFreshness::Stale
+    };
+    let stale = freshness == MatterSubscriptionFreshness::Stale;
+    let next_action_at = match status.remediation {
+        MatterSubscriptionRemediation::WaitForRetry => status.retry_at,
+        MatterSubscriptionRemediation::WaitForSleepyRead => status.next_gap_read_at,
+        _ => None,
+    };
+    MatterSubscriptionDiagnostic {
+        state: subscription.state,
+        status: status.state,
+        freshness,
+        stale,
+        repair_eligible: matches!(
+            status.remediation,
+            MatterSubscriptionRemediation::RequestGapRepair
+                | MatterSubscriptionRemediation::RequestResubscribe
+                | MatterSubscriptionRemediation::RetryBudgetExhausted
+                | MatterSubscriptionRemediation::ExplicitRepairRequired
+        ),
+        report_sequence: subscription.report_sequence,
+        gap_reason: recovery.gap_reason,
+        gap_reads: budget(recovery.gap_reads, recovery.maximum_gap_reads),
+        subscribe_attempts: budget(
+            recovery.subscribe_attempts,
+            recovery.maximum_subscribe_attempts,
+        ),
+        next_action_at,
+        remediation: status.remediation,
+        stale_after: subscription.stale_after,
+        updated_at: subscription.updated_at,
+    }
+}
+
+const fn budget(used: u8, maximum: u8) -> MatterSubscriptionBudgetDiagnostic {
+    MatterSubscriptionBudgetDiagnostic {
+        used,
+        maximum,
+        remaining: maximum.saturating_sub(used),
     }
 }
 

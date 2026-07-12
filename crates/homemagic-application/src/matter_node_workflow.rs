@@ -26,9 +26,9 @@ use crate::{
     MatterOperationProgress, MatterReadRequest, MatterRemovalOutcome, MatterRemoveNodeRequest,
     MatterRepairRecord, MatterRepairStatus, MatterReportCausation, MatterReportDecision,
     MatterRepository, MatterSubscriptionRequest, MatterWorkflowOutcome, SecretValue,
-    StoredMatterNode, StoredMatterSubscription, StoredMatterSubscriptionState,
-    advance_matter_projected_state, initial_stored_matter_projection, normalize_matter_report,
-    project_matter_node,
+    StoredMatterNode, StoredMatterSubscription, StoredMatterSubscriptionRecovery,
+    StoredMatterSubscriptionState, advance_matter_projected_state,
+    initial_stored_matter_projection, normalize_matter_report, project_matter_node,
 };
 
 const SIMULATOR_IMPLEMENTATION: &str = "homemagic-deterministic-simulator";
@@ -719,6 +719,7 @@ impl MatterNodeWorkflowService {
                         state: StoredMatterSubscriptionState::Established,
                         report_sequence: subscription_status.report_sequence,
                         stale_after,
+                        recovery: StoredMatterSubscriptionRecovery::default(),
                         revision: 1,
                         updated_at: now,
                     },

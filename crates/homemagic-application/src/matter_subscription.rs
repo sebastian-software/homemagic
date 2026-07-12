@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     MatterAttributeSelection, MatterReadRequest, MatterSubscriptionRequest,
-    StoredMatterSubscription, StoredMatterSubscriptionState,
+    StoredMatterSubscription, StoredMatterSubscriptionRecovery, StoredMatterSubscriptionState,
 };
 
 /// Fixed resource policy for one subscription-recovery cycle.
@@ -80,6 +80,134 @@ impl Default for MatterSubscriptionRecoveryPolicy {
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[error("Matter subscription recovery policy must be finite and ordered")]
 pub struct MatterSubscriptionRecoveryPolicyError;
+
+/// Deterministic externally visible subscription state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatterSubscriptionDiagnosticState {
+    /// Reports are expected and the durable deadline has not elapsed.
+    Established,
+    /// Reports are missing or the durable deadline has elapsed.
+    Stale,
+    /// Recovery is waiting for its persisted retry deadline.
+    Waiting,
+    /// The fixed subscribe-attempt budget has been consumed.
+    Exhausted,
+    /// Durable state explicitly requires operator repair.
+    RepairRequired,
+}
+
+/// Stable remediation guidance without adapter text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatterSubscriptionRemediation {
+    /// No recovery action is currently required.
+    None,
+    /// Wait for the persisted subscribe retry deadline.
+    WaitForRetry,
+    /// Wait until a sleepy device may be read again.
+    WaitForSleepyRead,
+    /// One explicit bounded gap-repair request may be admitted.
+    RequestGapRepair,
+    /// Gap-read work is complete; a bounded resubscribe may proceed.
+    RequestResubscribe,
+    /// The fixed subscribe retry budget is exhausted.
+    RetryBudgetExhausted,
+    /// An explicit repair workflow is required.
+    ExplicitRepairRequired,
+}
+
+/// Pure projection of durable subscription and recovery facts.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MatterSubscriptionRecoveryStatus {
+    /// Derived recovery state at the explicit evaluation time.
+    pub state: MatterSubscriptionDiagnosticState,
+    /// Stable remediation code.
+    pub remediation: MatterSubscriptionRemediation,
+    /// Whether reports are currently stale.
+    pub stale: bool,
+    /// Subscribe calls consumed and permitted.
+    pub subscribe_attempts: u8,
+    /// Fixed subscribe-call bound captured for this recovery cycle.
+    pub maximum_subscribe_attempts: u8,
+    /// Gap reads consumed and permitted.
+    pub gap_reads: u8,
+    /// Fixed gap-read bound captured for this recovery cycle.
+    pub maximum_gap_reads: u8,
+    /// Persisted subscribe retry deadline.
+    pub retry_at: Option<DateTime<Utc>>,
+    /// Earliest allowed sleepy-device gap read, when constrained.
+    pub next_gap_read_at: Option<DateTime<Utc>>,
+}
+
+/// Derives subscription status without wall-clock access or I/O.
+#[must_use]
+pub fn matter_subscription_status(
+    stored: &StoredMatterSubscription,
+    now: DateTime<Utc>,
+) -> MatterSubscriptionRecoveryStatus {
+    let recovery = &stored.recovery;
+    let is_stale =
+        stored.state != StoredMatterSubscriptionState::Established || stored.stale_after <= now;
+    let next_gap_read_at = if recovery.sleepy {
+        recovery
+            .last_gap_read_at
+            .and_then(|last| add_millis(last, recovery.sleepy_read_interval_millis))
+    } else {
+        None
+    };
+    let invalid_budget = recovery.maximum_subscribe_attempts == 0
+        || recovery.maximum_gap_reads == 0
+        || recovery.sleepy_read_interval_millis == 0;
+    let (state, remediation) =
+        if stored.state == StoredMatterSubscriptionState::RepairRequired || invalid_budget {
+            (
+                MatterSubscriptionDiagnosticState::RepairRequired,
+                MatterSubscriptionRemediation::ExplicitRepairRequired,
+            )
+        } else if !is_stale {
+            (
+                MatterSubscriptionDiagnosticState::Established,
+                MatterSubscriptionRemediation::None,
+            )
+        } else if recovery.subscribe_attempts >= recovery.maximum_subscribe_attempts {
+            (
+                MatterSubscriptionDiagnosticState::Exhausted,
+                MatterSubscriptionRemediation::RetryBudgetExhausted,
+            )
+        } else if recovery.retry_at.is_some_and(|retry_at| now < retry_at) {
+            (
+                MatterSubscriptionDiagnosticState::Waiting,
+                MatterSubscriptionRemediation::WaitForRetry,
+            )
+        } else if next_gap_read_at.is_some_and(|allowed_at| now < allowed_at) {
+            (
+                MatterSubscriptionDiagnosticState::Waiting,
+                MatterSubscriptionRemediation::WaitForSleepyRead,
+            )
+        } else if recovery.gap_reads >= recovery.maximum_gap_reads {
+            (
+                MatterSubscriptionDiagnosticState::Stale,
+                MatterSubscriptionRemediation::RequestResubscribe,
+            )
+        } else {
+            (
+                MatterSubscriptionDiagnosticState::Stale,
+                MatterSubscriptionRemediation::RequestGapRepair,
+            )
+        };
+    MatterSubscriptionRecoveryStatus {
+        state,
+        remediation,
+        stale: is_stale,
+        subscribe_attempts: recovery.subscribe_attempts,
+        maximum_subscribe_attempts: recovery.maximum_subscribe_attempts,
+        gap_reads: recovery.gap_reads,
+        maximum_gap_reads: recovery.maximum_gap_reads,
+        retry_at: recovery.retry_at,
+        next_gap_read_at,
+    }
+}
 
 /// One deterministic action emitted by the recovery machine.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,26 +317,68 @@ impl MatterSubscriptionRecovery {
         selection: MatterAttributeSelection,
         minimum_interval_millis: u64,
         maximum_interval_millis: u64,
-        sleepy: bool,
-        policy: MatterSubscriptionRecoveryPolicy,
+        mut policy: MatterSubscriptionRecoveryPolicy,
     ) -> Self {
-        let reason = if stored.state == StoredMatterSubscriptionState::Established {
-            MatterSubscriptionLossReason::ControllerRestarted
-        } else {
-            MatterSubscriptionLossReason::ReportGap
+        let recovery = &stored.recovery;
+        policy.maximum_gap_reads = recovery.maximum_gap_reads;
+        policy.maximum_subscribe_attempts = recovery.maximum_subscribe_attempts;
+        policy.sleepy_read_interval_millis = recovery.sleepy_read_interval_millis;
+        let loss_reason = recovery.gap_reason.unwrap_or_else(|| {
+            if stored.state == StoredMatterSubscriptionState::Established {
+                MatterSubscriptionLossReason::ControllerRestarted
+            } else {
+                MatterSubscriptionLossReason::ReportGap
+            }
+        });
+        let phase = match stored.state {
+            StoredMatterSubscriptionState::Established => RecoveryPhase::MarkStale,
+            StoredMatterSubscriptionState::RepairRequired => RecoveryPhase::RepairRequired,
+            StoredMatterSubscriptionState::Pending | StoredMatterSubscriptionState::Stale
+                if recovery.retry_at.is_some() =>
+            {
+                RecoveryPhase::Waiting
+            }
+            StoredMatterSubscriptionState::Pending | StoredMatterSubscriptionState::Stale
+                if recovery.gap_reads < recovery.maximum_gap_reads =>
+            {
+                RecoveryPhase::GapRead
+            }
+            StoredMatterSubscriptionState::Pending | StoredMatterSubscriptionState::Stale => {
+                RecoveryPhase::Resubscribe
+            }
         };
-        Self::after_loss(
-            stored.subscription_id.clone(),
-            stored.fabric_id.clone(),
-            stored.node_id,
+        Self {
+            subscription_id: stored.subscription_id.clone(),
+            fabric_id: stored.fabric_id.clone(),
+            node_id: stored.node_id,
             selection,
             minimum_interval_millis,
             maximum_interval_millis,
-            reason,
-            sleepy,
-            None,
+            loss_reason,
+            sleepy: recovery.sleepy,
+            last_gap_read_at: recovery.last_gap_read_at,
+            gap_reads: recovery.gap_reads,
+            subscribe_attempts: recovery.subscribe_attempts,
+            retry_at: recovery.retry_at,
+            phase,
             policy,
-        )
+        }
+    }
+
+    /// Captures the bounded recovery facts that must survive restart.
+    #[must_use]
+    pub fn checkpoint(&self) -> StoredMatterSubscriptionRecovery {
+        StoredMatterSubscriptionRecovery {
+            gap_reason: (self.phase != RecoveryPhase::Complete).then_some(self.loss_reason),
+            sleepy: self.sleepy,
+            gap_reads: self.gap_reads,
+            maximum_gap_reads: self.policy.maximum_gap_reads,
+            subscribe_attempts: self.subscribe_attempts,
+            maximum_subscribe_attempts: self.policy.maximum_subscribe_attempts,
+            retry_at: self.retry_at,
+            last_gap_read_at: self.last_gap_read_at,
+            sleepy_read_interval_millis: self.policy.sleepy_read_interval_millis,
+        }
     }
 
     /// Returns the next bounded action at an explicit evaluation time.
@@ -282,6 +452,9 @@ impl MatterSubscriptionRecovery {
                 self.phase = RecoveryPhase::Resubscribe;
             }
             (RecoveryPhase::Resubscribe, MatterSubscriptionRecoveryOutcome::Resubscribed) => {
+                self.gap_reads = 0;
+                self.subscribe_attempts = 0;
+                self.retry_at = None;
                 self.phase = RecoveryPhase::Complete;
             }
             (RecoveryPhase::Resubscribe, MatterSubscriptionRecoveryOutcome::ResubscribeFailed) => {

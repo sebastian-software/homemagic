@@ -27,7 +27,7 @@ use homemagic_application::{
     MatterUnlockAuthorization, MatterUnlockConsumption, MatterWorkflowEvidence,
     MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue, StoredMatterFabric,
     StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
-    StoredMatterSubscriptionState,
+    StoredMatterSubscriptionRecovery, StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, AuditId, CapabilityDescriptor, CapabilitySnapshot,
@@ -41,8 +41,9 @@ use homemagic_domain::{
     MatterLockState, MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId,
     MatterOperationKind, MatterOperationPhase, MatterOperationTarget, MatterProjectedState,
     MatterProjectionId, MatterRetryability, MatterStateFreshness, MatterStateRevision,
-    MatterStateValue, MatterSubscriptionId, MatterUnlockAuthorizationId, OnOffCommand,
-    PolicyDecision, PolicyReason, RepairId, RiskClass, SecretRef,
+    MatterStateValue, MatterSubscriptionId, MatterSubscriptionLossReason,
+    MatterUnlockAuthorizationId, OnOffCommand, PolicyDecision, PolicyReason, RepairId, RiskClass,
+    SecretRef,
 };
 use homemagic_matter::{
     DeterministicMatterSimulator, MatterCommandAdapter, SIMULATOR_LIGHT_SETUP,
@@ -1074,6 +1075,7 @@ async fn matter_identity_and_incomplete_operation_should_survive_reopen() -> Tes
         state: StoredMatterSubscriptionState::Pending,
         report_sequence: 0,
         stale_after: now + TimeDelta::minutes(1),
+        recovery: StoredMatterSubscriptionRecovery::default(),
         revision: 1,
         updated_at: now,
     };
@@ -1684,8 +1686,20 @@ async fn matter_diagnostics_should_be_bounded_redacted_read_only_and_restart_sta
         .ok_or("diagnostic subscription missing")?;
     let expected_revision = subscription.revision;
     subscription.state = StoredMatterSubscriptionState::Stale;
+    subscription.recovery.gap_reason = Some(MatterSubscriptionLossReason::ReportGap);
+    subscription.recovery.subscribe_attempts = 2;
+    subscription.recovery.maximum_subscribe_attempts = 2;
     subscription.revision += 1;
     subscription.updated_at = now;
+    let mut invalid_subscription = subscription.clone();
+    invalid_subscription.recovery.maximum_subscribe_attempts = 1;
+    assert!(
+        fixture
+            .repository
+            .store_matter_subscription(invalid_subscription, Some(expected_revision))
+            .await
+            .is_err()
+    );
     fixture
         .repository
         .store_matter_subscription(subscription, Some(expected_revision))

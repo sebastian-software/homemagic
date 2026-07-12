@@ -7,7 +7,7 @@ use homemagic_domain::{
     DeviceRecord, EndpointId, InstallationId, IntegrationInstance, MatterControllerError,
     MatterEndpointNumber, MatterFabricId, MatterNodeDescriptor, MatterNodeId, MatterOperation,
     MatterOperationId, MatterOperationPhase, MatterProjectedState, MatterProjectionId,
-    MatterSubscriptionId, MatterUnlockAuthorizationId, RepairId,
+    MatterSubscriptionId, MatterSubscriptionLossReason, MatterUnlockAuthorizationId, RepairId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -122,6 +122,45 @@ pub enum StoredMatterSubscriptionState {
     RepairRequired,
 }
 
+/// Durable bounded recovery budget for one logical subscription.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StoredMatterSubscriptionRecovery {
+    /// Stable reason for the currently visible report gap, when any.
+    pub gap_reason: Option<MatterSubscriptionLossReason>,
+    /// Whether explicit reads must respect the sleepy-device throttle.
+    pub sleepy: bool,
+    /// Gap reads already consumed by the current recovery cycle.
+    pub gap_reads: u8,
+    /// Fixed gap-read budget captured when the cycle began.
+    pub maximum_gap_reads: u8,
+    /// Subscribe attempts already consumed by the current recovery cycle.
+    pub subscribe_attempts: u8,
+    /// Fixed subscribe-attempt budget captured when the cycle began.
+    pub maximum_subscribe_attempts: u8,
+    /// Earliest durable resubscribe deadline, when waiting.
+    pub retry_at: Option<DateTime<Utc>>,
+    /// Last durable bounded gap-read attempt.
+    pub last_gap_read_at: Option<DateTime<Utc>>,
+    /// Minimum interval between gap reads for a sleepy device.
+    pub sleepy_read_interval_millis: u64,
+}
+
+impl Default for StoredMatterSubscriptionRecovery {
+    fn default() -> Self {
+        Self {
+            gap_reason: None,
+            sleepy: false,
+            gap_reads: 0,
+            maximum_gap_reads: 1,
+            subscribe_attempts: 0,
+            maximum_subscribe_attempts: 5,
+            retry_at: None,
+            last_gap_read_at: None,
+            sleepy_read_interval_millis: 60_000,
+        }
+    }
+}
+
 /// Durable logical subscription independent from ephemeral SDK session IDs.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StoredMatterSubscription {
@@ -137,6 +176,9 @@ pub struct StoredMatterSubscription {
     pub report_sequence: u64,
     /// Time by which another report or verification is expected.
     pub stale_after: DateTime<Utc>,
+    /// Durable bounded recovery checkpoint. Defaults preserve historical rows.
+    #[serde(default)]
+    pub recovery: StoredMatterSubscriptionRecovery,
     /// Optimistic row revision starting at one.
     pub revision: u64,
     /// Last durable status change.
