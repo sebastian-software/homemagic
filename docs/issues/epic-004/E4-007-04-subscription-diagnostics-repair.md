@@ -22,13 +22,6 @@ updated: 2026-07-12
 | [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Planned | Explicit gap-read and resubscribe workflow |
 | [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Planned | Restart, exhaustion, retention, and exit evidence |
 
-## Child issues
-
-| Issue | Status | Outcome |
-| --- | --- | --- |
-| [E4-007-04-01](E4-007-04-01-bounded-diagnostics.md) | Ready | Read-only bounded redacted diagnostics |
-| [E4-007-04-02](E4-007-04-02-explicit-subscription-repair.md) | Planned | Explicit gap-read and resubscribe orchestration |
-
 ## Outcome
 
 Operators can inspect bounded redacted fabric, node, endpoint, operation, and
@@ -62,6 +55,3 @@ raw protocol mutation access.
 - 2026-07-12: Decomposed into four dependency-ordered slices. ADR-0041 fixes
   the read-only diagnostics versus explicit repair boundary; E4-007-04-01 is
   ready.
-- 2026-07-12: Decomposed into a read-only diagnostic slice followed by an
-  explicit mutation slice so diagnostic access cannot imply repair authority.
-  E4-007-04-01 is ready.
