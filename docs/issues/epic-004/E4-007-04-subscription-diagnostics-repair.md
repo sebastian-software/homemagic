@@ -19,7 +19,7 @@ updated: 2026-07-12
 | --- | --- | --- |
 | [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Done | Authenticated bounded read-only diagnostics |
 | [E4-007-04-02](E4-007-04-02-subscription-status.md) | Done | Deterministic freshness, budgets, and guidance |
-| [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Ready | Explicit gap-read and resubscribe workflow |
+| [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | In progress | Explicit gap-read and resubscribe workflow |
 | [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Planned | Restart, exhaustion, retention, and exit evidence |
 
 ## Outcome
@@ -64,3 +64,6 @@ raw protocol mutation access.
   remains pending.
 - 2026-07-12: E4-007-04-02 passed public CI run `29206426040` across Linux
   x86_64 and macOS ARM64. E4-007-04-03 is ready.
+- 2026-07-12: E4-007-04-03 explicit bounded repair is implemented and its 50
+  Matter repository contracts plus all local CI-equivalent gates pass; public CI
+  remains pending.

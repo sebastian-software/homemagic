@@ -181,6 +181,41 @@ repository or recovery machine restores the same counters and deadline.
 Diagnostics never start repair implicitly; the explicit repair children of
 E4-007-04 own the separate mutation boundary.
 
+## Explicit subscription repair
+
+`MatterSubscriptionRepairService` is the separate mutation boundary required
+by ADR-0041. Admission reloads the actor and exact installation-scoped
+`matter_repair_subscription` grant, then requires an owned durable node and
+logical subscription before creating an actor-bound idempotent
+`RepairSubscription` operation. Reusing the same key and target returns the
+original operation; another actor follows the same missing-operation path.
+
+The requested operation is durable before projections or controller state can
+change. Execution advances through `reading_gap` and `subscribing`. Entering
+`reading_gap` atomically marks all node projections stale, retains
+`repair_required` visibility on the subscription, resets only the explicit
+repair's fixed policy budget, and appends operation progress. A failed
+transaction restores every prior projection, subscription, and operation fact.
+
+The gap read uses descriptor-derived, duplicate-free bounded report paths and
+the normal report normalizer with `refresh_fallback` provenance. New reports
+advance projection state with ordinary data-version and sequence rules;
+duplicates may re-establish freshness, while stale or conflicting reports never
+overwrite newer durable evidence. A failed or incomplete read leaves affected
+projections visibly stale with `read_failed`, but the one bounded resubscribe
+path may still restore notifications. No cluster write or unrelated command is
+available to the workflow.
+
+Before each subscribe call, the durable subscription reserves one unit of its
+fixed attempt budget. A failure below the bound persists a deterministic retry
+deadline and returns `waiting` without controller I/O before that deadline. At
+the exact deadline the next reserved attempt may run. Success atomically marks
+the stable logical subscription established and completes the operation;
+exhaustion atomically retains `repair_required`, completes the attempt budget,
+appends terminal operation progress, and opens structured repair evidence.
+Contract call counting proves one gap read and no more subscribe calls than the
+declared policy.
+
 ## Verification
 
 SQLite contracts cover allowed, denied, duplicate, conflicting-key,
