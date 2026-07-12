@@ -17,6 +17,8 @@ const MATTER_PROJECTION_NAMESPACE: Uuid =
     Uuid::from_u128(0x889a_276a_0df8_5d0a_9daf_3399_d224_6948);
 const MATTER_SUBSCRIPTION_NAMESPACE: Uuid =
     Uuid::from_u128(0xa3dc_5970_14c9_5c2e_9d68_2bd5_5080_aa50);
+const MATTER_CONTROLLER_EVENT_NAMESPACE: Uuid =
+    Uuid::from_u128(0x01dd_63a7_1269_55ee_8b87_f84d_fda8_4477);
 const LEGACY_INSTALLATION: Uuid = Uuid::from_u128(0xc776_218d_d377_5a5e_b6a7_9384_dc1c_da37);
 
 /// Stable opaque identifier for a `HomeMagic` installation.
@@ -267,6 +269,17 @@ uuid_identity!(
     MatterControllerEventId,
     "Stable identity for one normalized Matter controller event."
 );
+
+impl MatterControllerEventId {
+    /// Derives a deterministic simulator or adapter event identity.
+    #[must_use]
+    pub fn from_sequence(fabric_id: &MatterFabricId, sequence: u64) -> Self {
+        Self(Uuid::new_v5(
+            &MATTER_CONTROLLER_EVENT_NAMESPACE,
+            format!("{fabric_id}:{sequence}").as_bytes(),
+        ))
+    }
+}
 
 impl MatterProjectionId {
     /// Derives the stable projection identity for one endpoint rule version.

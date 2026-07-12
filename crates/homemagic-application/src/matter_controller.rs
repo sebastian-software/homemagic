@@ -373,11 +373,21 @@ pub struct MatterExportRequest {
     pub fabric_id: MatterFabricId,
 }
 
+/// Versioned fabric export envelope family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatterFabricExportFormat {
+    /// Deterministic fixture envelope accepted only by the simulator.
+    SimulatorV1,
+    /// Protected production envelope defined by ADR-0037.
+    ProtectedV1,
+}
+
 /// Sensitive protected fabric export and one-time recovery key.
 #[derive(Clone)]
 pub struct MatterFabricExport {
     /// Versioned export format identifier.
-    pub format: &'static str,
+    pub format: MatterFabricExportFormat,
     envelope: SecretValue,
     recovery_key: SecretValue,
 }
@@ -385,7 +395,11 @@ pub struct MatterFabricExport {
 impl MatterFabricExport {
     /// Creates a sensitive export response.
     #[must_use]
-    pub fn new(format: &'static str, envelope: SecretValue, recovery_key: SecretValue) -> Self {
+    pub fn new(
+        format: MatterFabricExportFormat,
+        envelope: SecretValue,
+        recovery_key: SecretValue,
+    ) -> Self {
         Self {
             format,
             envelope,
@@ -422,6 +436,7 @@ impl fmt::Debug for MatterFabricExport {
 pub struct MatterRestoreRequest {
     operation_id: MatterOperationId,
     expected_fabric_id: MatterFabricId,
+    format: MatterFabricExportFormat,
     envelope: SecretValue,
     recovery_key: SecretValue,
 }
@@ -432,12 +447,14 @@ impl MatterRestoreRequest {
     pub fn new(
         operation_id: MatterOperationId,
         expected_fabric_id: MatterFabricId,
+        format: MatterFabricExportFormat,
         envelope: SecretValue,
         recovery_key: SecretValue,
     ) -> Self {
         Self {
             operation_id,
             expected_fabric_id,
+            format,
             envelope,
             recovery_key,
         }
@@ -453,6 +470,12 @@ impl MatterRestoreRequest {
     #[must_use]
     pub const fn expected_fabric_id(&self) -> &MatterFabricId {
         &self.expected_fabric_id
+    }
+
+    /// Returns the typed envelope family to be accepted or rejected.
+    #[must_use]
+    pub const fn format(&self) -> MatterFabricExportFormat {
+        self.format
     }
 
     /// Exposes the encrypted envelope only to the controller implementation.
@@ -474,6 +497,7 @@ impl fmt::Debug for MatterRestoreRequest {
             .debug_struct("MatterRestoreRequest")
             .field("operation_id", &self.operation_id)
             .field("expected_fabric_id", &self.expected_fabric_id)
+            .field("format", &self.format)
             .field("envelope", &"[REDACTED]")
             .field("recovery_key", &"[REDACTED]")
             .finish()
@@ -808,7 +832,7 @@ mod tests {
     #[test]
     fn fabric_export_debug_should_redact_envelope_and_key() {
         let export = MatterFabricExport::new(
-            "homemagic.matter-fabric.v1",
+            MatterFabricExportFormat::ProtectedV1,
             SecretValue::new("secret-envelope"),
             SecretValue::new("secret-recovery-key"),
         );
