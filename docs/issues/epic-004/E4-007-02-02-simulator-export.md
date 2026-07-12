@@ -3,7 +3,7 @@ id: E4-007-02-02
 epic: EPIC-004
 parent: E4-007-02
 title: Export simulator fabric state through an explicit sensitive workflow
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-02-01]
 adrs: [ADR-0033, ADR-0037]
@@ -38,7 +38,7 @@ persisted, logged, hashed, or emitted as an ordinary event.
 - [x] Successful, missing-fabric, restart, duplicate, and redaction tests pass.
 - [x] Secret canaries are absent from SQLite, events, debug, and traces.
 - [x] Full local workspace gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -46,3 +46,6 @@ persisted, logged, hashed, or emitted as an ordinary event.
   sensitive output, one-time recovery material, and fail-closed restart
   handling. Targeted workflow and redaction contracts and the full local
   workspace gate pass; commit, push, and public CI remain pending.
+- 2026-07-12: Public CI run `29202622965` passed the Linux x86_64 quality job
+  and simulator hashes on Linux x86_64 and macOS ARM64. This child issue is
+  done.

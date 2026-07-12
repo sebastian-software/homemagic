@@ -30,11 +30,11 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-006-04](E4-006-04-interactive-unlock-authorization.md) | Done | E4-006-01, E4-006-02, E4-006-03 | Exact interactive single-use unlock admission |
 | [E4-007](E4-007-matter-rpc-workflows.md) | In progress | E4-003, E4-005, E4-006 | Simulator-backed durable workflows and authenticated RPC |
 | [E4-007-01](E4-007-01-administration-service.md) | Done | E4-003, E4-005, E4-006 | Authenticated durable administration boundary |
-| [E4-007-02](E4-007-02-fabric-workflows.md) | In progress | E4-007-01 | Fabric status, creation, and simulator portability workflows |
-| [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | In progress | E4-007-01 | Idempotent staged fabric creation and status |
-| [E4-007-02-02](E4-007-02-02-simulator-export.md) | In progress | E4-007-02-01 | Explicit sensitive simulator export |
-| [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | In progress | E4-007-02-01, E4-007-02-02 | Simulator restore and production format guard |
-| [E4-007-03](E4-007-03-node-operation-workflows.md) | Planned | E4-007-01, E4-007-02 | Commissioning, removal, cancellation, and recovery |
+| [E4-007-02](E4-007-02-fabric-workflows.md) | Done | E4-007-01 | Fabric status, creation, and simulator portability workflows |
+| [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | Done | E4-007-01 | Idempotent staged fabric creation and status |
+| [E4-007-02-02](E4-007-02-02-simulator-export.md) | Done | E4-007-02-01 | Explicit sensitive simulator export |
+| [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | Done | E4-007-02-01, E4-007-02-02 | Simulator restore and production format guard |
+| [E4-007-03](E4-007-03-node-operation-workflows.md) | Ready | E4-007-01, E4-007-02 | Commissioning, removal, cancellation, and recovery |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Planned | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
@@ -102,3 +102,6 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
   rejection. Targeted contracts, exact CI-format Clippy, boundary/secret scans,
   and the full privileged workspace test suite pass; commit, push, and public CI
   remain pending.
+- 2026-07-12: Public CI run `29202622965` passed Linux x86_64 quality and
+  deterministic simulator hashes on Linux x86_64 and macOS ARM64. E4-007-02 is
+  done and E4-007-03 is ready.

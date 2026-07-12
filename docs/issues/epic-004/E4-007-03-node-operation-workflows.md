@@ -3,7 +3,7 @@ id: E4-007-03
 epic: EPIC-004
 parent: E4-007
 title: Orchestrate commissioning and node removal durably
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-01, E4-007-02]
 adrs: [ADR-0033, ADR-0034, ADR-0037]
@@ -40,3 +40,8 @@ visible and repairable.
 - [ ] Phase-by-phase restart and cancellation matrices pass.
 - [ ] Duplicate commissioning and removal requests remain idempotent.
 - [ ] Partial cleanup stays queryable after reopen.
+
+## Progress log
+
+- 2026-07-12: E4-007-02 completed with public cross-platform CI. This issue is
+  ready for decomposition before implementation.

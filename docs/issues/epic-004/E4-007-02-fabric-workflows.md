@@ -3,7 +3,7 @@ id: E4-007-02
 epic: EPIC-004
 parent: E4-007
 title: Implement durable simulated fabric workflows
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-01]
 adrs: [ADR-0033, ADR-0037]
@@ -17,9 +17,9 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | In progress | Idempotent staged fabric creation and status |
-| [E4-007-02-02](E4-007-02-02-simulator-export.md) | In progress | Explicit sensitive simulator export |
-| [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | In progress | Simulator restore and production-format rejection |
+| [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | Done | Idempotent staged fabric creation and status |
+| [E4-007-02-02](E4-007-02-02-simulator-export.md) | Done | Explicit sensitive simulator export |
+| [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | Done | Simulator restore and production-format rejection |
 
 ## Outcome
 
@@ -50,7 +50,7 @@ idempotent operations with secret-safe input handling.
   contracts pass.
 - [x] Secret canaries are absent from database/WAL and redacted result surfaces.
 - [x] Full local workspace gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -63,3 +63,6 @@ idempotent operations with secret-safe input handling.
   and the full privileged workspace test suite pass. Commit, push, and public CI
   remain pending because the local approval service reported its current usage
   limit.
+- 2026-07-12: Commits `d009b9a` and `9372039` were pushed to `main`. Public CI
+  run `29202622965` passed Linux x86_64 quality and deterministic simulator
+  hashes on Linux x86_64 and macOS ARM64. E4-007-02 is done.

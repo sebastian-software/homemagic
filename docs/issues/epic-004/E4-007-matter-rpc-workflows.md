@@ -17,8 +17,8 @@ updated: 2026-07-12
 | Issue | Status | Outcome |
 | --- | --- | --- |
 | [E4-007-01](E4-007-01-administration-service.md) | Done | One authenticated durable administration boundary |
-| [E4-007-02](E4-007-02-fabric-workflows.md) | In progress | Fabric status, create, simulated export, and restore |
-| [E4-007-03](E4-007-03-node-operation-workflows.md) | Planned | Commissioning, removal, cancellation, and restart recovery |
+| [E4-007-02](E4-007-02-fabric-workflows.md) | Done | Fabric status, create, simulated export, and restore |
+| [E4-007-03](E4-007-03-node-operation-workflows.md) | Ready | Commissioning, removal, cancellation, and restart recovery |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Planned | Bounded diagnostics and explicit subscription repair |
 | [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | Versioned `matter.*` RPC and actor-filtered operation events |
 
@@ -82,3 +82,5 @@ capability-oriented.
   contracts, exact CI-format Clippy, boundary/secret scans, and the full
   privileged workspace test suite pass. Commit, push, public CI, and issue
   closure remain pending.
+- 2026-07-12: Public CI run `29202622965` verified E4-007-02 on Linux x86_64
+  and macOS ARM64. E4-007-02 is done and E4-007-03 is ready.

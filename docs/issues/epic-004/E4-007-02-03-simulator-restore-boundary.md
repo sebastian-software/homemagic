@@ -3,7 +3,7 @@ id: E4-007-02-03
 epic: EPIC-004
 parent: E4-007-02
 title: Restore simulator exports without weakening production format checks
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-02-01, E4-007-02-02]
 adrs: [ADR-0033, ADR-0037]
@@ -41,7 +41,7 @@ reject that format before adapter code can inspect bytes.
 - [x] Corrupt, wrong-key, conflict, restart, and successful reopen tests pass.
 - [x] Production format guard and secret-canary suites remain green.
 - [x] Full local workspace gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -49,3 +49,6 @@ reject that format before adapter code can inspect bytes.
   rejection, conflict and corruption outcomes, and restart reconciliation
   without sensitive-input reuse. Targeted workflow and canary contracts and the
   full local workspace gate pass; commit, push, and public CI remain pending.
+- 2026-07-12: Public CI run `29202622965` passed the Linux x86_64 quality job
+  and simulator hashes on Linux x86_64 and macOS ARM64. This child issue is
+  done.
