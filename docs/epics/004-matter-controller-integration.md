@@ -87,7 +87,10 @@ fabric without learning Matter cluster internals.
 
 ## Workstream E4.2: Controller and fabric lifecycle
 
-- [ ] Implement a controller port independent of the selected Matter SDK.
+- [x] Implement a controller port independent of the selected Matter SDK.
+  Evidence: `homemagic-application::MatterController`,
+  [boundary documentation](../architecture/matter-controller-boundary.md), and
+  `scripts/check-matter-boundaries.sh`.
 - [ ] Create or load one HomeMagic-owned fabric.
 - [ ] Store operational credentials through the secret-store boundary.
 - [ ] Add commissioning-window discovery and setup-code validation.
@@ -197,3 +200,7 @@ fabric without learning Matter cluster internals.
   projection, unlock, convergence, fabric, transport, evidence, and evaluation
   boundaries are accepted; E4-002 is ready. Candidate benchmarking and selection
   remain unchecked.
+- 2026-07-12: E4-002 completed stable Matter identities, bounded descriptors,
+  desired/reported state, durable operation contracts, normalized events,
+  redacted errors, and an object-safe async controller port. Full workspace and
+  Rustdoc gates plus the new dependency guard passed; E4-003 and E4-004 are ready.

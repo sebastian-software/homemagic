@@ -2,7 +2,7 @@
 id: E4-004
 epic: EPIC-004
 title: Implement the deterministic Rust Matter controller simulator
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-002]
 adrs: [ADR-0001, ADR-0033, ADR-0034, ADR-0038]

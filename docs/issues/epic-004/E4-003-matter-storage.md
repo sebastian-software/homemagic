@@ -2,7 +2,7 @@
 id: E4-003
 epic: EPIC-004
 title: Persist Matter metadata and long-running operations durably
-status: planned
+status: ready
 priority: critical
 depends_on: [E4-002]
 adrs: [ADR-0007, ADR-0008, ADR-0014, ADR-0035, ADR-0036, ADR-0037]

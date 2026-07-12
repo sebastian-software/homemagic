@@ -11,6 +11,7 @@ mod automation_runtime;
 mod automation_scheduler;
 mod automation_simulator;
 mod command_service;
+mod matter_controller;
 mod memory;
 mod policy;
 mod ports;
@@ -74,6 +75,7 @@ pub use command_service::{
     CommandRequest, CommandService, CommandServiceDependencies, CommandServiceError,
     DomainEventCommandAuditSink, NoopCommandAuditSink,
 };
+pub use matter_controller::*;
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use policy::{
     CommandLimitCapacities, CommandLimitConfig, CommandLimitConfigError, CommandLimits,
