@@ -1,9 +1,8 @@
 # EPIC-002 Exit Audit
 
-- Audit date: 2026-07-11
+- Audit date: 2026-07-12
 - Local host: macOS `aarch64`
-- Epic status: In progress pending state-changing hardware reports and a live
-  Linux x86_64 CI result
+- Epic status: In progress pending state-changing hardware reports
 
 ## Acceptance criteria
 
@@ -28,7 +27,7 @@
 | Threat model and operator recovery cover shipped surface | Pass | `docs/security/command-control-threat-model.md`, `docs/operations/command-recovery.md`, and command hardware procedure |
 | EPIC-003 and EPIC-004 consume finalized contracts | Pass | Explicit finalized EPIC-002 contract sections in both epic documents |
 | macOS ARM full quality gate | Pass | Workspace tests/all features, strict Clippy, formatting, doc tests, helper syntax, and secret scan completed locally |
-| Linux x86_64 full quality gate | Pending | CI job is configured; no live CI result is available in this local-only workflow |
+| Linux x86_64 full quality gate | Pass | Official `rust:1-bookworm` image under `x86_64-unknown-linux-gnu` Rust 1.97.0: format, strict all-target Clippy, complete workspace tests/all features, doc tests, and all migration fixtures passed |
 
 ## Automated safety evidence
 
@@ -60,3 +59,8 @@ from `finally`, re-reads restored state, and fails the report when cleanup is no
 verified. Cover execution requires an explicit physical-stop precondition and
 sends stop before movement. Actual actuation remains pending operator approval
 and physical supervision.
+
+The 2026-07-12 dual-platform rerun also reconfirmed default-deny zero-dispatch,
+durable actor/policy/audit facts, restart no-redispatch, typed Shelly mapping,
+timeouts, and redaction. It does not substitute for physical movement or cleanup
+evidence.

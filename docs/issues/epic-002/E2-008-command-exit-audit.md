@@ -7,7 +7,7 @@ priority: critical
 depends_on: [E2-007]
 adrs: []
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # E2-008: Command Exit Audit
@@ -25,8 +25,8 @@ updated: 2026-07-11
 ## Acceptance criteria
 
 - [ ] Hardware cleanup is verified even when a scenario fails.
-- [ ] Unauthorized/unsafe commands cause no adapter dispatch.
-- [ ] Every accepted command has durable actor, policy, outcome, and audit evidence.
+- [x] Unauthorized/unsafe commands cause no adapter dispatch.
+- [x] Every accepted command has durable actor, policy, outcome, and audit evidence.
 
 ## Progress log
 
@@ -40,3 +40,6 @@ updated: 2026-07-11
   execution, restores from `finally`, and cannot pass unverified cleanup.
 - 2026-07-11: Added the EPIC-002 exit audit and finalized EPIC-003/004 dependency
   contracts. Automated gates pass; physical command reports remain pending.
+- 2026-07-12: Revalidated the complete automated command suite on macOS ARM and
+  isolated Linux x86_64. The supported-platform gate is closed; only explicitly
+  supervised state-changing hardware reports and cleanup evidence remain.

@@ -211,3 +211,6 @@ from ADR-0009.
 - 2026-07-11: Added E2-008 threat/recovery documentation, operator grant flow,
   cleanup-first redacted hardware harness, cross-epic finalized contracts, and
   linked exit audit. Physical command reports remain pending supervised execution.
+- 2026-07-12: Revalidated all automated gates on macOS ARM and isolated Linux
+  x86_64. EPIC-002 remains in progress solely for supervised state-changing
+  hardware reports, physical cover-stop evidence, and verified cleanup.

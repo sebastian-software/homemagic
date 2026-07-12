@@ -7,7 +7,7 @@ priority: critical
 depends_on: [EPIC-001]
 adrs: [ADR-0013, ADR-0014, ADR-0015, ADR-0016]
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # EPIC-002 Issue Index
@@ -49,3 +49,6 @@ updated: 2026-07-11
   safe query-to-command helper; E2-008 is ready.
 - 2026-07-11: E2-008 automated safety, threat, recovery, grant, and redacted
   hardware-harness evidence completed; supervised physical reports remain.
+- 2026-07-12: macOS ARM and Linux x86_64 automated gates both pass. E2-008
+  remains open only for supervised state-changing switch, dimmer, and cover
+  reports with verified cleanup.
