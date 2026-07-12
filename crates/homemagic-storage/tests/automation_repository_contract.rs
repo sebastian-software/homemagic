@@ -7,20 +7,23 @@ use chrono::{TimeDelta, TimeZone, Utc};
 use homemagic_application::{
     AutomationActivation, AutomationCompiler, AutomationDraft, AutomationEngine,
     AutomationEventProcessor, AutomationRepository, AutomationRetention, AutomationRuntime,
-    AutomationRuntimeStep, AutomationScheduler, AutomationSimulationEvidence, AutomationStepWrite,
-    AutomationValidationEvidence, BoxError, Clock, FoundationRepository, FoundationSnapshot,
-    FoundationWrite, MemoryFoundationRepository, StoredAutomationVersion,
+    AutomationRuntimeStep, AutomationScheduler, AutomationSimulationEvidence,
+    AutomationSimulationFixture, AutomationSimulationStatus, AutomationSimulator,
+    AutomationStepWrite, AutomationValidationEvidence, BoxError, Clock, FoundationRepository,
+    FoundationSnapshot, FoundationWrite, MemoryFoundationRepository, SimulationTriggerContext,
+    SimulationTriggerKind, StoredAutomationVersion,
 };
 use homemagic_domain::{
     ActorId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
     AutomationApprovalRequirement, AutomationApprovalState, AutomationCausation,
-    AutomationCondition, AutomationContentHash, AutomationDocument, AutomationDocumentSchema,
-    AutomationFailurePolicy, AutomationId, AutomationOccurrence, AutomationOccurrenceId,
-    AutomationOccurrenceState, AutomationPlanNodeId, AutomationProvenance,
-    AutomationResourceBudget, AutomationRun, AutomationRunId, AutomationRunMode,
-    AutomationRunState, AutomationSchedule, AutomationSelfTriggerPolicy, AutomationTimer,
-    AutomationTimerId, AutomationTimerState, AutomationTraceId, AutomationTraceKind,
-    AutomationTraceStep, AutomationTrigger, AutomationVersion, AutomationVersionState,
+    AutomationComparison, AutomationCondition, AutomationContentHash, AutomationDocument,
+    AutomationDocumentSchema, AutomationExpression, AutomationFailurePolicy, AutomationId,
+    AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState, AutomationPlanNodeId,
+    AutomationProvenance, AutomationResourceBudget, AutomationRun, AutomationRunId,
+    AutomationRunMode, AutomationRunState, AutomationSchedule, AutomationSelfTriggerPolicy,
+    AutomationTimer, AutomationTimerId, AutomationTimerState, AutomationTraceId,
+    AutomationTraceKind, AutomationTraceStep, AutomationTrigger, AutomationValue,
+    AutomationValueType, AutomationVariableDefinition, AutomationVersion, AutomationVersionState,
     CausationMetadata, CommandId, CommandState, CorrelationId, DeviceId, DomainEvent,
     DomainEventKind, EventId, IdempotencyKey, canonical_automation_plan_hash,
 };
@@ -320,6 +323,66 @@ async fn parallel_mode_should_enforce_same_tick_active_bound() -> TestResult {
 }
 
 #[tokio::test]
+async fn queue_and_parallel_bounds_should_hold_for_large_same_tick_batches() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("run-mode-load.sqlite3"),
+    )?);
+    let now = document().created_at + TimeDelta::minutes(1);
+    let mut queued_document = document();
+    queued_document.run_mode = AutomationRunMode::Queued { capacity: 16 };
+    let queued = stored_version_for(queued_document);
+    repository.store_automation_version(queued.clone()).await?;
+    repository
+        .activate_automation(activation(&queued, 0))
+        .await?;
+    let queue_active_occurrence = occurrence(&queued, now);
+    repository
+        .create_automation_occurrence(queue_active_occurrence.clone())
+        .await?;
+    let mut queue_active_run = run(&queued, &queue_active_occurrence, now);
+    queue_active_run.id = AutomationRunId::from_occurrence(&queue_active_occurrence.id);
+    repository.create_automation_run(queue_active_run).await?;
+
+    let mut parallel_document = document();
+    parallel_document.run_mode = AutomationRunMode::Parallel {
+        maximum_parallel: 8,
+    };
+    let parallel = stored_version_for(parallel_document);
+    repository
+        .store_automation_version(parallel.clone())
+        .await?;
+    repository
+        .activate_automation(activation(&parallel, 0))
+        .await?;
+    for offset in 0..128_u64 {
+        repository
+            .create_automation_occurrence(scheduled_occurrence(&queued, now, 1_000 + offset))
+            .await?;
+        repository
+            .create_automation_occurrence(scheduled_occurrence(&parallel, now, 2_000 + offset))
+            .await?;
+    }
+
+    let scheduler = AutomationScheduler::new(repository.clone(), Arc::new(FixedClock(now)));
+    let tick = scheduler.tick(now, now).await?;
+    let recovery = repository.recoverable_automation_work(1_000).await?;
+
+    assert_eq!(tick.accepted, 8);
+    assert_eq!(tick.suppressed, 232);
+    assert_eq!(recovery.runs.len(), 9);
+    assert_eq!(
+        recovery
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.state == AutomationOccurrenceState::Scheduled)
+            .count(),
+        16
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn engine_should_isolate_one_run_failure_and_advance_its_sibling() -> TestResult {
     let directory = tempfile::tempdir()?;
     let repository = Arc::new(SqliteRepository::open(
@@ -382,6 +445,120 @@ async fn engine_should_isolate_one_run_failure_and_advance_its_sibling() -> Test
         Some(AutomationRunState::Pending)
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn runtime_and_simulator_should_make_equivalent_branch_and_variable_decisions() -> TestResult
+{
+    let directory = tempfile::tempdir()?;
+    let repository = Arc::new(SqliteRepository::open(
+        directory.path().join("runtime-simulator-parity.sqlite3"),
+    )?);
+    let foundation = Arc::new(MemoryFoundationRepository::default());
+    let mut parity_document = document();
+    parity_document.variables = BTreeMap::from([(
+        "result".to_owned(),
+        AutomationVariableDefinition {
+            value_type: AutomationValueType::Boolean,
+            initial: Some(AutomationValue::Boolean(false)),
+        },
+    )]);
+    parity_document.actions = vec![AutomationAction::If {
+        condition: AutomationCondition::Compare {
+            left: AutomationExpression::Variable {
+                name: "result".to_owned(),
+            },
+            operator: AutomationComparison::Equal,
+            right: AutomationExpression::Literal {
+                value: AutomationValue::Boolean(false),
+            },
+        },
+        then_actions: vec![AutomationAction::SetVariable {
+            name: "result".to_owned(),
+            value: AutomationExpression::Literal {
+                value: AutomationValue::Boolean(true),
+            },
+        }],
+        else_actions: vec![AutomationAction::SetVariable {
+            name: "result".to_owned(),
+            value: AutomationExpression::Literal {
+                value: AutomationValue::Boolean(false),
+            },
+        }],
+    }];
+    let stored = stored_version_for(parity_document);
+    repository.store_automation_version(stored.clone()).await?;
+    repository
+        .activate_automation(activation(&stored, 0))
+        .await?;
+    let now = stored.document.created_at + TimeDelta::minutes(1);
+    let mut accepted = scheduled_occurrence(&stored, now, 9);
+    accepted.state = AutomationOccurrenceState::Accepted;
+    repository
+        .create_automation_occurrence(accepted.clone())
+        .await?;
+    let mut run = run(&stored, &accepted, now);
+    run.id = AutomationRunId::from_occurrence(&accepted.id);
+    run.variables
+        .insert("result".to_owned(), AutomationValue::Boolean(false));
+    repository.create_automation_run(run.clone()).await?;
+    let runtime = AutomationRuntime::new(repository.clone(), foundation, Arc::new(FixedClock(now)));
+    for _ in 0..10 {
+        if runtime.step(&run.id).await? == AutomationRuntimeStep::Completed {
+            break;
+        }
+    }
+    let runtime_run = repository
+        .automation_run(&run.id)
+        .await?
+        .ok_or("runtime run missing")?;
+    let runtime_trace = repository.automation_trace(&run.id, None, 20).await?;
+    let simulation = AutomationSimulator::simulate(&AutomationSimulationFixture {
+        plan: stored.plan,
+        run_id: run.id,
+        correlation_id: run.correlation_id,
+        causation_event_id: None,
+        trigger: SimulationTriggerContext {
+            kind: SimulationTriggerKind::Schedule,
+            occurred_at: now,
+            accepted_at: now,
+            window_ends_at: now + TimeDelta::minutes(1),
+            explicit_catch_up: false,
+            active_runs: 0,
+            queued_triggers: 0,
+            caused_by_version: None,
+            same_correlation: false,
+        },
+        initial_state: BTreeMap::new(),
+        state_changes: Vec::new(),
+        command_outcomes: Vec::new(),
+    })?;
+
+    assert_eq!(runtime_run.state, AutomationRunState::Completed);
+    assert_eq!(simulation.status, AutomationSimulationStatus::Completed);
+    assert_eq!(runtime_run.variables, simulation.variables);
+    assert_eq!(
+        decision_projection(&runtime_trace),
+        decision_projection(&simulation.trace)
+    );
+    Ok(())
+}
+
+fn decision_projection(
+    trace: &[AutomationTraceStep],
+) -> Vec<(
+    Option<AutomationPlanNodeId>,
+    AutomationTraceKind,
+    BTreeMap<String, AutomationValue>,
+)> {
+    trace
+        .iter()
+        .filter(|step| {
+            step.kind != AutomationTraceKind::Trigger
+                && step.details.get("event") != Some(&AutomationValue::String("join".to_owned()))
+        })
+        .map(|step| (step.node_id, step.kind, step.details.clone()))
+        .collect()
 }
 
 async fn scheduled_count(repository: &SqliteRepository) -> Result<usize, BoxError> {
@@ -1273,7 +1450,7 @@ fn stored_version_for(document: AutomationDocument) -> StoredAutomationVersion {
             ..FoundationSnapshot::default()
         },
     )
-    .unwrap_or_else(|error| panic!("fixture compilation failed: {error}"));
+    .unwrap_or_else(|error| panic!("fixture compilation failed: {error:?}"));
     let validation = AutomationValidationEvidence {
         document_hash: plan.document_hash.clone(),
         plan_hash: plan.plan_hash.clone(),

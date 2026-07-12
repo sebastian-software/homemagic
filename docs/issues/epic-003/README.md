@@ -5,7 +5,7 @@ title: Agent-Authored Automation Engine issue index
 status: in_progress
 priority: critical
 depends_on: [EPIC-002]
-adrs: [ADR-0004, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024]
+adrs: [ADR-0004, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027, ADR-0028, ADR-0029]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -19,7 +19,7 @@ updated: 2026-07-12
 | [E3-003](E3-003-validation-compiler.md) | Done | E3-002 | Resolver, validator, Safety Profiles, reducer |
 | [E3-004](E3-004-automation-storage.md) | Done | E3-002 | Durable versions, runs, timers, trace, retention |
 | [E3-005](E3-005-deterministic-simulator.md) | Done | E3-003 | Virtual-time side-effect-free simulation |
-| [E3-006](E3-006-runtime-scheduler.md) | In progress | E3-003, E3-004 | Durable interpreter and scheduler |
+| [E3-006](E3-006-runtime-scheduler.md) | Done | E3-003, E3-004 | Durable interpreter and scheduler |
 | [E3-007](E3-007-automation-rpc.md) | Planned | E3-004, E3-005, E3-006 | Governance and authenticated RPC |
 | [E3-008](E3-008-automation-exit-audit.md) | Planned | E3-007 | Operations and exit evidence |
 
@@ -48,3 +48,7 @@ updated: 2026-07-12
   deterministic schedule and command crash-window tests prove no duplicate
   run or physical dispatch. ADR-0021 through ADR-0024 govern group
   continuations, retry attempts, timer scopes, and continuous conditions.
+- 2026-07-12: E3-006 completed with active-only durable event consumption,
+  production bounded-pass orchestration, all four durable run modes, explicit
+  catch-up only, self-trigger suppression, direct simulator parity, failure
+  isolation, and same-timestamp load evidence. E3-007 is ready.

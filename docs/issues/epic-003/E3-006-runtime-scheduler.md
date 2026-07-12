@@ -2,7 +2,7 @@
 id: E3-006
 epic: EPIC-003
 title: Execute active automation plans durably
-status: in_progress
+status: done
 priority: critical
 depends_on: [E3-003, E3-004]
 adrs: [ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027, ADR-0028, ADR-0029]
@@ -27,10 +27,10 @@ updated: 2026-07-12
 
 ## Acceptance criteria
 
-- [ ] Runtime and simulator make equivalent decisions for identical histories.
+- [x] Runtime and simulator make equivalent decisions for identical histories.
 - [x] Restart cannot duplicate a dispatched command or schedule occurrence.
 - [x] Missed schedules never execute without an explicit new catch-up request.
-- [ ] Queue, parallelism, trace, retry, and duration bounds hold under load.
+- [x] Queue, parallelism, trace, retry, and duration bounds hold under load.
 
 ## Progress
 
@@ -105,3 +105,8 @@ updated: 2026-07-12
   original occurrence becomes permanently `missed_skipped`, a separate audited
   catch-up becomes one run, identical requests reuse it, future/open windows
   are rejected, and ordinary startup creates no catch-up work.
+- 2026-07-12: Closed E3-006 with direct runtime/simulator parity evidence for
+  identical typed variable and branch history. A 256-occurrence same-timestamp
+  SQLite batch retains exactly 16 queued triggers, admits exactly eight
+  parallel runs, and suppresses all overflow; existing durable restart tests
+  prove trace, retry-attempt, and continuous-duration limits independently.
