@@ -3,7 +3,7 @@ id: E4-008-03
 epic: EPIC-004
 parent: E4-008
 title: Run controller contract and independent reference lifecycle
-status: in_progress
+status: done
 priority: critical
 depends_on: [E4-008-02]
 adrs: [ADR-0033, ADR-0038]
@@ -21,10 +21,10 @@ reference implementation, with unsupported cases recorded explicitly.
 
 ## Verification
 
-- [ ] Candidate self-tests and independent-reference results remain distinct.
-- [ ] Fabric, commission, inventory, read, invoke, subscribe, restart, and remove
+- [x] Candidate self-tests and independent-reference results remain distinct.
+- [x] Fabric, commission, inventory, read, invoke, subscribe, restart, and remove
   outcomes are recorded per host.
-- [ ] Failure normalization and cancellation gaps are explicit.
+- [x] Failure normalization and cancellation gaps are explicit.
 
 ## Progress log
 
@@ -39,3 +39,9 @@ reference implementation, with unsupported cases recorded explicitly.
   bounded run. The spike now emits phase-specific partial outcomes and the
   last independently observed protocol step; a two-host evidence workflow is
   prepared. No downstream lifecycle result is claimed from this failed gate.
+- 2026-07-12: Public workflow run `29211713067` captured both hosts. Linux
+  timed out in commissioning after the independent fixture observed
+  `ArmFailSafe`. macOS passed fabric creation, commissioning, inventory, read,
+  and subscription establishment, then failed invoke; restart and removal were
+  not run. Both reports are committed, so this evidence issue is done with a
+  failed mandatory lifecycle gate rather than a selected candidate.

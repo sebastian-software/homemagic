@@ -1,0 +1,42 @@
+{
+  "schema": "homemagic.matter.controller-candidate-report.v1",
+  "candidate": "rs-matter",
+  "source": {
+    "repository": "https://github.com/project-chip/rs-matter.git",
+    "revision": "42d3c2211239f5f388ac7f7449c82bb3347912f5"
+  },
+  "host": {
+    "captured_at": "2026-07-12T22:38:52Z",
+    "os": "Linux",
+    "architecture": "x86_64",
+    "kernel": "6.17.0-1018-azure",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
+    "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
+  },
+  "resolution": {
+    "lockfile_origin": "generated_from_manifest_ranges",
+    "lockfile_sha256": "2ef10d247e0c00d5d90e0f250bf804284d76b0ec4eae166e143deb98012e7e7a"
+  },
+  "commands": {
+    "tests": "pass",
+    "test_profile": "default workspace",
+    "all_features": "fail",
+    "release_build": "pass",
+    "release_target": "commissioner_tests and onoff_light binaries"
+  },
+  "footprint": {
+    "repository_rust_bytes": 7321924,
+    "repository_other_code_bytes": 137077,
+    "repository_rust_share_basis_points": 9816,
+    "compiled_first_party_rust_share_basis_points": 10000,
+    "repository_semantic_unsafe_lines": 211,
+    "compiled_first_party_semantic_unsafe_blocks": null,
+    "compiled_first_party_native_files": 0,
+    "default_normal_dependencies": 242,
+    "all_feature_normal_dependencies": null,
+    "all_feature_transitive_native_packages": [],
+    "release_example_bytes": 2187000,
+    "release_example_format": "ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=8640b88eda35e7105d0795a89c6c434ed3f9daf8, not stripped",
+    "native_boundary_note": "default workspace build; optional platform features were not selected"
+  }
+}

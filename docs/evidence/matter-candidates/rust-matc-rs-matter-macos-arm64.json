@@ -1,0 +1,28 @@
+{
+  "candidate": "rust-matc",
+  "candidate_revision": "c829d2a1b570b2f2433607a3f4731074b73fb367",
+  "failed_phase": "invoke",
+  "failure": "candidate_error",
+  "outcomes": {
+    "commission": "pass",
+    "controller_restart": "not_run",
+    "fabric_create": "pass",
+    "inventory": "pass",
+    "invoke": "fail",
+    "local_remove": "not_run",
+    "read": "pass",
+    "remote_remove_fabric": "not_run",
+    "subscribe": "pass"
+  },
+  "reference": "rs-matter-onoff-light",
+  "reference_revision": "42d3c2211239f5f388ac7f7449c82bb3347912f5",
+  "schema": "homemagic.matter.independent-reference.v1",
+  "transport": "on_network_ipv6",
+  "last_reference_observation": "arm_fail_safe_received",
+  "host": {
+    "captured_at": "2026-07-12T22:36:59Z",
+    "os": "Darwin",
+    "architecture": "arm64",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)"
+  }
+}

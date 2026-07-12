@@ -10,11 +10,11 @@
 | Fixed operation | `rust-matc` | `rs-matter` | Current evidence |
 | --- | --- | --- | --- |
 | Fabric create/load | `CertManager`, `Controller`, `DeviceManager` | caller installs/loads `Matter` fabric state | Both self-build; `rust-matc` lifecycle spike |
-| On-network commission | `Controller::commission` | `onboard::Commissioner::{commission, complete_via_case}` | Self-tests pass; fresh independent device receives `ArmFailSafe`, then `rust-matc` times out |
-| Inventory | `DeviceManager` registry | caller-owned registry | Mapping compiles; not reached after independent commissioning failure |
-| Bounded read | `Connection::read_request2` | `ImClient` read transaction | Mapping compiles; candidate self-tests only |
-| Invoke | `Connection::invoke_request` | `ImClient` invoke transaction | Mapping compiles; candidate self-tests only |
-| Subscribe | `Connection::subscribe_attrs/events` | `ImClient` subscribe transaction | Mapping compiles; candidate self-tests only |
+| On-network commission | `Controller::commission` | `onboard::Commissioner::{commission, complete_via_case}` | Linux times out after independent `ArmFailSafe`; macOS completes commission |
+| Inventory | `DeviceManager` registry | caller-owned registry | macOS passes; Linux not reached |
+| Bounded read | `Connection::read_request2` | `ImClient` read transaction | macOS passes; Linux not reached |
+| Invoke | `Connection::invoke_request` | `ImClient` invoke transaction | macOS fails; Linux not reached |
+| Subscribe | `Connection::subscribe_attrs/events` | `ImClient` subscribe transaction | macOS establishment passes; Linux not reached |
 | Restart | reload `DeviceManager`, establish CASE | caller reloads KV/fabric and establishes CASE | Mapping compiles; not reached independently |
 | Remove | raw `RemoveFabric`, then registry cleanup | generic invoke, then caller registry cleanup | Mapping compiles; not reached independently |
 | Export/restore | HomeMagic-owned wrapper | HomeMagic-owned wrapper | Candidate-neutral Track A contract only |
@@ -92,7 +92,7 @@ Raw SDK errors remain private diagnostics with secret-safe structured fields.
 | License/provenance | Pass | Pass |
 | Both target hosts | Pending committed two-host report | Pending committed two-host report |
 | SDK-neutral port | Spike compiles; full adapter pending | Mapping only; adapter pending |
-| Fixed lifecycle | Fail locally: fresh `rs-matter` receives `ArmFailSafe`, commission then times out; both-host capture pending | Incomplete independent evidence |
+| Fixed lifecycle | Fail: Linux commissioning timeout after `ArmFailSafe`; macOS reaches invoke, then fails; restart/remove never run | Incomplete independent evidence |
 | HomeMagic secret callbacks | Feasible lower-level trait; unproven | Caller-owned persistence; unproven |
 | Errors/cancellation/partial outcomes | Fail: no cancellation handle; attestation absent | Fail: no cancellation handle; attestation absent |
 | Reproducible packaging | Pinned spike lock | Upstream has no lock; generated resolution recorded |

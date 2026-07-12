@@ -6,23 +6,30 @@
     "revision": "c829d2a1b570b2f2433607a3f4731074b73fb367"
   },
   "host": {
-    "captured_at": "2026-07-12T21:43:47Z",
+    "captured_at": "2026-07-12T22:33:47Z",
     "os": "Linux",
     "architecture": "x86_64",
     "kernel": "6.17.0-1018-azure",
     "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
     "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
   },
+  "resolution": {
+    "lockfile_origin": "candidate",
+    "lockfile_sha256": "770c337759d7d15aeffa6dafc86d164c4b3f53b8cd84bb1b4e3855265429306c"
+  },
   "commands": {
-    "default_tests": "pass",
-    "all_feature_tests": "pass",
-    "release_example": "pass"
+    "tests": "pass",
+    "test_profile": "default and all features",
+    "all_features": "pass",
+    "release_build": "pass",
+    "release_target": "simple-devman example"
   },
   "footprint": {
-    "repository_rust_bytes": 3304384,
+    "repository_rust_bytes": 3471251,
     "repository_other_code_bytes": 180093,
-    "repository_rust_share_basis_points": 9483,
+    "repository_rust_share_basis_points": 9506,
     "compiled_first_party_rust_share_basis_points": 10000,
+    "repository_semantic_unsafe_lines": 0,
     "compiled_first_party_semantic_unsafe_blocks": 0,
     "compiled_first_party_native_files": 0,
     "default_normal_dependencies": 113,
@@ -33,7 +40,7 @@
       "libdbus-sys"
     ],
     "release_example_bytes": 4610504,
-    "release_example_format": "ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=c38e46b42afca290c6547101ad9000dc5fa5800c, not stripped",
-    "optional_native_boundary": "ble feature through btleplug platform backends"
+    "release_example_format": "ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=301fa69da51ebe6dab034f61669cc30d2094e888, not stripped",
+    "native_boundary_note": "optional ble feature through btleplug platform backends"
   }
 }

@@ -3,7 +3,7 @@ id: E4-008-02
 epic: EPIC-004
 parent: E4-008
 title: Build and audit native Rust controller candidates
-status: in_progress
+status: done
 priority: critical
 depends_on: [E4-008-01]
 adrs: [ADR-0005, ADR-0038]
@@ -21,8 +21,8 @@ and packaging measurements.
 
 ## Verification
 
-- [ ] Default and all-feature outcomes are reproducible on both hosts.
-- [ ] First-party and transitive native footprints are reported separately.
+- [x] Default and all-feature outcomes are reproducible on both hosts.
+- [x] First-party and transitive native footprints are reported separately.
 - [x] Production manifests remain free of candidate dependencies.
 
 ## Progress log
@@ -44,3 +44,9 @@ and packaging measurements.
   `rs-matter` commissioner as a second credible native controller candidate.
   Its default workspace, commissioner, and device builds pass locally; the
   two-host workflow and exact footprint reports remain pending.
+- 2026-07-12: Corrected public run `29211681113` passed all four host/candidate
+  jobs with portable measurements. `rs-matter` default tests and release
+  controller/device builds pass both hosts; its all-feature aggregate fails the
+  explicit `defmt`/`log` conflict. Reports record 98.16% repository Rust, 211
+  repository unsafe lines, no native source, and leave compiled-default unsafe
+  unknown instead of claiming zero. This evidence issue is done.

@@ -17,9 +17,9 @@ updated: 2026-07-12
 | Issue | Status | Outcome |
 | --- | --- | --- |
 | [E4-008-01](E4-008-01-discovery-rubric.md) | Done | Current candidate screen and frozen detailed rubric |
-| [E4-008-02](E4-008-02-native-build-audit.md) | In progress | Cross-platform native build and footprint evidence |
-| [E4-008-03](E4-008-03-contract-reference.md) | Blocked | Fixed port contract and independent reference lifecycle |
-| [E4-008-04](E4-008-04-selection-adr.md) | Planned | Evidence matrix and accepted ADR-0039 |
+| [E4-008-02](E4-008-02-native-build-audit.md) | Done | Cross-platform native build and footprint evidence |
+| [E4-008-03](E4-008-03-contract-reference.md) | Done | Fixed port contract and independent reference lifecycle |
+| [E4-008-04](E4-008-04-selection-adr.md) | Ready | Contingency evidence, matrix, and ADR-0039 |
 
 ## Outcome
 
@@ -87,3 +87,10 @@ security, packaging, or Rust-majority requirements.
   revision includes a real commissioner/controller path omitted by the
   device-oriented README summary. E4-008-02 was reopened to audit that second
   credible native candidate before contract comparison begins.
+- 2026-07-12: Independent public run `29211713067` failed the fixed lifecycle
+  differently by host: Linux timed out during commissioning after
+  `ArmFailSafe`; macOS reached invoke after successful commission/read/
+  subscribe and failed there. E4-008-03 is complete evidence; neither native
+  candidate can advance to weighted selection.
+- 2026-07-12: Corrected two-candidate build/footprint run `29211681113` passed
+  all four jobs; E4-008-02 is closed with exact unsafe and all-feature outcomes.

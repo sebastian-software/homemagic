@@ -6,23 +6,30 @@
     "revision": "c829d2a1b570b2f2433607a3f4731074b73fb367"
   },
   "host": {
-    "captured_at": "2026-07-12T21:43:10Z",
+    "captured_at": "2026-07-12T22:33:36Z",
     "os": "Darwin",
     "architecture": "arm64",
     "kernel": "23.6.0",
     "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
     "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
   },
+  "resolution": {
+    "lockfile_origin": "candidate",
+    "lockfile_sha256": "770c337759d7d15aeffa6dafc86d164c4b3f53b8cd84bb1b4e3855265429306c"
+  },
   "commands": {
-    "default_tests": "pass",
-    "all_feature_tests": "pass",
-    "release_example": "pass"
+    "tests": "pass",
+    "test_profile": "default and all features",
+    "all_features": "pass",
+    "release_build": "pass",
+    "release_target": "simple-devman example"
   },
   "footprint": {
-    "repository_rust_bytes": 3304384,
+    "repository_rust_bytes": 3471251,
     "repository_other_code_bytes": 180093,
-    "repository_rust_share_basis_points": 9483,
+    "repository_rust_share_basis_points": 9506,
     "compiled_first_party_rust_share_basis_points": 10000,
+    "repository_semantic_unsafe_lines": 0,
     "compiled_first_party_semantic_unsafe_blocks": 0,
     "compiled_first_party_native_files": 0,
     "default_normal_dependencies": 114,
@@ -36,6 +43,6 @@
     ],
     "release_example_bytes": 3814864,
     "release_example_format": "Mach-O 64-bit executable arm64",
-    "optional_native_boundary": "ble feature through btleplug platform backends"
+    "native_boundary_note": "optional ble feature through btleplug platform backends"
   }
 }

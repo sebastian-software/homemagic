@@ -18,9 +18,10 @@ the fixed `MatterController` contract against an independently maintained
 | `export_fabric` / `restore_fabric` | HomeMagic wrapper over secret references | Not supplied by the candidate |
 | `events_after` | HomeMagic adapter event journal | Not supplied by the candidate |
 
-The current independent run reaches the reference device's `ArmFailSafe` step
-but times out before commissioning completes from a fresh device state. The
-spike therefore proves the mapping and captures an interoperability failure; it
-does not prove a complete lifecycle. It is not a production adapter and cannot
-waive missing attestation, cancellation, secret storage, error normalization,
-or partial-outcome work.
+The public independent run diverges by host: Linux reaches the reference
+device's `ArmFailSafe` step and times out during commissioning; macOS completes
+commissioning, inventory, read, and subscription establishment but fails the
+first invoke. The spike therefore proves the mapping and captures concrete
+interoperability failures; it does not prove a complete lifecycle. It is not a
+production adapter and cannot waive missing attestation, cancellation, secret
+storage, error normalization, or partial-outcome work.
