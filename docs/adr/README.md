@@ -54,3 +54,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - ADR-0039 is reserved for the controller selection required by ADR-0038.
 - [ADR-0040: Target commissioning before node identity exists](0040-target-commissioning-before-node-identity.md)
 - [ADR-0041: Separate Matter diagnostics from explicit repair](0041-separate-matter-diagnostics-from-explicit-repair.md)
+- [ADR-0042: Separate Matter RPC, sensitive exchange, and operation events](0042-separate-matter-rpc-sensitive-input-and-events.md)

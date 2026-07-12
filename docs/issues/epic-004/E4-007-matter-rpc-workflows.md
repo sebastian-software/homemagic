@@ -20,7 +20,7 @@ updated: 2026-07-12
 | [E4-007-02](E4-007-02-fabric-workflows.md) | Done | Fabric status, create, simulated export, and restore |
 | [E4-007-03](E4-007-03-node-operation-workflows.md) | Done | Commissioning, removal, cancellation, and restart recovery |
 | [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Done | Bounded diagnostics and explicit subscription repair |
-| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Ready | Versioned `matter.*` RPC and actor-filtered operation events |
+| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | In progress | Versioned `matter.*` RPC and actor-filtered operation events |
 
 ## Outcome
 
@@ -90,3 +90,5 @@ capability-oriented.
 - 2026-07-12: E4-007-04 completed bounded read-only diagnostics, durable
   subscription health, explicit repair, and fail-closed restart reconciliation.
   Public CI run `29207369049` passed; E4-007-05 is ready.
+- 2026-07-12: E4-007-05 was decomposed under ADR-0042; E4-007-05-01 read RPC
+  contracts are ready.
