@@ -323,3 +323,61 @@ fn map_confirmation_error(error: &MatterControllerError) -> CommandErrorCode {
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[error("Matter command adapter invariant failed")]
 struct MatterCommandAdapterError;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use homemagic_domain::{MatterRetryability, PositionCommand};
+
+    #[test]
+    fn command_mapping_should_admit_only_explicit_initial_matter_states() {
+        assert_eq!(
+            map_command(&CommandPayload::OnOff(OnOffCommand::Set { on: true })),
+            Ok(MatterControllerCommand::SetOnOff(true))
+        );
+        assert_eq!(
+            map_command(&CommandPayload::AccessControl(AccessControlCommand::Lock)),
+            Ok(MatterControllerCommand::SetLock(MatterLockState::Locked))
+        );
+        assert_eq!(
+            map_command(&CommandPayload::AccessControl(AccessControlCommand::Unlock)),
+            Ok(MatterControllerCommand::SetLock(MatterLockState::Unlocked))
+        );
+        for unsupported in [
+            CommandPayload::OnOff(OnOffCommand::Toggle),
+            CommandPayload::Position(PositionCommand::Stop),
+        ] {
+            assert_eq!(
+                map_command(&unsupported),
+                Err(failure(CommandErrorCode::CapabilityMismatch))
+            );
+        }
+    }
+
+    #[test]
+    fn controller_errors_should_normalize_without_adapter_text() {
+        let timeout = MatterControllerError::new(
+            MatterControllerErrorCategory::Timeout,
+            MatterControllerErrorCode::DeadlineExceeded,
+            MatterRetryability::Never,
+            None,
+            None,
+        );
+        let indeterminate = MatterControllerError::new(
+            MatterControllerErrorCategory::Persistence,
+            MatterControllerErrorCode::OutcomeIndeterminate,
+            MatterRetryability::AfterRepair,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            map_controller_error(&timeout),
+            failure(CommandErrorCode::DeadlineExceeded)
+        );
+        assert_eq!(
+            map_controller_error(&indeterminate),
+            failure(CommandErrorCode::IndeterminateAfterRestart)
+        );
+    }
+}
