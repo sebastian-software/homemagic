@@ -17,7 +17,7 @@ updated: 2026-07-12
 
 | Issue | Status | Outcome |
 | --- | --- | --- |
-| [E4-008-04-01](E4-008-04-01-connectedhomeip-contingency.md) | Ready | Official SDK narrow-boundary audit |
+| [E4-008-04-01](E4-008-04-01-connectedhomeip-contingency.md) | Done | Official SDK boundary rejected |
 | [E4-008-04-02](E4-008-04-02-matter-js-contingency.md) | In progress | Isolated sidecar fallback audit |
 | [E4-008-04-03](E4-008-04-03-final-matrix-adr.md) | Planned | Frozen matrix and ADR-0039 |
 

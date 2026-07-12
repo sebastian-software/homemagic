@@ -1,0 +1,34 @@
+{
+  "schema": "homemagic.matter.connectedhomeip-candidate-report.v1",
+  "candidate": "connectedhomeip",
+  "source": {
+    "repository": "https://github.com/project-chip/connectedhomeip.git",
+    "revision": "abcc720b48c5e59c0edcfe65c516f76ca9448aa3",
+    "release": "v1.5.1.0"
+  },
+  "host": {
+    "captured_at": "2026-07-12T23:16:57Z",
+    "os": "Linux",
+    "architecture": "x86_64"
+  },
+  "build": {
+    "target": "linux-x64-chip-tool-no-ble-no-wifi-no-thread",
+    "result": "pass",
+    "seconds": 425,
+    "binary_bytes": 154916592,
+    "binary_format": "ELF 64-bit LSB pie executable, x86-64, version 1 (GNU/Linux), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=20a04ead36a278c8c752249ae143d222fe7d5457, for GNU/Linux 3.2.0, with debug_info, not stripped",
+    "source_checkout_kib": 1357772,
+    "source_and_build_tree_kib": 2533604,
+    "bootstrap_environment_kib": 5270572,
+    "submodule_count": 84,
+    "submodule_manifest_sha256": "cd2973206abfd8fbaaf4efde580859d8f8c0e3c1aeb63d1af750d696e9a971f6",
+    "cli_help_exit_code": 1
+  },
+  "boundary": {
+    "evaluated": "chip-tool process plus source-level controller ABI survey",
+    "controller_cpp_lines": 131010,
+    "existing_python_binding_exports": 199,
+    "stable_narrow_c_abi": false,
+    "production_adapter": false
+  }
+}
