@@ -22,10 +22,11 @@ use crate::{
     BoxError, MatterAdministrationError, MatterAdministrationRequest, MatterAdministrationService,
     MatterAttributeSelection, MatterCancellationCommit, MatterCancellationOutcome,
     MatterCommissioningCommit, MatterCommissioningRequest, MatterFabricState,
-    MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
-    MatterReadRequest, MatterRepairRecord, MatterRepairStatus, MatterReportCausation,
-    MatterReportDecision, MatterRepository, MatterSubscriptionRequest, MatterWorkflowOutcome,
-    SecretValue, StoredMatterNode, StoredMatterSubscription, StoredMatterSubscriptionState,
+    MatterNodeRemovalCommit, MatterOperationCreateOutcome, MatterOperationNodeResult,
+    MatterOperationProgress, MatterReadRequest, MatterRemovalOutcome, MatterRemoveNodeRequest,
+    MatterRepairRecord, MatterRepairStatus, MatterReportCausation, MatterReportDecision,
+    MatterRepository, MatterSubscriptionRequest, MatterWorkflowOutcome, SecretValue,
+    StoredMatterNode, StoredMatterSubscription, StoredMatterSubscriptionState,
     advance_matter_projected_state, initial_stored_matter_projection, normalize_matter_report,
     project_matter_node,
 };
@@ -238,6 +239,137 @@ impl MatterNodeWorkflowService {
             )
             .await
             .map_err(Into::into)
+    }
+
+    /// Admits one actor-bound removal for a durable node in the actor's installation.
+    ///
+    /// # Errors
+    ///
+    /// Fails for absent exact authority, a missing durable node, invalid
+    /// idempotency, or repository failures.
+    pub async fn start_remove_node(
+        &self,
+        authenticated_actor: &Actor,
+        node_id: MatterNodeId,
+        idempotency_key: IdempotencyKey,
+        now: DateTime<Utc>,
+    ) -> Result<MatterOperationCreateOutcome, MatterNodeWorkflowError> {
+        self.ensure_simulator()?;
+        let installation_id = self
+            .administration
+            .authorize_installation_action(authenticated_actor, CommandAction::MatterRemoveNode)
+            .await?;
+        let fabric_id = MatterFabricId::from_installation(&installation_id);
+        let record = self
+            .matter
+            .matter_node_inventory_item(&installation_id, &fabric_id, node_id)
+            .await?
+            .ok_or(MatterNodeWorkflowError::NodeNotFound)?;
+        if record.device.lifecycle == homemagic_domain::DeviceLifecycle::Removed {
+            return Err(MatterNodeWorkflowError::NodeNotFound);
+        }
+        self.administration
+            .admit(
+                authenticated_actor,
+                MatterAdministrationRequest {
+                    kind: MatterOperationKind::RemoveNode,
+                    target: MatterOperationTarget::Node { fabric_id, node_id },
+                    idempotency_key,
+                },
+                now,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Runs or safely reconciles one durable node removal operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns ownership, target, repository, or controller contract failures.
+    /// Partial and ambiguous outcomes become durable repair-required state.
+    pub async fn run_remove_node(
+        &self,
+        authenticated_actor: &Actor,
+        operation_id: &MatterOperationId,
+        now: DateTime<Utc>,
+    ) -> Result<MatterWorkflowOutcome<()>, MatterNodeWorkflowError> {
+        self.ensure_simulator()?;
+        let mut operation = self
+            .administration
+            .owned_operation_for_action(
+                authenticated_actor,
+                operation_id,
+                CommandAction::MatterRemoveNode,
+            )
+            .await?;
+        if operation.phase == MatterOperationPhase::Completed {
+            return Ok(MatterWorkflowOutcome::Completed {
+                operation,
+                value: (),
+            });
+        }
+        if operation.phase.is_terminal() {
+            return Ok(MatterWorkflowOutcome::Terminal(operation));
+        }
+        let MatterOperationTarget::Node { fabric_id, node_id } = &operation.target else {
+            return Err(MatterNodeWorkflowError::InvalidOperationTarget);
+        };
+        let fabric_id = fabric_id.clone();
+        let node_id = *node_id;
+        if operation.phase == MatterOperationPhase::Requested {
+            operation = self
+                .transition(operation, MatterOperationPhase::RemovingNode, now)
+                .await?;
+            match self
+                .controller
+                .remove_node(MatterRemoveNodeRequest {
+                    operation_id: operation.id.clone(),
+                    fabric_id: fabric_id.clone(),
+                    node_id,
+                })
+                .await
+            {
+                Ok(MatterRemovalOutcome::Removed | MatterRemovalOutcome::NotPresent) => {}
+                Ok(MatterRemovalOutcome::PartialOutcome) => {
+                    let error = indeterminate_node_error(&fabric_id, node_id);
+                    return self
+                        .terminal_controller_error(authenticated_actor, operation, error, now)
+                        .await;
+                }
+                Err(_) => match self.controller.node(&fabric_id, node_id).await {
+                    Ok(None) => {}
+                    Ok(Some(_)) | Err(_) => {
+                        return self
+                            .terminal_controller_error(
+                                authenticated_actor,
+                                operation,
+                                indeterminate_node_error(&fabric_id, node_id),
+                                now,
+                            )
+                            .await;
+                    }
+                },
+            }
+            operation = self
+                .transition(operation, MatterOperationPhase::CleaningSecrets, now)
+                .await?;
+        } else if operation.phase == MatterOperationPhase::RemovingNode {
+            if let Ok(None) = self.controller.node(&fabric_id, node_id).await {
+                operation = self
+                    .transition(operation, MatterOperationPhase::CleaningSecrets, now)
+                    .await?;
+            } else {
+                let error = indeterminate_node_error(&fabric_id, node_id);
+                return self
+                    .terminal_controller_error(authenticated_actor, operation, error, now)
+                    .await;
+            }
+        } else if operation.phase != MatterOperationPhase::CleaningSecrets {
+            return Err(MatterNodeWorkflowError::InvalidOperationState);
+        }
+        self.complete_node_removal(authenticated_actor, operation, now)
+            .await
     }
 
     /// Cancels locally while requested or admits a separate in-flight cancellation.
@@ -823,6 +955,61 @@ impl MatterNodeWorkflowService {
         })
     }
 
+    async fn complete_node_removal(
+        &self,
+        authenticated_actor: &Actor,
+        mut operation: MatterOperation,
+        now: DateTime<Utc>,
+    ) -> Result<MatterWorkflowOutcome<()>, MatterNodeWorkflowError> {
+        let MatterOperationTarget::Node { fabric_id, node_id } = &operation.target else {
+            return Err(MatterNodeWorkflowError::InvalidOperationTarget);
+        };
+        let fabric_id = fabric_id.clone();
+        let node_id = *node_id;
+        let installation_id = self
+            .administration
+            .authorize_installation_action(authenticated_actor, CommandAction::MatterRemoveNode)
+            .await?;
+        let record = self
+            .matter
+            .matter_node_inventory_item(&installation_id, &fabric_id, node_id)
+            .await?
+            .ok_or(MatterNodeWorkflowError::NodeNotFound)?;
+        let mut device = record.device;
+        if device.lifecycle != homemagic_domain::DeviceLifecycle::Removed {
+            device
+                .transition(LifecycleTrigger::Remove)
+                .map_err(|_| MatterNodeWorkflowError::InvalidDeviceState)?;
+        }
+        device.availability = device.availability.transition(
+            AvailabilityState::Offline,
+            now,
+            Some("removed".to_owned()),
+        );
+        device.snapshot.endpoints.clear();
+        device.capability_descriptors.clear();
+        let expected_revision = operation.revision;
+        operation
+            .transition(MatterOperationPhase::Completed, now)
+            .map_err(|_| MatterNodeWorkflowError::InvalidOperationState)?;
+        self.matter
+            .commit_matter_node_removal(
+                MatterNodeRemovalCommit {
+                    device,
+                    fabric_id,
+                    node_id,
+                    operation: operation.clone(),
+                    progress: progress(&operation),
+                },
+                expected_revision,
+            )
+            .await?;
+        Ok(MatterWorkflowOutcome::Completed {
+            operation,
+            value: (),
+        })
+    }
+
     async fn transition(
         &self,
         mut operation: MatterOperation,
@@ -882,6 +1069,9 @@ pub enum MatterNodeWorkflowError {
     /// Commissioning requires durable active fabric metadata.
     #[error("Matter fabric is not active")]
     FabricNotActive,
+    /// Durable node does not exist in the authenticated installation fabric.
+    #[error("Matter node not found")]
+    NodeNotFound,
     /// Durable completed commissioning lacks its atomic node result.
     #[error("completed Matter commissioning result is missing")]
     CommissioningResultMissing,
@@ -894,6 +1084,9 @@ pub enum MatterNodeWorkflowError {
     /// Timestamp arithmetic exceeded the supported range.
     #[error("Matter node workflow timestamp overflow")]
     TimeOverflow,
+    /// Common device lifecycle could not be tombstoned safely.
+    #[error("Matter common device state is invalid for removal")]
+    InvalidDeviceState,
     /// This Track A workflow accepts only deterministic simulator evidence.
     #[error("workflow is available only for deterministic simulator evidence")]
     SimulatorOnly,
@@ -976,6 +1169,22 @@ fn indeterminate_operation_error(operation: &MatterOperation) -> MatterControlle
         MatterRetryability::AfterRepair,
         Some(MatterAffectedResource::Operation {
             operation_id: operation.id.clone(),
+        }),
+        Some(homemagic_domain::MatterRepairAction::ReviewPartialCleanup),
+    )
+}
+
+fn indeterminate_node_error(
+    fabric_id: &MatterFabricId,
+    node_id: MatterNodeId,
+) -> MatterControllerError {
+    MatterControllerError::new(
+        MatterControllerErrorCategory::Persistence,
+        MatterControllerErrorCode::OutcomeIndeterminate,
+        MatterRetryability::AfterRepair,
+        Some(MatterAffectedResource::Node {
+            fabric_id: fabric_id.clone(),
+            node_id,
         }),
         Some(homemagic_domain::MatterRepairAction::ReviewPartialCleanup),
     )

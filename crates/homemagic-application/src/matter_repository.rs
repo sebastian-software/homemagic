@@ -174,16 +174,33 @@ pub struct MatterOperationNodeResult {
 }
 
 /// One durable node with every bounded inventory relation needed by callers.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MatterNodeInventoryRecord {
     /// Latest durable node descriptor and stable common device identity.
     pub node: StoredMatterNode,
+    /// Durable common device aggregate used for lifecycle tombstoning.
+    pub device: DeviceRecord,
     /// Deterministically ordered capability projections for the node.
     pub projections: Vec<StoredMatterProjection>,
     /// Current logical subscription, when one has been created.
     pub subscription: Option<StoredMatterSubscription>,
     /// Immutable commissioning result that introduced the node.
     pub commissioning_result: Option<MatterOperationNodeResult>,
+}
+
+/// One atomic successful node-removal cleanup commit.
+#[derive(Clone, Debug)]
+pub struct MatterNodeRemovalCommit {
+    /// Common device tombstone with no active capabilities.
+    pub device: DeviceRecord,
+    /// Retained node identity whose active relations are removed.
+    pub fabric_id: MatterFabricId,
+    /// Retained fabric-scoped node identity.
+    pub node_id: MatterNodeId,
+    /// Removal operation transitioned to completed in memory.
+    pub operation: MatterOperation,
+    /// Matching immutable terminal progress fact.
+    pub progress: MatterOperationProgress,
 }
 
 /// One atomic successful commissioning projection commit.
@@ -540,6 +557,13 @@ pub trait MatterRepository: Send + Sync {
     async fn commit_matter_cancellation(
         &self,
         commit: MatterCancellationCommit,
+    ) -> Result<(), BoxError>;
+
+    /// Atomically tombstones the common device and removes active node relations.
+    async fn commit_matter_node_removal(
+        &self,
+        commit: MatterNodeRemovalCommit,
+        expected_operation_revision: u64,
     ) -> Result<(), BoxError>;
 
     /// Atomically replaces an operation and appends its progress fact.

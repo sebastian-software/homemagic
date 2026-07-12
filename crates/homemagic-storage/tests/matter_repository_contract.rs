@@ -20,9 +20,9 @@ use homemagic_application::{
     MatterDispatchAdmission, MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat,
     MatterFabricSecretRefs, MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
     MatterNodeInventoryError, MatterNodeInventoryService, MatterNodeWorkflowError,
-    MatterNodeWorkflowService, MatterOperationCreateOutcome, MatterOperationProgress,
-    MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRestoreRequest,
-    MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
+    MatterNodeWorkflowService, MatterOperationCreateOutcome, MatterOperationNodeResult,
+    MatterOperationProgress, MatterRepairRecord, MatterRepairStatus, MatterRepository,
+    MatterRestoreRequest, MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
     MatterUnlockAuthorization, MatterUnlockConsumption, MatterWorkflowEvidence,
     MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue, StoredMatterFabric,
     StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
@@ -267,6 +267,7 @@ impl FabricWorkflowFixture {
                         CommandAction::MatterCreateFabric,
                         CommandAction::MatterCommissionNode,
                         CommandAction::MatterCancelOperation,
+                        CommandAction::MatterRemoveNode,
                         CommandAction::MatterExportFabric,
                         CommandAction::MatterRestoreFabric,
                     ]),
@@ -820,6 +821,58 @@ async fn in_flight_commissioning(
         )
         .await?;
     Ok((fixture, controller, node_workflow, commissioning, now))
+}
+
+async fn commissioned_node(
+    key: &str,
+    setup: &[u8],
+) -> TestResult<(
+    FabricWorkflowFixture,
+    Arc<DeterministicMatterSimulator>,
+    MatterNodeWorkflowService,
+    MatterOperationNodeResult,
+    DateTime<Utc>,
+)> {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let fabric_workflow = fixture.workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new(format!("{key}-fabric"))?,
+            now,
+        )
+        .await?
+    else {
+        return Err("fabric create operation missing".into());
+    };
+    let _created = fabric_workflow
+        .run_create(&fixture.actor, &create.id, now)
+        .await?;
+    let workflow = fixture.node_workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new(format!("{key}-commission"))?,
+            now,
+        )
+        .await?
+    else {
+        return Err("commissioning operation missing".into());
+    };
+    let MatterWorkflowOutcome::Completed { value, .. } = workflow
+        .run_commission(
+            &fixture.actor,
+            &operation.id,
+            MatterCommissioningInput::new(SecretValue::new(setup)),
+            now,
+        )
+        .await?
+    else {
+        return Err("commissioning did not complete".into());
+    };
+    Ok((fixture, controller, workflow, value, now))
 }
 
 #[tokio::test]
@@ -1380,6 +1433,395 @@ async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable()
         reopened_detail.summary.commissioning_operation_id,
         Some(commissioned[0].operation_id.clone())
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn node_removal_idempotency_should_reject_a_different_node_target() -> TestResult {
+    let (fixture, _controller, workflow, light, now) =
+        commissioned_node("remove-conflict", SIMULATOR_LIGHT_SETUP).await?;
+    let MatterOperationCreateOutcome::Created(lock_operation) = workflow
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new("remove-conflict-lock")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("lock commissioning operation missing".into());
+    };
+    let MatterWorkflowOutcome::Completed { value: lock, .. } = workflow
+        .run_commission(
+            &fixture.actor,
+            &lock_operation.id,
+            MatterCommissioningInput::new(SecretValue::new(SIMULATOR_LOCK_SETUP)),
+            now,
+        )
+        .await?
+    else {
+        return Err("lock commissioning did not complete".into());
+    };
+    let MatterOperationCreateOutcome::Created(first) = workflow
+        .start_remove_node(
+            &fixture.actor,
+            light.node_id,
+            IdempotencyKey::new("remove-conflicting-target")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("first removal operation missing".into());
+    };
+    let conflict = workflow
+        .start_remove_node(
+            &fixture.actor,
+            lock.node_id,
+            IdempotencyKey::new("remove-conflicting-target")?,
+            now,
+        )
+        .await?;
+
+    assert_eq!(conflict, MatterOperationCreateOutcome::Conflict(first.id));
+
+    let foreign_installation = InstallationId::new();
+    fixture
+        .repository
+        .apply(FoundationWrite {
+            installations: vec![Installation {
+                id: foreign_installation.clone(),
+                name: "Foreign removal home".to_owned(),
+                created_at: now,
+            }],
+            ..FoundationWrite::default()
+        })
+        .await?;
+    let foreign_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: foreign_installation.clone(),
+        kind: homemagic_domain::ActorKind::User,
+        name: "Foreign removal operator".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(foreign_actor.clone(), None)
+        .await?;
+    fixture
+        .repository
+        .replace_actor_grants(
+            &foreign_actor.id,
+            vec![ActorGrant {
+                id: GrantId::new(),
+                actor_id: foreign_actor.id.clone(),
+                actions: BTreeSet::from([CommandAction::MatterRemoveNode]),
+                scope: GrantScope::Installation {
+                    installation_id: foreign_installation,
+                },
+                maximum_risk: RiskClass::Security,
+                enabled: true,
+            }],
+        )
+        .await?;
+    assert!(matches!(
+        workflow
+            .start_remove_node(
+                &foreign_actor,
+                light.node_id,
+                IdempotencyKey::new("foreign-removal-attempt")?,
+                now,
+            )
+            .await,
+        Err(MatterNodeWorkflowError::NodeNotFound)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn node_removal_should_tombstone_atomically_and_be_idempotent_after_reopen() -> TestResult {
+    let (fixture, controller, workflow, commissioned, now) =
+        commissioned_node("remove-success", SIMULATOR_LIGHT_SETUP).await?;
+    let key = IdempotencyKey::new("remove-success-request")?;
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start_remove_node(&fixture.actor, commissioned.node_id, key.clone(), now)
+        .await?
+    else {
+        return Err("removal operation missing".into());
+    };
+    let MatterOperationCreateOutcome::ExistingEquivalent(equivalent) = workflow
+        .start_remove_node(&fixture.actor, commissioned.node_id, key, now)
+        .await?
+    else {
+        return Err("equivalent removal operation missing".into());
+    };
+    let MatterWorkflowOutcome::Completed {
+        operation: completed,
+        ..
+    } = workflow
+        .run_remove_node(&fixture.actor, &operation.id, now)
+        .await?
+    else {
+        return Err("removal did not complete".into());
+    };
+    let MatterWorkflowOutcome::Completed {
+        operation: replayed,
+        ..
+    } = workflow
+        .run_remove_node(&fixture.actor, &operation.id, now)
+        .await?
+    else {
+        return Err("completed removal did not replay".into());
+    };
+    let fabric_id = MatterFabricId::from_installation(&fixture.actor.installation_id);
+    let record = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &fabric_id,
+            commissioned.node_id,
+        )
+        .await?
+        .ok_or("node tombstone missing")?;
+
+    assert_eq!(equivalent.id, operation.id);
+    assert_eq!(completed.phase, MatterOperationPhase::Completed);
+    assert_eq!(replayed, completed);
+    assert!(
+        controller
+            .node(&fabric_id, commissioned.node_id)
+            .await?
+            .is_none()
+    );
+    assert_eq!(
+        record.device.lifecycle,
+        homemagic_domain::DeviceLifecycle::Removed
+    );
+    assert!(record.device.snapshot.endpoints.is_empty());
+    assert!(record.projections.is_empty());
+    assert!(record.subscription.is_none());
+    assert!(matches!(
+        workflow
+            .start_remove_node(
+                &fixture.actor,
+                commissioned.node_id,
+                IdempotencyKey::new("remove-success-again")?,
+                now,
+            )
+            .await,
+        Err(MatterNodeWorkflowError::NodeNotFound)
+    ));
+
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let reopened_record = reopened
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &fabric_id,
+            commissioned.node_id,
+        )
+        .await?
+        .ok_or("node tombstone missing after reopen")?;
+    let reopened_operation = reopened
+        .matter_administration_operation(&operation.id)
+        .await?
+        .ok_or("removal missing after reopen")?
+        .0;
+
+    assert_eq!(reopened_record, record);
+    assert_eq!(reopened_operation, completed);
+    Ok(())
+}
+
+#[tokio::test]
+async fn node_removal_should_complete_when_controller_node_is_already_absent() -> TestResult {
+    let (fixture, _commissioning_controller, _workflow, commissioned, now) =
+        commissioned_node("remove-absent", SIMULATOR_LIGHT_SETUP).await?;
+    let empty_controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let workflow = fixture.node_workflow(empty_controller);
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start_remove_node(
+            &fixture.actor,
+            commissioned.node_id,
+            IdempotencyKey::new("remove-absent-request")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("removal operation missing".into());
+    };
+    let MatterWorkflowOutcome::Completed {
+        operation: completed,
+        ..
+    } = workflow
+        .run_remove_node(&fixture.actor, &operation.id, now)
+        .await?
+    else {
+        return Err("absent removal did not complete".into());
+    };
+
+    assert_eq!(completed.phase, MatterOperationPhase::Completed);
+    Ok(())
+}
+
+#[tokio::test]
+async fn partial_node_removal_should_retain_repairable_inventory_after_reopen() -> TestResult {
+    let (fixture, controller, workflow, commissioned, now) =
+        commissioned_node("remove-partial", SIMULATOR_LIGHT_SETUP).await?;
+    controller
+        .inject_fault(SimulatorFault::PartialRemoval)
+        .await;
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start_remove_node(
+            &fixture.actor,
+            commissioned.node_id,
+            IdempotencyKey::new("remove-partial-request")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("removal operation missing".into());
+    };
+    let MatterWorkflowOutcome::Terminal(terminal) = workflow
+        .run_remove_node(&fixture.actor, &operation.id, now)
+        .await?
+    else {
+        return Err("partial removal was not terminal".into());
+    };
+    let fabric_id = MatterFabricId::from_installation(&fixture.actor.installation_id);
+    let before_reopen = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &fabric_id,
+            commissioned.node_id,
+        )
+        .await?
+        .ok_or("repairable node inventory missing")?;
+    let reopened = SqliteRepository::open(&fixture.path)?;
+    let after_reopen = reopened
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &fabric_id,
+            commissioned.node_id,
+        )
+        .await?
+        .ok_or("repairable node inventory missing after reopen")?;
+
+    assert_eq!(terminal.phase, MatterOperationPhase::RepairRequired);
+    assert_eq!(
+        before_reopen.device.lifecycle,
+        homemagic_domain::DeviceLifecycle::Enrolled
+    );
+    assert!(!before_reopen.projections.is_empty());
+    assert!(before_reopen.subscription.is_some());
+    assert_eq!(after_reopen, before_reopen);
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_node_removal_restart_checkpoint_should_reach_terminal_state() -> TestResult {
+    for (index, phase) in [
+        MatterOperationPhase::RemovingNode,
+        MatterOperationPhase::CleaningSecrets,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (fixture, controller, workflow, commissioned, now) =
+            commissioned_node(&format!("remove-restart-{index}"), SIMULATOR_LIGHT_SETUP).await?;
+        let MatterOperationCreateOutcome::Created(operation) = workflow
+            .start_remove_node(
+                &fixture.actor,
+                commissioned.node_id,
+                IdempotencyKey::new(format!("remove-restart-{index}-request"))?,
+                now,
+            )
+            .await?
+        else {
+            return Err("removal operation missing".into());
+        };
+        controller
+            .inject_fault(SimulatorFault::RestartAt(phase))
+            .await;
+        let outcome = workflow
+            .run_remove_node(&fixture.actor, &operation.id, now)
+            .await?;
+        let terminal = match outcome {
+            MatterWorkflowOutcome::Completed { operation, .. }
+            | MatterWorkflowOutcome::Terminal(operation) => operation,
+        };
+
+        assert!(terminal.phase.is_terminal());
+        assert!(matches!(
+            terminal.phase,
+            MatterOperationPhase::Completed | MatterOperationPhase::RepairRequired
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn node_removal_cleanup_failure_should_roll_back_and_resume_without_redispatch() -> TestResult
+{
+    let (fixture, controller, workflow, commissioned, now) =
+        commissioned_node("remove-atomic", SIMULATOR_LIGHT_SETUP).await?;
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start_remove_node(
+            &fixture.actor,
+            commissioned.node_id,
+            IdempotencyKey::new("remove-atomic-request")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("removal operation missing".into());
+    };
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch(&format!(
+        "CREATE TRIGGER fail_removal_completion
+         BEFORE INSERT ON matter_operation_progress
+         WHEN NEW.operation_id = '{}' AND NEW.phase = 'completed'
+         BEGIN
+           SELECT RAISE(ABORT, 'injected removal completion failure');
+         END;",
+        operation.id
+    ))?;
+    drop(connection);
+    let first = workflow
+        .run_remove_node(&fixture.actor, &operation.id, now)
+        .await;
+    let fabric_id = MatterFabricId::from_installation(&fixture.actor.installation_id);
+    let after_failure = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &fabric_id,
+            commissioned.node_id,
+        )
+        .await?
+        .ok_or("node missing after rollback")?;
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch("DROP TRIGGER fail_removal_completion;")?;
+    drop(connection);
+    controller
+        .inject_fault(SimulatorFault::PartialRemoval)
+        .await;
+    let MatterWorkflowOutcome::Completed {
+        operation: resumed, ..
+    } = workflow
+        .run_remove_node(&fixture.actor, &operation.id, now)
+        .await?
+    else {
+        return Err("removal cleanup did not resume".into());
+    };
+
+    assert!(first.is_err());
+    assert_eq!(
+        after_failure.device.lifecycle,
+        homemagic_domain::DeviceLifecycle::Enrolled
+    );
+    assert!(!after_failure.projections.is_empty());
+    assert!(after_failure.subscription.is_some());
+    assert_eq!(resumed.phase, MatterOperationPhase::Completed);
     Ok(())
 }
 

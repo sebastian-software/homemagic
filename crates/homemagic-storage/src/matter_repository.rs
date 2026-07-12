@@ -6,11 +6,11 @@ use chrono::{DateTime, Utc};
 use homemagic_application::{
     BoxError, MatterCancellationCommit, MatterCommissioningCommit, MatterDesiredCommandSlot,
     MatterDesiredSlotOutcome, MatterDesiredStateWrite, MatterDispatchWrite, MatterFabricStage,
-    MatterNodeInventoryRecord, MatterOperationBinding, MatterOperationCreateOutcome,
-    MatterOperationNodeResult, MatterOperationProgress, MatterRecovery, MatterRepairRecord,
-    MatterRepository, MatterRetention, MatterRetentionResult, MatterUnlockAuthorization,
-    MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode, StoredMatterProjection,
-    StoredMatterSubscription,
+    MatterNodeInventoryRecord, MatterNodeRemovalCommit, MatterOperationBinding,
+    MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
+    MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention, MatterRetentionResult,
+    MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode,
+    StoredMatterProjection, StoredMatterSubscription,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CommandAction, CommandAggregate,
@@ -351,6 +351,59 @@ impl MatterRepository for SqliteRepository {
                 commit.expected_cancellation_revision,
                 &commit.cancellation_progress,
                 commit.cancellation_repair.as_ref(),
+            )
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn commit_matter_node_removal(
+        &self,
+        commit: MatterNodeRemovalCommit,
+        expected_operation_revision: u64,
+    ) -> Result<(), BoxError> {
+        run_write(&self.connection, move |transaction| {
+            if commit.operation.kind != homemagic_domain::MatterOperationKind::RemoveNode
+                || commit.operation.phase != homemagic_domain::MatterOperationPhase::Completed
+            {
+                return Err(StorageError::InvalidMatter(
+                    "removal commit operation mismatch",
+                ));
+            }
+            match &commit.operation.target {
+                MatterOperationTarget::Node { fabric_id, node_id }
+                    if fabric_id == &commit.fabric_id && node_id == &commit.node_id => {}
+                _ => {
+                    return Err(StorageError::InvalidMatter(
+                        "removal commit target mismatch",
+                    ));
+                }
+            }
+            let device_id: String = transaction.query_row(
+                "SELECT device_id FROM matter_nodes WHERE fabric_id = ?1 AND node_id = ?2",
+                params![commit.fabric_id.to_string(), to_i64(commit.node_id.get())?],
+                |row| row.get(0),
+            )?;
+            if device_id != commit.device.snapshot.id.to_string() {
+                return Err(StorageError::InvalidMatter(
+                    "removal device identity mismatch",
+                ));
+            }
+            transaction.execute(
+                "DELETE FROM matter_subscriptions WHERE fabric_id = ?1 AND node_id = ?2",
+                params![commit.fabric_id.to_string(), to_i64(commit.node_id.get())?],
+            )?;
+            transaction.execute(
+                "DELETE FROM matter_projections WHERE fabric_id = ?1 AND node_id = ?2",
+                params![commit.fabric_id.to_string(), to_i64(commit.node_id.get())?],
+            )?;
+            upsert_device(transaction, &commit.device)?;
+            transition_operation(
+                transaction,
+                &commit.operation,
+                expected_operation_revision,
+                &commit.progress,
+                None,
             )
         })
         .await
@@ -745,6 +798,12 @@ fn load_node_inventory_record(
 ) -> Result<MatterNodeInventoryRecord, StorageError> {
     let fabric_id = node.descriptor.fabric_id().to_string();
     let node_id = to_i64(node.descriptor.node_id().get())?;
+    let device = load_payload(
+        connection,
+        "SELECT payload_json FROM devices WHERE id = ?1",
+        &node.device_id.to_string(),
+    )?
+    .ok_or(StorageError::InvalidMatter("node device is missing"))?;
     let projections = load_payloads(
         connection,
         "SELECT payload_json FROM matter_projections
@@ -775,6 +834,7 @@ fn load_node_inventory_record(
         .transpose()?;
     let record = MatterNodeInventoryRecord {
         node,
+        device,
         projections,
         subscription,
         commissioning_result,
@@ -784,14 +844,17 @@ fn load_node_inventory_record(
             && projection.fabric_id == *record.node.descriptor.fabric_id()
             && projection.node_id == record.node.descriptor.node_id()
             && projection.device_id == record.node.device_id
-    }) && record.subscription.as_ref().is_none_or(|subscription| {
-        subscription.fabric_id == *record.node.descriptor.fabric_id()
-            && subscription.node_id == record.node.descriptor.node_id()
-    }) && record.commissioning_result.as_ref().is_none_or(|result| {
-        result.fabric_id == *record.node.descriptor.fabric_id()
-            && result.node_id == record.node.descriptor.node_id()
-            && result.device_id == record.node.device_id
-    });
+    }) && record.device.snapshot.id == record.node.device_id
+        && record.device.installation_id == record.node.installation_id
+        && record.subscription.as_ref().is_none_or(|subscription| {
+            subscription.fabric_id == *record.node.descriptor.fabric_id()
+                && subscription.node_id == record.node.descriptor.node_id()
+        })
+        && record.commissioning_result.as_ref().is_none_or(|result| {
+            result.fabric_id == *record.node.descriptor.fabric_id()
+                && result.node_id == record.node.descriptor.node_id()
+                && result.device_id == record.node.device_id
+        });
     if !coherent {
         return Err(StorageError::InvalidMatter(
             "node inventory relations are inconsistent",
