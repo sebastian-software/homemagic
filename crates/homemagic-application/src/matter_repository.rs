@@ -227,6 +227,17 @@ pub struct MatterDesiredSlotOutcome {
     pub superseded_command_id: Option<CommandId>,
 }
 
+/// One atomic desired-state registration across slot, projection, and supersession.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MatterDesiredStateWrite {
+    /// New current desired command slot.
+    pub slot: MatterDesiredCommandSlot,
+    /// Projection carrying the same desired revision and value.
+    pub projection: StoredMatterProjection,
+    /// Optional older pre-dispatch command cancelled by this write.
+    pub superseded: Option<MatterSupersededCommand>,
+}
+
 /// Dispatch transition and slot marker committed atomically.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MatterDispatchWrite {
@@ -377,6 +388,12 @@ pub trait MatterRepository: Send + Sync {
         &self,
         slot: MatterDesiredCommandSlot,
         superseded: Option<MatterSupersededCommand>,
+    ) -> Result<MatterDesiredSlotOutcome, BoxError>;
+
+    /// Atomically replaces desired slot and projected state with optional supersession.
+    async fn replace_matter_desired_state(
+        &self,
+        write: MatterDesiredStateWrite,
     ) -> Result<MatterDesiredSlotOutcome, BoxError>;
 
     /// Loads the current desired-state slot for one projection.

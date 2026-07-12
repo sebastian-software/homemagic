@@ -4,10 +4,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_application::{
-    BoxError, MatterDesiredCommandSlot, MatterDesiredSlotOutcome, MatterDispatchWrite,
-    MatterOperationProgress, MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention,
-    MatterRetentionResult, MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric,
-    StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
+    BoxError, MatterDesiredCommandSlot, MatterDesiredSlotOutcome, MatterDesiredStateWrite,
+    MatterDispatchWrite, MatterOperationProgress, MatterRecovery, MatterRepairRecord,
+    MatterRepository, MatterRetention, MatterRetentionResult, MatterUnlockAuthorization,
+    MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode, StoredMatterProjection,
+    StoredMatterSubscription,
 };
 use homemagic_domain::{
     CommandAggregate, CommandId, CommandState, InstallationId, MatterConvergence, MatterFabricId,
@@ -212,6 +213,36 @@ impl MatterRepository for SqliteRepository {
     ) -> Result<MatterDesiredSlotOutcome, BoxError> {
         run_write(&self.connection, move |transaction| {
             replace_desired_slot(transaction, &slot, superseded.as_ref())
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn replace_matter_desired_state(
+        &self,
+        write: MatterDesiredStateWrite,
+    ) -> Result<MatterDesiredSlotOutcome, BoxError> {
+        run_write(&self.connection, move |transaction| {
+            if write.projection.projection_id != write.slot.projection_id
+                || write
+                    .projection
+                    .state
+                    .desired()
+                    .is_none_or(|desired| desired.revision.get() != write.slot.desired_revision)
+            {
+                return Err(StorageError::InvalidMatter(
+                    "desired slot and projection state mismatch",
+                ));
+            }
+            let outcome =
+                replace_desired_slot(transaction, &write.slot, write.superseded.as_ref())?;
+            let expected_revision = write
+                .projection
+                .revision
+                .checked_sub(1)
+                .ok_or(StorageError::InvalidMatter("invalid projection revision"))?;
+            store_projection(transaction, &write.projection, Some(expected_revision))?;
+            Ok(outcome)
         })
         .await
         .map_err(boxed)

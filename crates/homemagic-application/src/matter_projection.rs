@@ -657,6 +657,26 @@ pub fn advance_matter_projected_state(
     )
 }
 
+/// Replaces the latest desired revision while preserving reported evidence.
+///
+/// # Errors
+///
+/// Returns a domain consistency error if the resulting projection is invalid.
+pub fn advance_matter_desired_state(
+    state: &MatterProjectedState,
+    desired: homemagic_domain::MatterDesiredState,
+) -> Result<MatterProjectedState, MatterStateError> {
+    MatterProjectedState::new(
+        state.projection_id().clone(),
+        Some(desired),
+        state.reported().cloned(),
+        state.confirmed_revision(),
+        state.freshness(),
+        MatterConvergence::Pending,
+        state.uncertainty(),
+    )
+}
+
 /// Stable node-level subscription identity used across process restarts.
 #[must_use]
 pub fn matter_subscription_id(

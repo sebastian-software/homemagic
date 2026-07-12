@@ -6,13 +6,14 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use homemagic_domain::{
     AccessControlCommand, AuditId, CommandAggregate, CommandAuditRecord, CommandErrorCode,
-    CommandFailure, CommandPayload, CommandState, MatterProjectionId, OnOffCommand,
+    CommandFailure, CommandPayload, CommandState, MatterDesiredState, MatterLockState,
+    MatterProjectionId, MatterStateRevision, MatterStateValue, OnOffCommand,
 };
 use thiserror::Error;
 
 use crate::{
-    BoxError, CommandRepository, MatterDesiredCommandSlot, MatterDispatchWrite, MatterRepository,
-    MatterSupersededCommand,
+    BoxError, CommandRepository, MatterDesiredCommandSlot, MatterDesiredStateWrite,
+    MatterDispatchWrite, MatterRepository, MatterSupersededCommand, advance_matter_desired_state,
 };
 
 const DESIRED_REGISTRATION_ATTEMPTS: usize = 4;
@@ -104,7 +105,7 @@ impl MatterCommandDispatchControl {
         command: &CommandAggregate,
         now: DateTime<Utc>,
     ) -> Result<DesiredStateRegistration, BoxError> {
-        let Some(projection) = self.projection_for(command).await? else {
+        let Some(mut projection) = self.projection_for(command).await? else {
             return Ok(DesiredStateRegistration::Unmanaged);
         };
         let current = self
@@ -125,6 +126,18 @@ impl MatterCommandDispatchControl {
                 .checked_add(1)
                 .ok_or(MatterCommandControlError::RevisionExhausted)
         })?;
+        let desired = MatterDesiredState::new(
+            MatterStateRevision::new(desired_revision)?,
+            desired_value(&command.envelope.payload)
+                .ok_or(MatterCommandControlError::UnsupportedDesiredState)?,
+            now,
+        )?;
+        projection.state = advance_matter_desired_state(&projection.state, desired)?;
+        projection.revision = projection
+            .revision
+            .checked_add(1)
+            .ok_or(MatterCommandControlError::RevisionExhausted)?;
+        projection.updated_at = now;
         let superseded = match &current {
             Some(slot) if slot.dispatched_at.is_none() => {
                 let mut prior = self
@@ -151,16 +164,17 @@ impl MatterCommandDispatchControl {
         };
         let superseded_audit = superseded.as_ref().map(|item| Box::new(item.audit.clone()));
         self.matter
-            .replace_matter_desired_slot(
-                MatterDesiredCommandSlot {
+            .replace_matter_desired_state(MatterDesiredStateWrite {
+                slot: MatterDesiredCommandSlot {
                     projection_id: projection.projection_id.clone(),
                     desired_revision,
                     command_id: command.envelope.id.clone(),
                     dispatched_at: None,
                     updated_at: now,
                 },
+                projection: projection.clone(),
                 superseded,
-            )
+            })
             .await?;
         Ok(DesiredStateRegistration::Managed {
             projection_id: projection.projection_id,
@@ -247,6 +261,21 @@ fn is_replaceable(payload: &CommandPayload) -> bool {
     )
 }
 
+fn desired_value(payload: &CommandPayload) -> Option<MatterStateValue> {
+    match payload {
+        CommandPayload::OnOff(OnOffCommand::Set { on }) => Some(MatterStateValue::OnOff(*on)),
+        CommandPayload::AccessControl(AccessControlCommand::Lock) => {
+            Some(MatterStateValue::Lock(MatterLockState::Locked))
+        }
+        CommandPayload::AccessControl(AccessControlCommand::Unlock) => {
+            Some(MatterStateValue::Lock(MatterLockState::Unlocked))
+        }
+        CommandPayload::OnOff(OnOffCommand::Toggle)
+        | CommandPayload::Level(_)
+        | CommandPayload::Position(_) => None,
+    }
+}
+
 pub(crate) fn command_audit(
     command: &CommandAggregate,
     from: Option<CommandState>,
@@ -289,4 +318,7 @@ pub enum MatterCommandControlError {
     /// Bounded optimistic desired-state registration did not commit.
     #[error("Matter desired-state registration did not commit")]
     RegistrationFailed,
+    /// Payload was incorrectly admitted as replaceable desired state.
+    #[error("Matter command has no replaceable desired-state value")]
+    UnsupportedDesiredState,
 }
