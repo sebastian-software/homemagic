@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+
+import "@matter/nodejs";
+
+import { Environment, Logger } from "@matter/main";
+import { OnOffClient } from "@matter/main/behaviors/on-off";
+import { BasicInformationCluster, GeneralCommissioning } from "@matter/main/clusters";
+import { CommissioningController } from "@project-chip/matter.js";
+import { writeFile } from "node:fs/promises";
+
+Logger.level = "fatal";
+
+const [mode, reportPath, address = "::1", portText = "55540"] = process.argv.slice(2);
+const port = Number(portText);
+const outcomes = {
+    fabric_create: "not_run",
+    commission: "not_run",
+    inventory: "not_run",
+    read: "not_run",
+    subscribe: "not_run",
+    invoke: "not_run",
+    restart: "not_run",
+    remove: "not_run",
+};
+const report = {
+    schema: "homemagic.matter.matter-js-independent-reference.v1",
+    mode,
+    outcomes,
+    error: null,
+};
+
+const persist = async () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+const fail = async (phase, error) => {
+    outcomes[phase] = "fail";
+    report.error = {
+        phase,
+        name: error?.name ?? "Error",
+        message: String(error?.message ?? error),
+    };
+    await persist();
+};
+
+let controller;
+try {
+    const environment = Environment.default;
+    controller = new CommissioningController({
+        environment: { environment, id: "homemagic-matter-js-spike" },
+        adminFabricLabel: "HomeMagic interop spike",
+        autoConnect: false,
+        autoSubscribe: true,
+    });
+    await controller.start();
+    outcomes.fabric_create = "pass";
+
+    let nodes = controller.getCommissionedNodes();
+    if (mode === "commission") {
+        if (nodes.length === 0) {
+            try {
+                await controller.commissionNode({
+                    commissioning: {
+                        regulatoryLocation: GeneralCommissioning.RegulatoryLocationType.IndoorOutdoor,
+                        regulatoryCountryCode: "XX",
+                    },
+                    discovery: {
+                        knownAddress: { ip: address, port, type: "udp" },
+                        identifierData: { longDiscriminator: 3840 },
+                        discoveryCapabilities: { ble: false },
+                    },
+                    passcode: 20202021,
+                    autoSubscribe: true,
+                    subscribeMinIntervalFloorSeconds: 0,
+                    subscribeMaxIntervalCeilingSeconds: 5,
+                });
+            } catch (error) {
+                await fail("commission", error);
+                throw error;
+            }
+            outcomes.commission = "pass";
+            nodes = controller.getCommissionedNodes();
+        } else {
+            outcomes.commission = "pass";
+        }
+    } else {
+        outcomes.restart = nodes.length > 0 ? "pass" : "fail";
+        if (nodes.length === 0) throw new Error("No commissioned node survived process restart");
+    }
+
+    outcomes.inventory = nodes.length === 1 ? "pass" : "fail";
+    if (nodes.length !== 1) throw new Error(`Expected one commissioned node, found ${nodes.length}`);
+
+    const node = await controller.getNode(nodes[0]);
+    node.connect();
+    if (!node.initialized) await node.events.initialized;
+
+    const info = node.getRootClusterClient(BasicInformationCluster);
+    if (info === undefined) throw new Error("Basic Information cluster missing");
+    report.product_name = await info.getProductNameAttribute();
+    outcomes.read = "pass";
+
+    const endpoint = node.parts.get(1);
+    if (endpoint === undefined) throw new Error("On/Off endpoint 1 missing");
+    const state = endpoint.stateOf(OnOffClient);
+    const commands = endpoint.commandsOf(OnOffClient);
+    if (state === undefined || commands === undefined) throw new Error("On/Off client missing");
+
+    if (mode === "commission") {
+        const before = state.onOff;
+        await commands.toggle();
+        outcomes.invoke = "pass";
+        await new Promise(resolve => setTimeout(resolve, 1_500));
+        report.on_off_before = before;
+        report.on_off_after = state.onOff;
+        outcomes.subscribe = state.onOff !== before ? "pass" : "fail";
+    } else {
+        await controller.removeNode(nodes[0]);
+        outcomes.remove = controller.getCommissionedNodes().length === 0 ? "pass" : "fail";
+    }
+
+    await persist();
+} catch (error) {
+    if (report.error === null) {
+        const phase = Object.entries(outcomes).find(([, value]) => value === "fail")?.[0] ?? "unknown";
+        await fail(phase, error);
+    }
+} finally {
+    try {
+        await controller?.close();
+    } catch {
+        // The report already contains the protocol outcome; shutdown is best effort in the spike.
+    }
+}
