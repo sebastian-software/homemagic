@@ -377,6 +377,7 @@ const fn is_matter_administration_action(action: CommandAction) -> bool {
 fn target_fabric(target: &MatterOperationTarget) -> &homemagic_domain::MatterFabricId {
     match target {
         MatterOperationTarget::Fabric { fabric_id }
+        | MatterOperationTarget::Operation { fabric_id, .. }
         | MatterOperationTarget::Node { fabric_id, .. } => fabric_id,
     }
 }
@@ -389,14 +390,15 @@ fn validate_target(
         (kind, target),
         (
             MatterOperationKind::CreateFabric
+                | MatterOperationKind::CommissionNode
                 | MatterOperationKind::ExportFabric
                 | MatterOperationKind::RestoreFabric,
             MatterOperationTarget::Fabric { .. }
         ) | (
-            MatterOperationKind::CommissionNode
-                | MatterOperationKind::CancelCommissioning
-                | MatterOperationKind::RemoveNode
-                | MatterOperationKind::RepairSubscription,
+            MatterOperationKind::CancelCommissioning,
+            MatterOperationTarget::Operation { .. }
+        ) | (
+            MatterOperationKind::RemoveNode | MatterOperationKind::RepairSubscription,
             MatterOperationTarget::Node { .. }
         )
     );

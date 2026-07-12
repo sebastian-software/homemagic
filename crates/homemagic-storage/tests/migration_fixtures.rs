@@ -15,7 +15,7 @@ async fn schema_v0_fixture_should_upgrade_to_current() -> Result<(), BoxError> {
     let repository = SqliteRepository::open(&path)?;
     let health = repository.health().await?;
 
-    assert_eq!(health.schema_version, 9);
+    assert_eq!(health.schema_version, 10);
     assert_eq!(health.integrity, "ok");
     Ok(())
 }
@@ -35,7 +35,7 @@ async fn schema_v1_fixture_should_reopen_and_load() -> Result<(), BoxError> {
     let health = repository.health().await?;
 
     assert_eq!(snapshot.installations.len(), 1);
-    assert_eq!(health.schema_version, 9);
+    assert_eq!(health.schema_version, 10);
     Ok(())
 }
 
@@ -59,7 +59,7 @@ async fn schema_v2_fixture_should_apply_automation_migration() -> Result<(), Box
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 9);
+    assert_eq!(health.schema_version, 10);
     assert_eq!(automation_tables, 1);
     Ok(())
 }
@@ -84,7 +84,7 @@ async fn schema_v3_fixture_should_apply_event_runtime_migration() -> Result<(), 
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 9);
+    assert_eq!(health.schema_version, 10);
     assert_eq!(cursor_tables, 1);
     Ok(())
 }
@@ -109,7 +109,7 @@ async fn schema_v5_fixture_should_apply_matter_migration() -> Result<(), BoxErro
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 9);
+    assert_eq!(health.schema_version, 10);
     assert_eq!(matter_tables, 1);
     Ok(())
 }
@@ -134,7 +134,7 @@ async fn schema_v7_fixture_should_apply_operation_binding_migration() -> Result<
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 9);
+    assert_eq!(health.schema_version, 10);
     assert_eq!(binding_tables, 1);
     Ok(())
 }
@@ -159,8 +159,33 @@ async fn schema_v8_fixture_should_apply_fabric_staging_migration() -> Result<(),
         |row| row.get(0),
     )?;
 
-    assert_eq!(health.schema_version, 9);
+    assert_eq!(health.schema_version, 10);
     assert_eq!(staging_tables, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn schema_v9_fixture_should_apply_operation_node_result_migration() -> Result<(), BoxError> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("schema-v9.sqlite3");
+    let repository = SqliteRepository::open(&path)?;
+    drop(repository);
+    let connection = Connection::open(&path)?;
+    connection.execute_batch(include_str!("fixtures/schema-v9.sql"))?;
+    drop(connection);
+
+    let repository = SqliteRepository::open(&path)?;
+    let health = repository.health().await?;
+    let connection = Connection::open(&path)?;
+    let result_tables: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'table' AND name = 'matter_operation_node_results'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(health.schema_version, 10);
+    assert_eq!(result_tables, 1);
     Ok(())
 }
 

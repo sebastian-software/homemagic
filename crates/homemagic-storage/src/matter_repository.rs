@@ -6,9 +6,10 @@ use chrono::{DateTime, Utc};
 use homemagic_application::{
     BoxError, MatterDesiredCommandSlot, MatterDesiredSlotOutcome, MatterDesiredStateWrite,
     MatterDispatchWrite, MatterFabricStage, MatterOperationBinding, MatterOperationCreateOutcome,
-    MatterOperationProgress, MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention,
-    MatterRetentionResult, MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric,
-    StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
+    MatterOperationNodeResult, MatterOperationProgress, MatterRecovery, MatterRepairRecord,
+    MatterRepository, MatterRetention, MatterRetentionResult, MatterUnlockAuthorization,
+    MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode, StoredMatterProjection,
+    StoredMatterSubscription,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CommandAction, CommandAggregate,
@@ -217,6 +218,23 @@ impl MatterRepository for SqliteRepository {
         let operation_id = operation_id.to_string();
         run_read(&self.connection, move |connection| {
             load_administration_operation(connection, &operation_id)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn matter_operation_node_result(
+        &self,
+        operation_id: &MatterOperationId,
+    ) -> Result<Option<MatterOperationNodeResult>, BoxError> {
+        let operation_id = operation_id.to_string();
+        run_read(&self.connection, move |connection| {
+            load_payload(
+                connection,
+                "SELECT payload_json FROM matter_operation_node_results
+                 WHERE operation_id = ?1",
+                &operation_id,
+            )
         })
         .await
         .map_err(boxed)
@@ -1616,6 +1634,7 @@ fn validate_command_target(
 fn operation_fabric_id(operation: &MatterOperation) -> &MatterFabricId {
     match &operation.target {
         MatterOperationTarget::Fabric { fabric_id }
+        | MatterOperationTarget::Operation { fabric_id, .. }
         | MatterOperationTarget::Node { fabric_id, .. } => fabric_id,
     }
 }

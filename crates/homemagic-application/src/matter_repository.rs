@@ -158,6 +158,21 @@ pub struct MatterOperationProgress {
     pub occurred_at: DateTime<Utc>,
 }
 
+/// Immutable authoritative node produced by one commissioning operation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MatterOperationNodeResult {
+    /// Commissioning operation that produced the node.
+    pub operation_id: MatterOperationId,
+    /// Fabric that owns the node.
+    pub fabric_id: MatterFabricId,
+    /// Controller-returned operational node identity.
+    pub node_id: MatterNodeId,
+    /// Stable common device projected from the node.
+    pub device_id: DeviceId,
+    /// Time the result became durable and visible.
+    pub created_at: DateTime<Utc>,
+}
+
 /// Status of a durable Matter repair record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -436,6 +451,12 @@ pub trait MatterRepository: Send + Sync {
         actor_id: &ActorId,
         limit: usize,
     ) -> Result<Vec<MatterOperation>, BoxError>;
+
+    /// Loads the immutable authoritative node produced by commissioning.
+    async fn matter_operation_node_result(
+        &self,
+        operation_id: &MatterOperationId,
+    ) -> Result<Option<MatterOperationNodeResult>, BoxError>;
 
     /// Atomically replaces an operation and appends its progress fact.
     async fn transition_matter_operation(

@@ -231,6 +231,10 @@ fn matter_persisted_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
     round_trip(&descriptor)?;
     round_trip(&state)?;
     round_trip(&operation)?;
+    round_trip(&MatterOperationTarget::Operation {
+        fabric_id: fabric_id.clone(),
+        operation_id: operation.id.clone(),
+    })?;
     round_trip(&event)?;
     Ok(())
 }

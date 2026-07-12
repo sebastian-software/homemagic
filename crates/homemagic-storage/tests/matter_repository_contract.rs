@@ -14,15 +14,17 @@ use homemagic_application::{
     CommandLimitConfig, CommandLimits, CommandRepository, CommandRequest, CommandService,
     CommandServiceDependencies, CommandServiceError, DesiredStateRegistration,
     FoundationRepository, FoundationWrite, MatterAdministrationError, MatterAdministrationRequest,
-    MatterAdministrationService, MatterCommandDispatchControl, MatterCommissioningRequest,
-    MatterController, MatterCreateFabricRequest, MatterDesiredCommandSlot, MatterDesiredStateWrite,
-    MatterDispatchAdmission, MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat,
-    MatterFabricSecretRefs, MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
-    MatterOperationCreateOutcome, MatterOperationProgress, MatterRepairRecord, MatterRepairStatus,
-    MatterRepository, MatterRestoreRequest, MatterRetention, MatterSimulatorRestoreInput,
-    MatterSupersededCommand, MatterUnlockAuthorization, MatterUnlockConsumption,
-    MatterWorkflowEvidence, MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue,
-    StoredMatterFabric, StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
+    MatterAdministrationService, MatterCommandDispatchControl, MatterCommissioningInput,
+    MatterCommissioningRequest, MatterController, MatterCreateFabricRequest,
+    MatterDesiredCommandSlot, MatterDesiredStateWrite, MatterDispatchAdmission,
+    MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat, MatterFabricSecretRefs,
+    MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
+    MatterNodeWorkflowError, MatterNodeWorkflowService, MatterOperationCreateOutcome,
+    MatterOperationProgress, MatterRepairRecord, MatterRepairStatus, MatterRepository,
+    MatterRestoreRequest, MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
+    MatterUnlockAuthorization, MatterUnlockConsumption, MatterWorkflowEvidence,
+    MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue, StoredMatterFabric,
+    StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
     StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
@@ -365,7 +367,7 @@ impl Fixture {
                 }),
             )
             .await?;
-        let fabric_id = MatterFabricId::new();
+        let fabric_id = MatterFabricId::from_installation(&installation_id);
         repository
             .store_matter_fabric(
                 StoredMatterFabric {
@@ -760,9 +762,8 @@ async fn matter_identity_and_incomplete_operation_should_survive_reopen() -> Tes
     let now = Utc::now();
     let mut operation = MatterOperation::new(
         MatterOperationKind::CommissionNode,
-        MatterOperationTarget::Node {
+        MatterOperationTarget::Fabric {
             fabric_id: fixture.fabric_id.clone(),
-            node_id: fixture.node_id,
         },
         now,
     );
@@ -842,9 +843,8 @@ async fn administration_admission_should_be_actor_scoped_and_idempotent() -> Tes
     let now = Utc::now();
     let request = MatterAdministrationRequest {
         kind: MatterOperationKind::CommissionNode,
-        target: MatterOperationTarget::Node {
+        target: MatterOperationTarget::Fabric {
             fabric_id: fixture.fabric_id.clone(),
-            node_id: fixture.node_id,
         },
         idempotency_key: IdempotencyKey::new("commission-one")?,
     };
@@ -918,6 +918,96 @@ async fn administration_admission_should_be_actor_scoped_and_idempotent() -> Tes
 }
 
 #[tokio::test]
+async fn commissioning_start_should_be_fabric_scoped_idempotent_and_setup_safe() -> TestResult {
+    const SETUP_CANARY: &str = "sensitive-commissioning-setup-canary";
+
+    let fixture = Fixture::new().await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let controller = Arc::new(DeterministicMatterSimulator::new(Utc::now()));
+    let service = MatterNodeWorkflowService::new(
+        MatterAdministrationService::new(repository.clone(), repository.clone()),
+        repository.clone(),
+        controller,
+    );
+    let now = Utc::now();
+    let key = IdempotencyKey::new("commission-fabric-one")?;
+    let MatterOperationCreateOutcome::Created(created) = service
+        .start_commission(&fixture.actor, key.clone(), now)
+        .await?
+    else {
+        return Err("first commissioning request was not created".into());
+    };
+    let equivalent = service
+        .start_commission(&fixture.actor, key, now + TimeDelta::milliseconds(1))
+        .await?;
+    let input = MatterCommissioningInput::new(SecretValue::new(SETUP_CANARY));
+    let debug = format!("{input:?}");
+    let stored_result = repository.matter_operation_node_result(&created.id).await?;
+    let bytes = sqlite_artifact_bytes(&fixture.path)?;
+
+    assert_eq!(
+        created.target,
+        MatterOperationTarget::Fabric {
+            fabric_id: fixture.fabric_id.clone(),
+        }
+    );
+    assert!(matches!(
+        equivalent,
+        MatterOperationCreateOutcome::ExistingEquivalent(ref operation)
+            if operation.id == created.id
+    ));
+    assert_eq!(
+        debug,
+        "MatterCommissioningInput { setup_payload: \"[REDACTED]\" }"
+    );
+    assert!(!debug.contains(SETUP_CANARY));
+    assert_eq!(stored_result, None);
+    assert!(
+        !bytes
+            .windows(SETUP_CANARY.len())
+            .any(|window| window == SETUP_CANARY.as_bytes())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn commissioning_start_should_reject_inactive_fabric() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let mut fabric = fixture
+        .repository
+        .matter_fabric(&fixture.fabric_id)
+        .await?
+        .ok_or("fabric missing")?;
+    fabric.state = MatterFabricState::Unavailable;
+    fabric.revision += 1;
+    fabric.updated_at = Utc::now();
+    fixture
+        .repository
+        .store_matter_fabric(fabric, Some(1))
+        .await?;
+    let repository = Arc::new(fixture.repository.clone());
+    let service = MatterNodeWorkflowService::new(
+        MatterAdministrationService::new(repository.clone(), repository.clone()),
+        repository,
+        Arc::new(DeterministicMatterSimulator::new(Utc::now())),
+    );
+
+    let result = service
+        .start_commission(
+            &fixture.actor,
+            IdempotencyKey::new("inactive-fabric")?,
+            Utc::now(),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(MatterNodeWorkflowError::FabricNotActive)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
 async fn administration_admission_should_fail_without_exact_installation_grant() -> TestResult {
     let fixture = Fixture::new().await?;
     fixture
@@ -943,9 +1033,8 @@ async fn administration_admission_should_fail_without_exact_installation_grant()
             &fixture.actor,
             MatterAdministrationRequest {
                 kind: MatterOperationKind::CommissionNode,
-                target: MatterOperationTarget::Node {
+                target: MatterOperationTarget::Fabric {
                     fabric_id: fixture.fabric_id,
-                    node_id: fixture.node_id,
                 },
                 idempotency_key: IdempotencyKey::new("denied-commission")?,
             },
@@ -995,9 +1084,8 @@ async fn requested_commissioning_cancellation_should_survive_reopen() -> TestRes
             &fixture.actor,
             MatterAdministrationRequest {
                 kind: MatterOperationKind::CommissionNode,
-                target: MatterOperationTarget::Node {
+                target: MatterOperationTarget::Fabric {
                     fabric_id: fixture.fabric_id.clone(),
-                    node_id: fixture.node_id,
                 },
                 idempotency_key: IdempotencyKey::new("cancel-commission")?,
             },
@@ -1044,9 +1132,8 @@ async fn controller_failures_should_be_normalized_with_repair_evidence() -> Test
     let request = |key: &str| -> TestResult<MatterAdministrationRequest> {
         Ok(MatterAdministrationRequest {
             kind: MatterOperationKind::CommissionNode,
-            target: MatterOperationTarget::Node {
+            target: MatterOperationTarget::Fabric {
                 fabric_id: fixture.fabric_id.clone(),
-                node_id: fixture.node_id,
             },
             idempotency_key: IdempotencyKey::new(key)?,
         })

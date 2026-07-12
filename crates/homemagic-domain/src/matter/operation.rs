@@ -91,6 +91,13 @@ pub enum MatterOperationTarget {
         /// Stable `HomeMagic` fabric identity.
         fabric_id: MatterFabricId,
     },
+    /// One existing operation within a fabric, used before a node identity exists.
+    Operation {
+        /// Fabric containing the referenced operation.
+        fabric_id: MatterFabricId,
+        /// Existing operation acted on by this request.
+        operation_id: MatterOperationId,
+    },
     /// One fabric-scoped node.
     Node {
         /// Stable `HomeMagic` fabric identity.

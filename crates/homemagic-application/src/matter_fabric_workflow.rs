@@ -764,6 +764,7 @@ impl MatterFabricWorkflowService {
 fn operation_fabric_id(operation: &MatterOperation) -> &MatterFabricId {
     match &operation.target {
         MatterOperationTarget::Fabric { fabric_id }
+        | MatterOperationTarget::Operation { fabric_id, .. }
         | MatterOperationTarget::Node { fabric_id, .. } => fabric_id,
     }
 }
