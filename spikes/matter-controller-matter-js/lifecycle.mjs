@@ -40,6 +40,16 @@ const fail = async (phase, error) => {
     await persist();
 };
 
+const watchdog = setTimeout(() => {
+    outcomes.timeout = "fail";
+    report.error = {
+        phase: "timeout",
+        name: "TimeoutError",
+        message: "Lifecycle process exceeded the 75 second evidence budget",
+    };
+    persist().finally(() => process.exit(0));
+}, 75_000);
+
 let controller;
 try {
     const environment = Environment.default;
@@ -123,6 +133,7 @@ try {
         await fail(phase, error);
     }
 } finally {
+    clearTimeout(watchdog);
     try {
         await controller?.close();
     } catch {
