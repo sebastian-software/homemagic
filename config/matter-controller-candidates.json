@@ -1,0 +1,55 @@
+{
+  "schema": "homemagic.matter.controller-candidates.v1",
+  "discovered_at": "2026-07-12",
+  "candidates": [
+    {
+      "id": "rust-matc",
+      "repository": "https://github.com/tom-code/rust-matc.git",
+      "revision": "c829d2a1b570b2f2433607a3f4731074b73fb367",
+      "license": "BSD-2-Clause",
+      "role": "native_controller",
+      "disposition": "full_spike"
+    },
+    {
+      "id": "rs-matter",
+      "repository": "https://github.com/project-chip/rs-matter.git",
+      "revision": "42d3c2211239f5f388ac7f7449c82bb3347912f5",
+      "license": "Apache-2.0",
+      "role": "independent_device_reference",
+      "disposition": "reject_controller_role"
+    },
+    {
+      "id": "chip-tool-rs",
+      "repository": "https://github.com/estincelle/chip-tool-rs.git",
+      "revision": "524a4de506d2ac6d3a3451c0c670775df10565b6",
+      "license": null,
+      "role": "controller_test_tool",
+      "disposition": "reject_license_gate"
+    },
+    {
+      "id": "matter-js",
+      "repository": "https://github.com/matter-js/matter.js.git",
+      "revision": "b539372ff41fea24344760d69172508e9df931a2",
+      "license": "Apache-2.0",
+      "role": "non_rust_controller_sidecar",
+      "disposition": "adr_0005_contingency"
+    },
+    {
+      "id": "python-matter-server",
+      "repository": "https://github.com/matter-js/python-matter-server.git",
+      "revision": "4c820ed12bac349dda372031e9757c67b9fd9048",
+      "license": "Apache-2.0",
+      "role": "python_cpp_controller_sidecar",
+      "disposition": "reject_archived"
+    },
+    {
+      "id": "connectedhomeip",
+      "repository": "https://github.com/project-chip/connectedhomeip.git",
+      "revision": "abcc720b48c5e59c0edcfe65c516f76ca9448aa3",
+      "release": "v1.5.1.0",
+      "license": "Apache-2.0",
+      "role": "cpp_reference_or_ffi",
+      "disposition": "adr_0005_contingency"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 id: E4-008
 epic: EPIC-004
 title: Evaluate and select a production Matter controller implementation
-status: planned
+status: in_progress
 priority: critical
 depends_on: [E4-004]
 adrs: [ADR-0005, ADR-0033, ADR-0038, ADR-0039]
@@ -11,6 +11,15 @@ updated: 2026-07-12
 ---
 
 # E4-008: Controller Feasibility and Selection
+
+## Child issues
+
+| Issue | Status | Outcome |
+| --- | --- | --- |
+| [E4-008-01](E4-008-01-discovery-rubric.md) | In progress | Current candidate screen and frozen detailed rubric |
+| [E4-008-02](E4-008-02-native-build-audit.md) | Planned | Cross-platform native build and footprint evidence |
+| [E4-008-03](E4-008-03-contract-reference.md) | Planned | Fixed port contract and independent reference lifecycle |
+| [E4-008-04](E4-008-04-selection-adr.md) | Planned | Evidence matrix and accepted ADR-0039 |
 
 ## Outcome
 
@@ -63,3 +72,7 @@ security, packaging, or Rust-majority requirements.
 
 - 2026-07-12: Planning deliberately names no winner; ecosystem evidence must be
   refreshed when this issue starts.
+- 2026-07-12: Current primary-source discovery found one credible native Rust
+  controller candidate, `rust-matc`; `rs-matter` is a device/server reference,
+  not a controller. The detailed rubric was frozen and work decomposed into four
+  dependency-ordered children before assigning scores.

@@ -1,0 +1,26 @@
+---
+id: E4-008-02
+epic: EPIC-004
+parent: E4-008
+title: Build and audit native Rust controller candidates
+status: planned
+priority: critical
+depends_on: [E4-008-01]
+adrs: [ADR-0005, ADR-0038]
+created: 2026-07-12
+updated: 2026-07-12
+---
+
+# E4-008-02: Native Build and Footprint Audit
+
+## Outcome
+
+Every credible native Rust controller pin has reproducible macOS ARM64 and Linux
+x86_64 build/test evidence plus Rust, unsafe, FFI, dependency, binary, license,
+and packaging measurements.
+
+## Verification
+
+- [ ] Default and all-feature builds are reproducible on both hosts.
+- [ ] First-party and transitive native footprints are reported separately.
+- [ ] Production manifests remain free of candidate dependencies.
