@@ -26,6 +26,7 @@ const report = {
     schema: "homemagic.matter.matter-js-independent-reference.v1",
     mode,
     outcomes,
+    active_phase: "initialize",
     error: null,
 };
 
@@ -43,7 +44,7 @@ const fail = async (phase, error) => {
 const watchdog = setTimeout(() => {
     outcomes.timeout = "fail";
     report.error = {
-        phase: "timeout",
+        phase: report.active_phase,
         name: "TimeoutError",
         message: "Lifecycle process exceeded the 180 second evidence budget",
     };
@@ -59,6 +60,7 @@ try {
         autoConnect: false,
         autoSubscribe: true,
     });
+    report.active_phase = "fabric_create";
     await controller.start();
     outcomes.fabric_create = "pass";
 
@@ -66,21 +68,25 @@ try {
     if (mode === "commission") {
         if (nodes.length === 0) {
             try {
-                await controller.commissionNode({
-                    commissioning: {
-                        regulatoryLocation: GeneralCommissioning.RegulatoryLocationType.IndoorOutdoor,
-                        regulatoryCountryCode: "XX",
+                report.active_phase = "commission";
+                await controller.commissionNode(
+                    {
+                        commissioning: {
+                            regulatoryLocation: GeneralCommissioning.RegulatoryLocationType.IndoorOutdoor,
+                            regulatoryCountryCode: "XX",
+                        },
+                        discovery: {
+                            knownAddress: { ip: address, port, type: "udp" },
+                            identifierData: { longDiscriminator: 3840 },
+                            discoveryCapabilities: { ble: false },
+                        },
+                        passcode: 20202021,
+                        autoSubscribe: true,
+                        subscribeMinIntervalFloorSeconds: 0,
+                        subscribeMaxIntervalCeilingSeconds: 5,
                     },
-                    discovery: {
-                        knownAddress: { ip: address, port, type: "udp" },
-                        identifierData: { longDiscriminator: 3840 },
-                        discoveryCapabilities: { ble: false },
-                    },
-                    passcode: 20202021,
-                    autoSubscribe: true,
-                    subscribeMinIntervalFloorSeconds: 0,
-                    subscribeMaxIntervalCeilingSeconds: 5,
-                });
+                    { connectNodeAfterCommissioning: false },
+                );
             } catch (error) {
                 await fail("commission", error);
                 throw error;
@@ -91,19 +97,23 @@ try {
             outcomes.commission = "pass";
         }
     } else {
+        report.active_phase = "restart";
         outcomes.restart = nodes.length > 0 ? "pass" : "fail";
         if (nodes.length === 0) throw new Error("No commissioned node survived process restart");
     }
 
+    report.active_phase = "inventory";
     outcomes.inventory = nodes.length === 1 ? "pass" : "fail";
     if (nodes.length !== 1) throw new Error(`Expected one commissioned node, found ${nodes.length}`);
 
     const node = await controller.getNode(nodes[0]);
+    report.active_phase = "connect_and_subscribe";
     node.connect();
     if (!node.initialized) await node.events.initialized;
 
     const info = node.getRootClusterClient(BasicInformationCluster);
     if (info === undefined) throw new Error("Basic Information cluster missing");
+    report.active_phase = "read";
     report.product_name = await info.getProductNameAttribute();
     outcomes.read = "pass";
 
@@ -115,17 +125,21 @@ try {
 
     if (mode === "commission") {
         const before = state.onOff;
+        report.active_phase = "invoke";
         await commands.toggle();
         outcomes.invoke = "pass";
         await new Promise(resolve => setTimeout(resolve, 1_500));
         report.on_off_before = before;
         report.on_off_after = state.onOff;
+        report.active_phase = "subscribe";
         outcomes.subscribe = state.onOff !== before ? "pass" : "fail";
     } else {
+        report.active_phase = "remove";
         await controller.removeNode(nodes[0]);
         outcomes.remove = controller.getCommissionedNodes().length === 0 ? "pass" : "fail";
     }
 
+    report.active_phase = null;
     await persist();
 } catch (error) {
     if (report.error === null) {
