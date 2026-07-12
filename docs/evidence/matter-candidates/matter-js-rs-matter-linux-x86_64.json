@@ -1,0 +1,52 @@
+{
+  "schema": "homemagic.matter.matter-js-independent-reference-report.v1",
+  "candidate": {
+    "id": "matter-js",
+    "revision": "b539372ff41fea24344760d69172508e9df931a2"
+  },
+  "reference": {
+    "id": "rs-matter",
+    "revision": "42d3c2211239f5f388ac7f7449c82bb3347912f5"
+  },
+  "last_reference_observation": "arm_fail_safe_received",
+  "host": {
+    "captured_at": "2026-07-12T23:29:37Z",
+    "os": "Linux",
+    "architecture": "x86_64",
+    "node": "v24.18.0",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)"
+  },
+  "commission_process": {
+    "schema": "homemagic.matter.matter-js-independent-reference.v1",
+    "mode": "commission",
+    "outcomes": {
+      "fabric_create": "pass",
+      "commission": "not_run",
+      "inventory": "not_run",
+      "read": "not_run",
+      "subscribe": "not_run",
+      "invoke": "not_run",
+      "restart": "not_run",
+      "remove": "not_run",
+      "timeout": "fail"
+    },
+    "active_phase": "commission",
+    "error": {
+      "phase": "commission",
+      "name": "TimeoutError",
+      "message": "Lifecycle process exceeded the 180 second evidence budget"
+    }
+  },
+  "restart_process": {
+    "schema": "homemagic.matter.matter-js-independent-reference.v1",
+    "mode": "restart",
+    "outcomes": {
+      "restart": "not_run",
+      "remove": "not_run"
+    },
+    "error": {
+      "phase": "prerequisite",
+      "message": "Commission lifecycle did not pass"
+    }
+  }
+}

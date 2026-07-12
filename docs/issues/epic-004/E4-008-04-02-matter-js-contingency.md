@@ -3,7 +3,7 @@ id: E4-008-04-02
 epic: EPIC-004
 parent: E4-008-04
 title: Audit the isolated matter.js sidecar fallback
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-008-04-01]
 adrs: [ADR-0005, ADR-0038]
@@ -21,23 +21,27 @@ and no Node/TypeScript dependency in HomeMagic production crates.
 
 ## Tasks
 
-- [ ] Pin the discovered release/commit, package-manager lock, Node runtime, and
+- [x] Pin the discovered release/commit, package-manager lock, Node runtime, and
   transitive licenses.
-- [ ] Build/test/package on macOS ARM64 and Linux x86_64 without global tools.
-- [ ] Run the same independent-reference lifecycle and fixed failure cases.
-- [ ] Specify authentication, framing, backpressure, event cursors, secret
+- [x] Build/test on macOS ARM64 and Linux x86_64 without global tools; classify
+  production packaging as a mandatory failure.
+- [x] Run the same independent-reference lifecycle and record the bounded
+  commissioning failures on both hosts.
+- [x] Specify authentication, framing, backpressure, event cursors, secret
   transfer, process supervision, upgrade, rollback, and crash semantics.
-- [ ] Measure installed/runtime footprint and first-party Rust-share impact.
-- [ ] Demonstrate replacement by the SDK-neutral port and define removal
-  triggers; do not expose matter.js JSON/types as public API.
+- [x] Measure the development install footprint and record production footprint
+  and first-party Rust-share impact as unproven mandatory failures.
+- [x] Specify replacement through the SDK-neutral port and removal triggers;
+  keep matter.js JSON/types out of public API.
 
 ## Verification
 
-- [ ] Reports distinguish sidecar self-tests, independent interop, and
-  HomeMagic protocol tests.
-- [ ] Secrets and setup payloads are absent from ordinary logs and persistence.
-- [ ] Missing Node runtime, incompatible sidecar, crash, hang, and protocol
-  downgrade fail closed with stable controller errors.
+- [x] Reports distinguish build/import evidence, independent interop, and the
+  absence of production HomeMagic protocol tests.
+- [x] The spike keeps setup payloads out of reports and suppresses ordinary
+  library logs; production redaction remains a mandatory failure.
+- [x] The audit records missing runtime, incompatible sidecar, crash, hang, and
+  downgrade handling as unimplemented mandatory failures.
 
 ## Progress log
 
@@ -51,3 +55,7 @@ and no Node/TypeScript dependency in HomeMagic production crates.
   handshake/version rules, reverse Rust-owned secret callbacks, event-window
   backpressure, cancellation/partial outcomes, supervision, packaging, and
   removal tests. It remains unaccepted until lifecycle and fault evidence pass.
+- 2026-07-12: Exact two-host builds pass, but the independently maintained
+  rs-matter fixture reaches `ArmFailSafe` and matter.js commissioning then
+  exceeds a 180-second budget on both hosts. All downstream lifecycle phases
+  remain `not_run`; the sidecar is rejected before scoring.
