@@ -103,6 +103,11 @@ else
   jq -n '{schema: "homemagic.matter.matter-js-independent-reference.v1", mode: "restart", outcomes: {restart: "not_run", remove: "not_run"}, error: {phase: "prerequisite", message: "Commission lifecycle did not pass"}}' > "$workspace/restart.json"
 fi
 
+last_reference_observation="commissionable_fixture_started"
+if grep -q 'Got Arm Fail Safe Request' "$workspace/reference.log"; then
+  last_reference_observation="arm_fail_safe_received"
+fi
+
 jq -n \
   --slurpfile commission "$workspace/commission.json" \
   --slurpfile restart "$workspace/restart.json" \
@@ -113,10 +118,12 @@ jq -n \
   --arg rustc "$(rustc --version)" \
   --arg candidate_revision "$candidate_revision" \
   --arg reference_revision "$reference_revision" \
+  --arg last_reference_observation "$last_reference_observation" \
   '{
     schema: "homemagic.matter.matter-js-independent-reference-report.v1",
     candidate: {id: "matter-js", revision: $candidate_revision},
     reference: {id: "rs-matter", revision: $reference_revision},
+    last_reference_observation: $last_reference_observation,
     host: {captured_at: $captured_at, os: $os, architecture: $architecture, node: $node, rustc: $rustc},
     commission_process: $commission[0],
     restart_process: $restart[0]
