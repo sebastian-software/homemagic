@@ -84,6 +84,37 @@ policy, cluster, attribute, or command escape-hatch input. Export bytes are
 returned only by the sensitive endpoint and never enter ordinary operation
 state.
 
+## Operation events
+
+Every administration admission and phase transition appends a versioned
+`matter_operation_transitioned` event in the same SQLite transaction as the
+operation state. The `matter.operation.transition.v1` payload contains only:
+
+- operation ID and operation kind;
+- previous and new phase;
+- operation-local revision.
+
+The event has no device or operation target and contains no fabric, node,
+endpoint, setup, secret-reference, controller, error, or repair detail. Its
+causation actor is copied from the immutable operation binding. The correlation
+ID is deterministically derived from the operation ID, so all phases remain one
+causal chain after restart.
+
+The central SQLite `transition_operation` helper owns event insertion. This
+covers fabric, commissioning, cancellation, removal, and subscription-repair
+commits, including transactions that update several operations. A rollback
+therefore exposes neither the state transition nor its event. Equivalent
+idempotent admission returns before insertion and does not duplicate the
+creation event.
+
+Matter and automation events are actor-scoped at WebSocket delivery. Replay and
+live drains require the durable event causation actor to equal the authenticated
+subscriber. Filtering advances the shared cursor past hidden events, preventing
+another actor's traffic from being disclosed or replayed later. Existing
+broadcast wakeups retain lag notifications; a 250 ms durable-cursor poll is the
+safety net for storage-direct transactional event producers. Cursor expiry,
+page bounds, and reconnect semantics remain shared with the general event log.
+
 ## Stable errors
 
 | JSON-RPC code | Stable data code | Meaning |
