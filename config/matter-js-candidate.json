@@ -1,0 +1,8 @@
+{
+  "schema": "homemagic.matter.matter-js-candidate.v1",
+  "repository": "https://github.com/matter-js/matter.js.git",
+  "revision": "b539372ff41fea24344760d69172508e9df931a2",
+  "package_lock_sha256": "0ddd261356cccd3024a2d07e6a65d9e6188741d406e7aab8d6d646a87a9adc42",
+  "node": "24.18.0",
+  "license": "Apache-2.0"
+}

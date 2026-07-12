@@ -3,7 +3,7 @@ id: E4-008-04-02
 epic: EPIC-004
 parent: E4-008-04
 title: Audit the isolated matter.js sidecar fallback
-status: planned
+status: in_progress
 priority: high
 depends_on: [E4-008-04-01]
 adrs: [ADR-0005, ADR-0038]
@@ -38,3 +38,12 @@ and no Node/TypeScript dependency in HomeMagic production crates.
 - [ ] Secrets and setup payloads are absent from ordinary logs and persistence.
 - [ ] Missing Node runtime, incompatible sidecar, crash, hang, and protocol
   downgrade fail closed with stable controller errors.
+
+## Progress log
+
+- 2026-07-12: Source review at the exact pin confirmed a complete
+  `CommissioningController` with on-network commissioning, inventory, read,
+  invoke, automatic subscriptions, restart persistence, removal, and discovery
+  cancellation. The isolated two-host audit pins Node and the upstream lockfile
+  and measures build/runtime footprint before any private sidecar protocol is
+  accepted.

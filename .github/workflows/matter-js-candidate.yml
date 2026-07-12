@@ -1,0 +1,50 @@
+name: Matter matter.js candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - config/matter-js-candidate.json
+      - scripts/run-matter-js-candidate.sh
+      - .github/workflows/matter-js-candidate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: matter.js (${{ matrix.label }})
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: x86_64
+            label: Linux x86_64
+          - runner: macos-14
+            architecture: arm64
+            label: macOS ARM64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out HomeMagic
+        uses: actions/checkout@v6
+
+      - name: Install pinned Node runtime
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Build pinned controller
+        run: ./scripts/run-matter-js-candidate.sh report.json "${{ matrix.architecture }}"
+
+      - name: Upload build report
+        uses: actions/upload-artifact@v6
+        with:
+          name: matter-js-${{ matrix.architecture }}
+          path: report.json
+          if-no-files-found: error
