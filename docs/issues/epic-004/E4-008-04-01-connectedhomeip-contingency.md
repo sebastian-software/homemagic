@@ -3,7 +3,7 @@ id: E4-008-04-01
 epic: EPIC-004
 parent: E4-008-04
 title: Audit the official ConnectedHomeIP contingency boundary
-status: ready
+status: in_progress
 priority: critical
 depends_on: [E4-008-03]
 adrs: [ADR-0005, ADR-0038]
@@ -44,3 +44,13 @@ types, ownership, callbacks, or exceptions in HomeMagic public contracts.
 - [ ] No official SDK dependency enters a production manifest during the spike.
 - [ ] Every unsafe/FFI/process assumption has a boundary test or is a named
   mandatory failure.
+
+## Progress log
+
+- 2026-07-12: Source review at the exact release pin found a mature C++
+  `DeviceCommissioner`, but no stable narrow C ABI. The existing Python binding
+  is a broad callback-heavy C export surface owned by the Python controller,
+  while `chip-tool` is a CLI/interactive test process. A two-host reproducible
+  `chip-tool` no-BLE/no-Wi-Fi/no-Thread build audit now measures the actual
+  bootstrap, source, binary, submodule, and prospective boundary cost before
+  any exception can be proposed.
