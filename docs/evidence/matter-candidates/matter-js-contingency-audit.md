@@ -3,12 +3,13 @@
 ## Verdict
 
 The exact matter.js pin builds and imports its controller on both target hosts,
-but it fails the mandatory independent lifecycle gate. Against the pinned
-rs-matter device, both hosts create the controller fabric and reach the device's
-`ArmFailSafe` handler, then remain inside matter.js commissioning until the
-explicit 180-second process budget expires. Commissioning never returns even
-when automatic post-commission connection is disabled, so inventory, read,
-invoke, subscription, process restart, and removal cannot begin.
+but it still fails the mandatory two-host independent lifecycle gate. Against
+the pinned official ConnectedHomeIP light fixture, Linux x86_64 passes the
+complete lifecycle while macOS ARM64 stalls at the first operational CASE
+reconnect. The earlier rs-matter fixture stalls at the same stage on both hosts.
+The official Linux pass excludes a general matter.js commissioning failure; the
+matching macOS result across two devices narrows the active defect to matter.js
+operational discovery/CASE behavior on macOS or its host environment.
 
 The candidate is rejected before weighted scoring. The private sidecar protocol
 remains a useful future boundary design, not an accepted ADR-0005 exception.
@@ -51,22 +52,23 @@ upstream commit, and the exact upstream package-lock hash.
 
 ## Independent lifecycle
 
-Both final reports have the same outcome:
+The official ConnectedHomeIP reference separates the platform result:
 
 | Phase | macOS ARM64 | Linux x86_64 |
 | --- | --- | --- |
 | Fabric create | Pass | Pass |
-| Reference observation | `ArmFailSafe` received | `ArmFailSafe` received |
-| Commission | Timeout at 180 seconds | Timeout at 180 seconds |
-| Inventory/read/invoke/subscribe | Not run | Not run |
-| Process restart/removal | Not run | Not run |
+| Reference | ConnectedHomeIP `v1.5.1.0` light | ConnectedHomeIP `v1.5.1.0` light |
+| Commission | Timeout at `18.1 Reconnect` | Pass |
+| Inventory/read/invoke/subscribe | Not run | Pass |
+| Process restart/removal | Not run | Pass |
 
 The spike disables `connectNodeAfterCommissioning`, proving the timeout is in
 commissioning itself rather than the later automatic connect/subscription path.
-Secret-safe stage tracing narrows both hosts to step `18.1 Reconnect`: initial
-data, fail-safe, regulatory configuration, time synchronization, device
+Secret-safe stage tracing narrows the macOS failure to step `18.1 Reconnect`:
+initial data, fail-safe, regulatory configuration, time synchronization, device
 attestation, certificates/NOC, and access control all complete before the first
-operational CASE reconnect stalls.
+operational CASE reconnect stalls. Linux completes that reconnect, commissioning
+complete, fabric-label update, interaction, restart, and removal.
 The workflow exits successfully because its job is to persist partial evidence,
 not to turn candidate failure into missing evidence.
 
@@ -77,7 +79,7 @@ not to turn candidate failure into missing evidence.
 | License and provenance | Pass | Apache-2.0, exact commit and lockfile |
 | Build/run on both targets | Pass for build and fabric start | Two-host build and lifecycle reports |
 | SDK-neutral production port | Fail | Protocol specified but not implemented |
-| Complete independent lifecycle | Fail | Commission timeout on both hosts |
+| Complete independent lifecycle | Fail | Linux passes; macOS times out at operational reconnect |
 | ADR-0008/ADR-0037 secrets | Fail | Rust-owned storage driver unimplemented |
 | Errors/cancel/partial/subscription loss | Fail | Partial phase evidence exists; production boundary does not |
 | Reproducible production packaging | Fail | Development build only |
@@ -85,9 +87,11 @@ not to turn candidate failure into missing evidence.
 
 ## Required remediation
 
-The next experiment must first instrument non-sensitive commissioning-stage
-progress and reproduce against a second independent device implementation. It
-must determine whether the deadlock is matter.js, rs-matter, or the fixture
-contract before changing timeouts again. A sidecar may be reconsidered only
-after the complete lifecycle passes on both hosts and the proposed private
-boundary, Rust-owned storage driver, pruned package, and fault suite exist.
+The next experiment must isolate the macOS operational discovery/CASE path with
+non-sensitive diagnostics and a bounded upstream fix or configuration change.
+A sidecar may be reconsidered only after the complete lifecycle passes on both
+hosts and the proposed private boundary, Rust-owned storage driver, pruned
+package, and fault suite exist.
+
+Exact reports: [macOS ARM64](matter-js-connectedhomeip-macos-arm64.json) and
+[Linux x86_64](matter-js-connectedhomeip-linux-x86_64.json).

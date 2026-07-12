@@ -1,0 +1,38 @@
+{
+  "schema": "homemagic.matter.matter-js-official-reference-report.v1",
+  "candidate": { "id": "matter-js", "revision": "b539372ff41fea24344760d69172508e9df931a2" },
+  "reference": {
+    "id": "connectedhomeip-light",
+    "revision": "abcc720b48c5e59c0edcfe65c516f76ca9448aa3",
+    "release": "v1.5.1.0",
+    "target": "darwin-arm64-light-no-ble-no-wifi-no-thread"
+  },
+  "host": { "captured_at": "2026-07-12T23:54:01Z", "os": "Darwin", "architecture": "arm64", "node": "v24.18.0" },
+  "commission_process": {
+    "schema": "homemagic.matter.matter-js-independent-reference.v1",
+    "mode": "commission",
+    "outcomes": {
+      "fabric_create": "pass", "commission": "not_run", "inventory": "not_run",
+      "read": "not_run", "subscribe": "not_run", "invoke": "not_run",
+      "restart": "not_run", "remove": "not_run", "timeout": "fail"
+    },
+    "active_phase": "commission",
+    "error": { "phase": "commission", "name": "TimeoutError", "message": "Lifecycle process exceeded the 180 second evidence budget" },
+    "commissioning_stages": [
+      { "step": "0.1", "name": "GetInitialData", "status": "completed" },
+      { "step": "7.1", "name": "GeneralCommissioning.ArmFailsafe", "status": "completed" },
+      { "step": "8.1", "name": "GeneralCommissioning.ConfigureRegulatoryInformation", "status": "completed" },
+      { "step": "8.2", "name": "TimeSynchronization.SynchronizeTime", "status": "completed" },
+      { "step": "10.1", "name": "OperationalCredentials.DeviceAttestation", "status": "completed" },
+      { "step": "11.1", "name": "OperationalCredentials.Certificates", "status": "completed" },
+      { "step": "15.1", "name": "AccessControl", "status": "completed" },
+      { "step": "18.1", "name": "Reconnect", "status": "started" }
+    ]
+  },
+  "restart_process": {
+    "schema": "homemagic.matter.matter-js-independent-reference.v1",
+    "mode": "restart",
+    "outcomes": { "restart": "not_run", "remove": "not_run" },
+    "error": { "phase": "prerequisite", "message": "Commission lifecycle did not pass" }
+  }
+}

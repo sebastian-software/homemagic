@@ -22,9 +22,9 @@ and no production compatibility claim.
 
 - [x] Add secret-safe commissioning-stage instrumentation around matter.js and
   record the last completed Matter stage before the independent timeout.
-- [ ] Build a pinned official ConnectedHomeIP on-network all-clusters/light
+- [x] Build a pinned official ConnectedHomeIP on-network all-clusters/light
   device as a second independent fixture on both hosts.
-- [ ] Run the same commission, inventory, read, subscribe, invoke, process
+- [x] Run the same commission, inventory, read, subscribe, invoke, process
   restart, and removal lifecycle against rs-matter and the official fixture.
 - [ ] Classify any implementation-specific incompatibility without weakening
   the requirement for at least one complete independent lifecycle per host.
@@ -49,6 +49,13 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-12: Public run `29213972862` builds pinned ConnectedHomeIP
+  `v1.5.1.0` light fixtures and runs the same lifecycle on both hosts. Linux
+  x86_64 passes commission, inventory, read, toggle, subscription, controller
+  restart, and removal. macOS ARM64 reaches the same `18.1 Reconnect` boundary
+  as the rs-matter fixture and times out. This excludes the rs-matter fixture as
+  the common cause and narrows remediation to matter.js operational
+  discovery/CASE behavior on macOS or its host environment.
 - 2026-07-12: The matter.js spike now wraps each upstream commissioning step
   and persists only step number, static step name, status, and error class. A
   two-host official ConnectedHomeIP light workflow is running as the second

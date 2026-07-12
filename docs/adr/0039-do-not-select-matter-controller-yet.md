@@ -12,13 +12,15 @@ SDK-neutral boundary, independent lifecycle, secret persistence, failure
 semantics, packaging, and ADR-0005 gates before weighted scoring. The evaluation
 covered two Rust-native candidates, the official ConnectedHomeIP SDK boundary,
 and an isolated matter.js sidecar fallback at exact revisions on macOS ARM64 and
-Linux x86_64.
+Linux x86_64. Subsequent remediation also tested matter.js against the pinned
+official ConnectedHomeIP light fixture.
 
 Both Rust-native candidates have production attestation, cancellation, secret,
 and lifecycle gaps. ConnectedHomeIP builds but provides neither a stable narrow
-C ABI nor a production process boundary. matter.js builds and reaches the
-independent device's `ArmFailSafe` handler, then commissioning times out after
-180 seconds on both hosts. No candidate passes the gate set.
+C ABI nor a production process boundary. matter.js completes the official
+independent lifecycle on Linux x86_64, but times out at the first operational
+CASE reconnect on macOS ARM64 against both rs-matter and ConnectedHomeIP. No
+candidate passes the gate set.
 
 ## Decision
 

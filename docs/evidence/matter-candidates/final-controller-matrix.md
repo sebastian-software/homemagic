@@ -47,9 +47,10 @@ so weighted scores and tie-breaks are intentionally not calculated.
 ### matter.js
 
 - The exact Node runtime and lockfile build/import successfully on both hosts.
-- Both independent rs-matter runs reach `ArmFailSafe`, then time out inside the
-  separated commissioning phase after 180 seconds. All downstream phases are
-  `not_run`.
+- Against official ConnectedHomeIP `v1.5.1.0`, Linux x86_64 passes commission,
+  inventory, read, invoke, subscription, restart, and removal. macOS ARM64
+  stalls at operational reconnect, matching its rs-matter result. The required
+  two-host lifecycle therefore remains failed.
 - A minimal private RPC boundary is specified, but Rust-owned secret storage,
   full cancellation, fault handling, and a pruned production package are not
   implemented.
