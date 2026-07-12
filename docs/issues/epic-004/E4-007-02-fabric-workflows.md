@@ -13,6 +13,14 @@ updated: 2026-07-12
 
 # E4-007-02: Fabric Workflows
 
+## Child issues
+
+| Issue | Status | Outcome |
+| --- | --- | --- |
+| [E4-007-02-01](E4-007-02-01-fabric-status-create.md) | Ready | Idempotent staged fabric creation and status |
+| [E4-007-02-02](E4-007-02-02-simulator-export.md) | Planned | Explicit sensitive simulator export |
+| [E4-007-02-03](E4-007-02-03-simulator-restore-boundary.md) | Planned | Simulator restore and production-format rejection |
+
 ## Outcome
 
 Authenticated operators can inspect and create the simulator fabric and perform
@@ -41,3 +49,8 @@ idempotent operations with secret-safe input handling.
 - [ ] SQLite reopen, duplicate, invalid-key, corrupt-envelope, and redaction
   contracts pass.
 - [ ] Secret canaries are absent from database, diagnostics, and event streams.
+
+## Progress log
+
+- 2026-07-12: Decomposed into status/create, simulator export, and restore
+  boundary slices. E4-007-02-01 is ready.
