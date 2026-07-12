@@ -4,6 +4,7 @@ members = [
   "crates/homemagic-api",
   "crates/homemagic-application",
   "crates/homemagic-domain",
+  "crates/homemagic-matter",
   "crates/homemagic-secrets",
   "crates/homemagic-shelly",
   "crates/homemagic-storage",
