@@ -71,3 +71,7 @@ updated: 2026-07-12
 - 2026-07-12: Closed after `cargo test --workspace --all-features` and strict
   all-target Clippy passed with lifecycle, sensitive approval, event migration,
   live wake-up, actor isolation, and RPC parity coverage.
+- 2026-07-12: The E3-008 operator audit found and closed one restart usability
+  gap: actor-owned `automations.get` and bounded `automations.list` now recover
+  the operational state, active pointer, and optimistic revision required for
+  later disable, rollback, or retire calls.

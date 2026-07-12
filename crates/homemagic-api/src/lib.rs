@@ -696,6 +696,8 @@ async fn dispatch_with_services(
         "automations.drafts.list" => {
             automation_drafts_list(automations, actor, request.id, request.params).await
         }
+        "automations.get" => automation_get(automations, actor, request.id, request.params).await,
+        "automations.list" => automation_list(automations, actor, request.id, request.params).await,
         "automations.validate" => {
             automation_validate(automations, actor, request.id, request.params).await
         }
@@ -867,6 +869,46 @@ async fn automation_drafts_list(
     };
     match service.drafts(actor, params.limit).await {
         Ok(drafts) => RpcResponse::success(id, json!({"drafts": drafts})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_get(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationIdParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.identity(actor, &params.automation_id).await {
+        Ok(automation) => RpcResponse::success(id, json!({"automation": automation})),
+        Err(error) => automation_error(id, error),
+    }
+}
+
+async fn automation_list(
+    automations: Option<&AutomationLifecycleService>,
+    actor: &Actor,
+    id: Value,
+    params: Value,
+) -> RpcResponse {
+    let service = match require_automations(automations, &id) {
+        Ok(service) => service,
+        Err(response) => return *response,
+    };
+    let params = match parse_params::<AutomationListParams>(&id, params) {
+        Ok(params) => params,
+        Err(response) => return *response,
+    };
+    match service.identities(actor, params.limit).await {
+        Ok(automations) => RpcResponse::success(id, json!({"automations": automations})),
         Err(error) => automation_error(id, error),
     }
 }
@@ -2224,6 +2266,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the RPC contract covers create, validate, operational recovery, and isolation"
+    )]
     async fn automation_create_rpc_should_generate_every_envelope_field() {
         let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
         let repository = Arc::new(
@@ -2276,6 +2322,78 @@ mod tests {
                 .unwrap_or_else(|error| panic!("stored draft: {error}")),
             draft
         );
+        let validated = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &owner,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(31),
+                method: "automations.validate".to_owned(),
+                params: json!({"automation_id": draft.automation_id}),
+            },
+        )
+        .await;
+        assert!(validated.error.is_none());
+        let operational = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &owner,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(32),
+                method: "automations.get".to_owned(),
+                params: json!({"automation_id": draft.automation_id}),
+            },
+        )
+        .await;
+        assert_eq!(
+            operational
+                .result
+                .as_ref()
+                .and_then(|result| result["automation"]["revision"].as_u64()),
+            Some(0)
+        );
+        let listed = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &owner,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(33),
+                method: "automations.list".to_owned(),
+                params: json!({"limit": 10}),
+            },
+        )
+        .await;
+        assert_eq!(
+            listed
+                .result
+                .and_then(|result| result["automations"].as_array().map(Vec::len)),
+            Some(1)
+        );
+        let outsider = actor();
+        let hidden = dispatch_with_services(
+            &application,
+            None,
+            Some(&lifecycle),
+            Some(&scheduler),
+            &outsider,
+            RpcRequest {
+                jsonrpc: JSON_RPC_VERSION.to_owned(),
+                id: json!(34),
+                method: "automations.get".to_owned(),
+                params: json!({"automation_id": draft.automation_id}),
+            },
+        )
+        .await;
+        assert_eq!(hidden.error.map(|error| error.code), Some(-32041));
     }
 
     async fn application_with_device() -> (HomeMagicApplication, DeviceId) {

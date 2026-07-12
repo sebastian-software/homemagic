@@ -189,6 +189,9 @@ The first lifecycle slice exposes:
 - `automations.drafts.put` with `document` and optional `expected_revision`;
 - `automations.drafts.get` with `automation_id`, and `automations.drafts.list`
   with a bounded `limit`;
+- `automations.get` with `automation_id` and `automations.list` with a bounded
+  `limit` return actor-owned operational state, active pointer, and the current
+  optimistic revision needed by disable, rollback, or retire;
 - `automations.validate` with `automation_id`;
 - `automations.versions.get` with `automation_id` and `version`, and
   `automations.versions.list` with `automation_id` and bounded `limit`;
@@ -224,6 +227,13 @@ curl --fail-with-body http://127.0.0.1:8787/rpc \
 The response returns the generated automation ID. Use
 `docs/api/examples/automation-document-v1.json` as the complete full-document
 shape for subsequent optimistic `automations.drafts.put` updates.
+
+After reconnecting, query the operational aggregate before a state-changing
+operation instead of guessing its revision:
+
+```json
+{"jsonrpc":"2.0","id":32,"method":"automations.get","params":{"automation_id":"AUTOMATION_ID"}}
+```
 
 ```json
 {

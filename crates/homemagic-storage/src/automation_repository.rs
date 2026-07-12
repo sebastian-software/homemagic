@@ -156,6 +156,22 @@ impl AutomationRepository for SqliteRepository {
         .map_err(boxed)
     }
 
+    async fn automation_identities(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AutomationIdentityState>, homemagic_application::BoxError> {
+        run_read(&self.connection, move |connection| {
+            load_payload_page(
+                connection,
+                "SELECT payload_json FROM automation_identities
+                 ORDER BY updated_at DESC, id DESC LIMIT ?1",
+                [signed(limit.min(MAX_QUERY_PAGE) as u64)?],
+            )
+        })
+        .await
+        .map_err(boxed)
+    }
+
     async fn transition_automation_identity(
         &self,
         identity: AutomationIdentityState,

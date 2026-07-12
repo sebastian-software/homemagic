@@ -397,6 +397,58 @@ impl AutomationLifecycleService {
         Ok(versions)
     }
 
+    /// Loads one actor-owned operational identity and active pointer.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found, authorization, or repository failures.
+    pub async fn identity(
+        &self,
+        actor: &Actor,
+        automation_id: &AutomationId,
+    ) -> Result<crate::AutomationIdentityState, AutomationLifecycleError> {
+        let identity = self
+            .repository
+            .automation_identity(automation_id)
+            .await
+            .map_err(AutomationLifecycleError::Repository)?
+            .ok_or(AutomationLifecycleError::NotFound)?;
+        if let Some(version) = identity.active_version {
+            self.version(actor, automation_id, version).await?;
+        } else {
+            self.draft(actor, automation_id).await?;
+        }
+        Ok(identity)
+    }
+
+    /// Lists actor-owned operational identities with a bounded newest-first result.
+    ///
+    /// # Errors
+    ///
+    /// Returns repository failures.
+    pub async fn identities(
+        &self,
+        actor: &Actor,
+        limit: usize,
+    ) -> Result<Vec<crate::AutomationIdentityState>, AutomationLifecycleError> {
+        let identities = self
+            .repository
+            .automation_identities(limit.clamp(1, 100))
+            .await
+            .map_err(AutomationLifecycleError::Repository)?;
+        let mut owned = Vec::with_capacity(identities.len());
+        for identity in identities {
+            match self.identity(actor, &identity.id).await {
+                Ok(identity) => owned.push(identity),
+                Err(
+                    AutomationLifecycleError::NotAuthorized | AutomationLifecycleError::NotFound,
+                ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(owned)
+    }
+
     /// Loads one actor-owned run.
     ///
     /// # Errors

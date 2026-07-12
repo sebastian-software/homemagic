@@ -248,6 +248,12 @@ pub trait AutomationRepository: Send + Sync {
         automation_id: &AutomationId,
     ) -> Result<Option<AutomationIdentityState>, BoxError>;
 
+    /// Lists operational identities newest-first with a bounded result.
+    async fn automation_identities(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AutomationIdentityState>, BoxError>;
+
     /// Advances an operational identity through its explicit state machine.
     async fn transition_automation_identity(
         &self,
