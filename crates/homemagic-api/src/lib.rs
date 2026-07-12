@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -16,9 +17,12 @@ use homemagic_application::{
     AutomationLifecycleService, AutomationScheduler, AutomationSchedulerError,
     AutomationSimulationInput, CommandRequest, CommandService, CommandServiceError,
     DeviceMetadataUpdate, HomeMagicApplication, MatterAdministrationError,
-    MatterAdministrationService, MatterDiagnosticsError, MatterDiagnosticsService,
+    MatterAdministrationService, MatterCancellationStartOutcome, MatterCommissioningInput,
+    MatterDiagnosticsError, MatterDiagnosticsService, MatterExecutionError, MatterExecutionHandle,
     MatterFabricWorkflowError, MatterFabricWorkflowService, MatterNodeInventoryError,
-    MatterNodeInventoryService,
+    MatterNodeInventoryService, MatterNodeWorkflowError, MatterNodeWorkflowService,
+    MatterOperationCreateOutcome, MatterSimulatorRestoreInput, MatterSubscriptionRepairError,
+    MatterSubscriptionRepairService, SecretValue,
 };
 use homemagic_domain::{
     Actor, AutomationDocument, AutomationId, AutomationRunId, AutomationVersion, AvailabilityState,
@@ -51,6 +55,11 @@ pub struct MatterApiServices {
     administration: MatterAdministrationService,
     inventory: MatterNodeInventoryService,
     diagnostics: MatterDiagnosticsService,
+    nodes: Option<MatterNodeWorkflowService>,
+    subscriptions: Option<MatterSubscriptionRepairService>,
+    execution: Option<MatterExecutionHandle>,
+    commands: Option<CommandService>,
+    sensitive_timeout: Duration,
 }
 
 impl MatterApiServices {
@@ -67,7 +76,40 @@ impl MatterApiServices {
             administration,
             inventory,
             diagnostics,
+            nodes: None,
+            subscriptions: None,
+            execution: None,
+            commands: None,
+            sensitive_timeout: Duration::from_secs(30),
         }
+    }
+
+    /// Adds mutation admission and the daemon-owned execution handoff.
+    #[must_use]
+    pub fn with_mutations(
+        mut self,
+        nodes: MatterNodeWorkflowService,
+        subscriptions: MatterSubscriptionRepairService,
+        execution: MatterExecutionHandle,
+    ) -> Self {
+        self.nodes = Some(nodes);
+        self.subscriptions = Some(subscriptions);
+        self.execution = Some(execution);
+        self
+    }
+
+    /// Adds the governed common command service used for exact unlock approval.
+    #[must_use]
+    pub fn with_unlock_commands(mut self, commands: CommandService) -> Self {
+        self.commands = Some(commands);
+        self
+    }
+
+    /// Overrides the bounded sensitive exchange wait, primarily for tests.
+    #[must_use]
+    pub const fn with_sensitive_timeout(mut self, timeout: Duration) -> Self {
+        self.sensitive_timeout = timeout;
+        self
     }
 }
 
@@ -141,19 +183,22 @@ pub fn router_with_matter(
     authenticator: Arc<dyn AuthenticateActor>,
     matter: MatterApiServices,
 ) -> Router {
-    Router::new()
+    let commands = matter.commands.clone();
+    let state = ApiState {
+        application,
+        authenticator,
+        commands,
+        automations: None,
+        automation_scheduler: None,
+        matter: Some(matter),
+    };
+    let ordinary = Router::new()
         .route("/health", get(health))
         .route("/rpc", post(rpc))
         .route("/rpc/ws", get(rpc_websocket))
-        .layer(TraceLayer::new_for_http())
-        .with_state(ApiState {
-            application,
-            authenticator,
-            commands: None,
-            automations: None,
-            automation_scheduler: None,
-            matter: Some(matter),
-        })
+        .layer(TraceLayer::new_for_http());
+    let sensitive = Router::new().route("/rpc/sensitive", post(rpc_sensitive));
+    ordinary.merge(sensitive).with_state(state)
 }
 
 async fn health() -> Json<Value> {
@@ -182,6 +227,18 @@ async fn rpc(
         .await,
     )
     .into_response()
+}
+
+async fn rpc_sensitive(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(request): Json<RpcRequest>,
+) -> Response {
+    let actor = match authenticate(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    Json(dispatch_matter_sensitive(state.matter.as_ref(), &actor, request).await).into_response()
 }
 
 async fn dispatch_api(
@@ -481,7 +538,7 @@ async fn send_notification(
     socket.send(Message::Text(text.into())).await
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct RpcRequest {
     jsonrpc: String,
     id: Value,
@@ -741,6 +798,61 @@ struct MatterDiagnosticsParams {
     evaluated_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterIdempotencyParams {
+    idempotency_key: IdempotencyKey,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterCancellationParams {
+    operation_id: MatterOperationId,
+    idempotency_key: IdempotencyKey,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterNodeMutationParams {
+    node_id: MatterNodeId,
+    idempotency_key: IdempotencyKey,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterRepairParams {
+    fabric_id: MatterFabricId,
+    node_id: MatterNodeId,
+    idempotency_key: IdempotencyKey,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterUnlockApprovalParams {
+    command_id: CommandId,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterCommissioningSubmitParams {
+    operation_id: MatterOperationId,
+    setup_payload: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterSensitiveOperationParams {
+    operation_id: MatterOperationId,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatterRestoreSubmitParams {
+    operation_id: MatterOperationId,
+    envelope: Vec<u8>,
+    recovery_key: Vec<u8>,
+}
+
 const fn default_matter_limit() -> usize {
     50
 }
@@ -756,6 +868,19 @@ pub const MATTER_READ_RPC_SCHEMA_V1: &str =
 /// Returns a JSON error only when the committed schema artifact is malformed.
 pub fn matter_read_rpc_schema() -> Result<Value, serde_json::Error> {
     serde_json::from_str(MATTER_READ_RPC_SCHEMA_V1)
+}
+
+/// Committed machine-readable v1 schema catalog for Matter mutations.
+pub const MATTER_MUTATION_RPC_SCHEMA_V1: &str =
+    include_str!("../../../docs/api/schemas/matter-rpc-mutations-v1.json");
+
+/// Parses the committed Matter mutation RPC schema catalog.
+///
+/// # Errors
+///
+/// Returns a JSON error only when the committed schema artifact is malformed.
+pub fn matter_mutation_rpc_schema() -> Result<Value, serde_json::Error> {
+    serde_json::from_str(MATTER_MUTATION_RPC_SCHEMA_V1)
 }
 
 const fn default_command_limit() -> usize {
@@ -804,6 +929,33 @@ async fn dispatch_matter(
         "matter.nodes.list" => matter_node_list(matter, actor, request).await,
         "matter.nodes.get" => matter_node_get(matter, actor, request).await,
         "matter.diagnostics.get" => matter_diagnostics_get(matter, actor, request).await,
+        "matter.fabric.create" => matter_fabric_create(matter, actor, request).await,
+        "matter.nodes.commission.start" => matter_commission_start(matter, actor, request).await,
+        "matter.commissioning.cancel" => matter_commission_cancel(matter, actor, request).await,
+        "matter.nodes.remove" => matter_node_remove(matter, actor, request).await,
+        "matter.subscriptions.repair" => matter_subscription_repair(matter, actor, request).await,
+        "matter.fabric.export.start" => matter_export_start(matter, actor, request).await,
+        "matter.fabric.restore.start" => matter_restore_start(matter, actor, request).await,
+        "matter.unlock.approve" => matter_unlock_approve(matter, actor, request).await,
+        _ => RpcResponse::error(request.id, -32601, "Method not found", None),
+    }
+}
+
+async fn dispatch_matter_sensitive(
+    matter: Option<&MatterApiServices>,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    if request.jsonrpc != JSON_RPC_VERSION {
+        return RpcResponse::error(request.id, -32600, "Invalid Request", None);
+    }
+    let Some(matter) = matter else {
+        return matter_unavailable(request.id);
+    };
+    match request.method.as_str() {
+        "matter.nodes.commission.submit" => matter_commission_submit(matter, actor, request).await,
+        "matter.fabric.export.deliver" => matter_export_deliver(matter, actor, request).await,
+        "matter.fabric.restore.submit" => matter_restore_submit(matter, actor, request).await,
         _ => RpcResponse::error(request.id, -32601, "Method not found", None),
     }
 }
@@ -941,12 +1093,420 @@ async fn matter_diagnostics_get(
     }
 }
 
+async fn matter_fabric_create(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterIdempotencyParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    match matter
+        .fabric
+        .start_create(actor, params.idempotency_key, chrono::Utc::now())
+        .await
+    {
+        Ok(outcome) => matter_admitted(
+            request.id,
+            actor,
+            outcome,
+            matter.execution.as_ref(),
+            MatterWakeKind::Create,
+        ),
+        Err(error) => matter_fabric_error(request.id, error),
+    }
+}
+
+async fn matter_commission_start(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterIdempotencyParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    let Some(nodes) = matter.nodes.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    match nodes
+        .start_commission(actor, params.idempotency_key, chrono::Utc::now())
+        .await
+    {
+        Ok(outcome) => matter_awaiting_sensitive_input(request.id, outcome),
+        Err(error) => matter_node_workflow_error(request.id, error),
+    }
+}
+
+async fn matter_commission_cancel(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterCancellationParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    let Some(nodes) = matter.nodes.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    match nodes
+        .start_cancel_commissioning(
+            actor,
+            &params.operation_id,
+            params.idempotency_key,
+            chrono::Utc::now(),
+        )
+        .await
+    {
+        Ok(MatterCancellationStartOutcome::LocalCancelled(operation)) => RpcResponse::success(
+            request.id,
+            json!({"schema": "matter.operation.v1", "operation": operation, "execution": "completed"}),
+        ),
+        Ok(MatterCancellationStartOutcome::Operation(outcome)) => matter_admitted(
+            request.id,
+            actor,
+            outcome,
+            matter.execution.as_ref(),
+            MatterWakeKind::Cancel,
+        ),
+        Err(error) => matter_node_workflow_error(request.id, error),
+    }
+}
+
+async fn matter_node_remove(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterNodeMutationParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    let Some(nodes) = matter.nodes.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    match nodes
+        .start_remove_node(
+            actor,
+            params.node_id,
+            params.idempotency_key,
+            chrono::Utc::now(),
+        )
+        .await
+    {
+        Ok(outcome) => matter_admitted(
+            request.id,
+            actor,
+            outcome,
+            matter.execution.as_ref(),
+            MatterWakeKind::Remove,
+        ),
+        Err(error) => matter_node_workflow_error(request.id, error),
+    }
+}
+
+async fn matter_subscription_repair(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterRepairParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    let Some(subscriptions) = matter.subscriptions.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    match subscriptions
+        .start(
+            actor,
+            params.fabric_id,
+            params.node_id,
+            params.idempotency_key,
+            chrono::Utc::now(),
+        )
+        .await
+    {
+        Ok(outcome) => matter_admitted(
+            request.id,
+            actor,
+            outcome,
+            matter.execution.as_ref(),
+            MatterWakeKind::Repair,
+        ),
+        Err(error) => matter_subscription_error(request.id, error),
+    }
+}
+
+async fn matter_export_start(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterIdempotencyParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    match matter
+        .fabric
+        .start_export(actor, params.idempotency_key, chrono::Utc::now())
+        .await
+    {
+        Ok(outcome) => matter_awaiting_sensitive_input(request.id, outcome),
+        Err(error) => matter_fabric_error(request.id, error),
+    }
+}
+
+async fn matter_restore_start(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterIdempotencyParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    match matter
+        .fabric
+        .start_restore(actor, params.idempotency_key, chrono::Utc::now())
+        .await
+    {
+        Ok(outcome) => matter_awaiting_sensitive_input(request.id, outcome),
+        Err(error) => matter_fabric_error(request.id, error),
+    }
+}
+
+async fn matter_unlock_approve(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterUnlockApprovalParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    let Some(commands) = matter.commands.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    match commands
+        .approve_unlock(actor, &params.command_id, chrono::Utc::now())
+        .await
+    {
+        Ok(command) => RpcResponse::success(
+            request.id,
+            json!({"schema": "matter.unlock.approval.v1", "command": command}),
+        ),
+        Err(CommandServiceError::CommandNotFound | CommandServiceError::ActorMismatch) => {
+            matter_not_found(request.id)
+        }
+        Err(CommandServiceError::UnlockApprovalDenied | CommandServiceError::ActorNotFound) => {
+            matter_denied(request.id)
+        }
+        Err(CommandServiceError::UnlockNotPending) => matter_conflict(request.id),
+        Err(_) => matter_internal(request.id),
+    }
+}
+
+async fn matter_commission_submit(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterCommissioningSubmitParams>(request.params)
+    else {
+        return matter_invalid_params(request.id);
+    };
+    if params.setup_payload.is_empty() || params.setup_payload.len() > 1_024 {
+        return matter_invalid_params(request.id);
+    }
+    let Some(execution) = matter.execution.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    let result = tokio::time::timeout(
+        matter.sensitive_timeout,
+        execution.commission(
+            actor.clone(),
+            params.operation_id,
+            MatterCommissioningInput::new(SecretValue::new(params.setup_payload)),
+        ),
+    )
+    .await;
+    matter_sensitive_operation_response(request.id, result)
+}
+
+async fn matter_export_deliver(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterSensitiveOperationParams>(request.params)
+    else {
+        return matter_invalid_params(request.id);
+    };
+    let Some(execution) = matter.execution.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    match tokio::time::timeout(
+        matter.sensitive_timeout,
+        execution.export(actor.clone(), params.operation_id),
+    )
+    .await
+    {
+        Ok(Ok(result)) => RpcResponse::success(
+            request.id,
+            match result.export {
+                Some(export) => json!({
+                    "schema": "matter.sensitive.export.v1",
+                    "operation": result.operation,
+                    "export": {
+                        "format": export.format(),
+                        "envelope": export.envelope(),
+                        "recovery_key": export.recovery_key(),
+                        "evidence": export.evidence
+                    }
+                }),
+                None => json!({
+                    "schema": "matter.sensitive.export.v1",
+                    "operation": result.operation,
+                    "export": null
+                }),
+            },
+        ),
+        Ok(Err(error)) => matter_execution_error(request.id, error),
+        Err(_) => matter_sensitive_timeout(request.id),
+    }
+}
+
+async fn matter_restore_submit(
+    matter: &MatterApiServices,
+    actor: &Actor,
+    request: RpcRequest,
+) -> RpcResponse {
+    let Ok(params) = serde_json::from_value::<MatterRestoreSubmitParams>(request.params) else {
+        return matter_invalid_params(request.id);
+    };
+    if params.envelope.is_empty()
+        || params.envelope.len() > 1_048_576
+        || params.recovery_key.is_empty()
+        || params.recovery_key.len() > 1_024
+    {
+        return matter_invalid_params(request.id);
+    }
+    let Some(execution) = matter.execution.as_ref() else {
+        return matter_unavailable(request.id);
+    };
+    let result = tokio::time::timeout(
+        matter.sensitive_timeout,
+        execution.restore(
+            actor.clone(),
+            params.operation_id,
+            MatterSimulatorRestoreInput::new(
+                SecretValue::new(params.envelope),
+                SecretValue::new(params.recovery_key),
+            ),
+        ),
+    )
+    .await;
+    matter_sensitive_operation_response(request.id, result)
+}
+
+fn matter_sensitive_operation_response(
+    id: Value,
+    result: Result<
+        Result<homemagic_domain::MatterOperation, MatterExecutionError>,
+        tokio::time::error::Elapsed,
+    >,
+) -> RpcResponse {
+    match result {
+        Ok(Ok(operation)) => RpcResponse::success(
+            id,
+            json!({"schema": "matter.operation.v1", "operation": operation}),
+        ),
+        Ok(Err(error)) => matter_execution_error(id, error),
+        Err(_) => matter_sensitive_timeout(id),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MatterWakeKind {
+    Create,
+    Remove,
+    Cancel,
+    Repair,
+}
+
+fn matter_admitted(
+    id: Value,
+    actor: &Actor,
+    outcome: MatterOperationCreateOutcome,
+    execution: Option<&MatterExecutionHandle>,
+    wake: MatterWakeKind,
+) -> RpcResponse {
+    let operation = match outcome {
+        MatterOperationCreateOutcome::Created(operation)
+        | MatterOperationCreateOutcome::ExistingEquivalent(operation) => operation,
+        MatterOperationCreateOutcome::Conflict(_) => return matter_conflict(id),
+    };
+    let execution_state = execution.map_or("durable_pending", |execution| {
+        let result = match wake {
+            MatterWakeKind::Create => execution.wake_create(actor.clone(), operation.id.clone()),
+            MatterWakeKind::Remove => execution.wake_remove(actor.clone(), operation.id.clone()),
+            MatterWakeKind::Cancel => execution.wake_cancel(actor.clone(), operation.id.clone()),
+            MatterWakeKind::Repair => execution.wake_repair(actor.clone(), operation.id.clone()),
+        };
+        if result.is_ok() {
+            "queued"
+        } else {
+            "durable_pending"
+        }
+    });
+    RpcResponse::success(
+        id,
+        json!({"schema": "matter.operation.v1", "operation": operation, "execution": execution_state}),
+    )
+}
+
+fn matter_awaiting_sensitive_input(
+    id: Value,
+    outcome: MatterOperationCreateOutcome,
+) -> RpcResponse {
+    match outcome {
+        MatterOperationCreateOutcome::Created(operation)
+        | MatterOperationCreateOutcome::ExistingEquivalent(operation) => RpcResponse::success(
+            id,
+            json!({"schema": "matter.operation.v1", "operation": operation, "execution": "awaiting_sensitive_input"}),
+        ),
+        MatterOperationCreateOutcome::Conflict(_) => matter_conflict(id),
+    }
+}
+
 fn matter_invalid_params(id: Value) -> RpcResponse {
     RpcResponse::error(
         id,
         -32602,
         "Invalid params",
         Some(json!({"code": "invalid_matter_params"})),
+    )
+}
+
+fn matter_unavailable(id: Value) -> RpcResponse {
+    RpcResponse::error(
+        id,
+        -32060,
+        "Matter services unavailable",
+        Some(json!({"code": "matter_unavailable"})),
+    )
+}
+
+fn matter_conflict(id: Value) -> RpcResponse {
+    RpcResponse::error(
+        id,
+        -32061,
+        "Matter operation conflict",
+        Some(json!({"code": "matter_conflict"})),
+    )
+}
+
+fn matter_sensitive_timeout(id: Value) -> RpcResponse {
+    RpcResponse::error(
+        id,
+        -32062,
+        "Matter sensitive exchange timed out",
+        Some(json!({"code": "matter_sensitive_timeout"})),
     )
 }
 
@@ -1034,6 +1594,51 @@ fn matter_fabric_error(id: Value, error: MatterFabricWorkflowError) -> RpcRespon
         | MatterFabricWorkflowError::RevisionExhausted
         | MatterFabricWorkflowError::UnexpectedExportFormat
         | MatterFabricWorkflowError::InvalidFabricStage => matter_internal(id),
+    }
+}
+
+fn matter_node_workflow_error(id: Value, error: MatterNodeWorkflowError) -> RpcResponse {
+    match error {
+        MatterNodeWorkflowError::Administration(error) => matter_administration_error(id, &error),
+        MatterNodeWorkflowError::FabricNotFound | MatterNodeWorkflowError::NodeNotFound => {
+            matter_not_found(id)
+        }
+        MatterNodeWorkflowError::FabricNotActive
+        | MatterNodeWorkflowError::InvalidOperationState
+        | MatterNodeWorkflowError::InvalidOperationTarget => matter_conflict(id),
+        MatterNodeWorkflowError::SimulatorOnly => RpcResponse::error(
+            id,
+            -32066,
+            "Matter evidence boundary mismatch",
+            Some(json!({"code": "matter_evidence_mismatch"})),
+        ),
+        MatterNodeWorkflowError::Repository(_)
+        | MatterNodeWorkflowError::CommissioningResultMissing
+        | MatterNodeWorkflowError::TimeOverflow
+        | MatterNodeWorkflowError::InvalidDeviceState => matter_internal(id),
+    }
+}
+
+fn matter_subscription_error(id: Value, error: MatterSubscriptionRepairError) -> RpcResponse {
+    match error {
+        MatterSubscriptionRepairError::Administration(error) => {
+            matter_administration_error(id, &error)
+        }
+        MatterSubscriptionRepairError::OperationNotFound
+        | MatterSubscriptionRepairError::SubscriptionNotFound => matter_not_found(id),
+        MatterSubscriptionRepairError::InvalidPhase => matter_conflict(id),
+        MatterSubscriptionRepairError::InvalidProjection
+        | MatterSubscriptionRepairError::InvalidRetryDeadline
+        | MatterSubscriptionRepairError::Repository(_) => matter_internal(id),
+    }
+}
+
+fn matter_execution_error(id: Value, error: MatterExecutionError) -> RpcResponse {
+    match error {
+        MatterExecutionError::Unavailable | MatterExecutionError::Busy => matter_unavailable(id),
+        MatterExecutionError::Fabric(error) => matter_fabric_error(id, error),
+        MatterExecutionError::Node(error) => matter_node_workflow_error(id, error),
+        MatterExecutionError::Subscription(error) => matter_subscription_error(id, error),
     }
 }
 
@@ -2118,10 +2723,11 @@ mod tests {
         ActorAuthenticationError, AuthenticateActor, AutomationDraft, BroadcastDomainEventSink,
         CommandDispatcher, CommandLimitConfig, CommandLimits, CommandRepository,
         CommandServiceDependencies, DeviceRegistry, FoundationRepository, FoundationWrite,
-        MatterAdministrationRequest, MatterFabricSecretRefs, MatterFabricState,
-        MatterOperationCreateOutcome, MatterRepository, MemoryFoundationRepository,
-        NoopCommandAuditSink, NoopDomainEventSink, SecretStore, SecretStoreError, SecretValue,
-        StoredMatterFabric, SystemClock,
+        MatterAdministrationRequest, MatterExecutionWorker, MatterFabricSecretRefs,
+        MatterFabricState, MatterNodeWorkflowService, MatterOperationCreateOutcome,
+        MatterRepository, MatterSubscriptionRecoveryPolicy, MatterSubscriptionRepairService,
+        MemoryFoundationRepository, NoopCommandAuditSink, NoopDomainEventSink, SecretStore,
+        SecretStoreError, SecretValue, StoredMatterFabric, SystemClock,
     };
     use homemagic_domain::{
         ActorGrant, ActorId, AdapterAcknowledgement, CapabilitySnapshot, CausationMetadata,
@@ -2131,7 +2737,7 @@ mod tests {
         IntegrationInstance, MatterFabricId, MatterNodeId, MatterOperationKind,
         MatterOperationTarget, NetworkLocation, OnOffCommand, RiskClass, SecretRef,
     };
-    use homemagic_matter::DeterministicMatterSimulator;
+    use homemagic_matter::{DeterministicMatterSimulator, SIMULATOR_LIGHT_SETUP};
     use homemagic_storage::SqliteRepository;
     use tempfile::TempDir;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -2247,6 +2853,12 @@ mod tests {
                         actions: BTreeSet::from([
                             CommandAction::MatterRead,
                             CommandAction::MatterCreateFabric,
+                            CommandAction::MatterCommissionNode,
+                            CommandAction::MatterCancelOperation,
+                            CommandAction::MatterRemoveNode,
+                            CommandAction::MatterExportFabric,
+                            CommandAction::MatterRestoreFabric,
+                            CommandAction::MatterRepairSubscription,
                         ]),
                         scope: GrantScope::Installation {
                             installation_id: installation_id.clone(),
@@ -2334,6 +2946,43 @@ mod tests {
                 MatterNodeInventoryService::new(administration.clone(), repository.clone()),
                 MatterDiagnosticsService::new(administration, repository, self.controller.clone()),
             )
+        }
+
+        fn mutation_services(&self) -> (MatterApiServices, MatterExecutionWorker) {
+            let repository = self.repository.clone();
+            let administration =
+                MatterAdministrationService::new(repository.clone(), repository.clone());
+            let fabric = MatterFabricWorkflowService::new(
+                administration.clone(),
+                repository.clone(),
+                self.controller.clone(),
+                Arc::new(UnusedSecretStore),
+            );
+            let nodes = MatterNodeWorkflowService::new(
+                administration.clone(),
+                repository.clone(),
+                self.controller.clone(),
+            );
+            let subscriptions = MatterSubscriptionRepairService::new(
+                administration.clone(),
+                repository.clone(),
+                self.controller.clone(),
+                MatterSubscriptionRecoveryPolicy::default(),
+            );
+            let (execution, worker) = MatterExecutionHandle::channel(
+                16,
+                fabric.clone(),
+                nodes.clone(),
+                subscriptions.clone(),
+            );
+            let services = MatterApiServices::new(
+                fabric,
+                administration.clone(),
+                MatterNodeInventoryService::new(administration.clone(), repository.clone()),
+                MatterDiagnosticsService::new(administration, repository, self.controller.clone()),
+            )
+            .with_mutations(nodes, subscriptions, execution);
+            (services, worker)
         }
     }
 
@@ -2585,6 +3234,252 @@ mod tests {
         )
         .await;
         assert_eq!(unavailable.error.map(|error| error.code), Some(-32060));
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the contract keeps admission, sensitive exchange, timeout, and persistence evidence together"
+    )]
+    async fn matter_mutations_should_be_immediate_sensitive_and_restart_safe() {
+        const RESTORE_CANARY: &[u8] = b"rpc-sensitive-restore-canary";
+        const RECOVERY_CANARY: &[u8] = b"rpc-sensitive-recovery-canary";
+
+        let fixture = MatterRpcFixture::new()
+            .await
+            .unwrap_or_else(|error| panic!("Matter mutation fixture: {error}"));
+        let (services, mut worker) = fixture.mutation_services();
+
+        let create = dispatch_matter(
+            Some(&services),
+            &fixture.actor,
+            matter_request(
+                "matter.fabric.create",
+                json!({"idempotency_key": "rpc-create"}),
+            ),
+        )
+        .await;
+        let create_operation_id: MatterOperationId = serde_json::from_value(
+            create
+                .result
+                .as_ref()
+                .unwrap_or_else(|| panic!("create result"))["operation"]["id"]
+                .clone(),
+        )
+        .unwrap_or_else(|error| panic!("create operation ID: {error}"));
+        assert_eq!(
+            create
+                .result
+                .as_ref()
+                .and_then(|result| result["execution"].as_str()),
+            Some("queued")
+        );
+        worker
+            .run_next()
+            .await
+            .unwrap_or_else(|error| panic!("create worker: {error}"));
+
+        let duplicate = dispatch_matter(
+            Some(&services),
+            &fixture.actor,
+            matter_request(
+                "matter.fabric.create",
+                json!({"idempotency_key": "rpc-create"}),
+            ),
+        )
+        .await;
+        assert_eq!(
+            duplicate
+                .result
+                .as_ref()
+                .and_then(|result| result["operation"]["id"].as_str()),
+            Some(create_operation_id.to_string().as_str())
+        );
+        worker
+            .run_next()
+            .await
+            .unwrap_or_else(|error| panic!("duplicate create worker: {error}"));
+
+        let conflict = dispatch_matter(
+            Some(&services),
+            &fixture.actor,
+            matter_request(
+                "matter.fabric.export.start",
+                json!({"idempotency_key": "rpc-create"}),
+            ),
+        )
+        .await;
+        assert_eq!(conflict.error.map(|error| error.code), Some(-32061));
+        let denied = dispatch_matter(
+            Some(&services),
+            &fixture.denied_actor,
+            matter_request(
+                "matter.fabric.create",
+                json!({"idempotency_key": "denied-create"}),
+            ),
+        )
+        .await;
+        assert_eq!(denied.error.map(|error| error.code), Some(-32063));
+        let injected = dispatch_matter(
+            Some(&services),
+            &fixture.actor,
+            matter_request(
+                "matter.fabric.create",
+                json!({"idempotency_key": "injected", "actor_id": fixture.other_actor.id}),
+            ),
+        )
+        .await;
+        assert_eq!(injected.error.map(|error| error.code), Some(-32602));
+
+        let commission = dispatch_matter(
+            Some(&services),
+            &fixture.actor,
+            matter_request(
+                "matter.nodes.commission.start",
+                json!({"idempotency_key": "rpc-commission"}),
+            ),
+        )
+        .await;
+        let commission_operation_id: MatterOperationId = serde_json::from_value(
+            commission
+                .result
+                .as_ref()
+                .unwrap_or_else(|| panic!("commission result"))["operation"]["id"]
+                .clone(),
+        )
+        .unwrap_or_else(|error| panic!("commission operation ID: {error}"));
+        assert_eq!(
+            commission
+                .result
+                .as_ref()
+                .and_then(|result| result["execution"].as_str()),
+            Some("awaiting_sensitive_input")
+        );
+        let sensitive = matter_request(
+            "matter.nodes.commission.submit",
+            json!({
+                "operation_id": commission_operation_id,
+                "setup_payload": SIMULATOR_LIGHT_SETUP
+            }),
+        );
+        let worker_task = tokio::spawn(async move { worker.run_next().await });
+        let commissioned =
+            dispatch_matter_sensitive(Some(&services), &fixture.actor, sensitive).await;
+        assert!(commissioned.error.is_none());
+        worker_task
+            .await
+            .unwrap_or_else(|error| panic!("commission worker join: {error}"))
+            .unwrap_or_else(|error| panic!("commission worker: {error}"));
+
+        let ordinary_secret = dispatch_matter(
+            Some(&services),
+            &fixture.actor,
+            matter_request(
+                "matter.nodes.commission.submit",
+                json!({"operation_id": commission_operation_id, "setup_payload": [1]}),
+            ),
+        )
+        .await;
+        assert_eq!(ordinary_secret.error.map(|error| error.code), Some(-32601));
+        let sensitive_ordinary = dispatch_matter_sensitive(
+            Some(&services),
+            &fixture.actor,
+            matter_request(
+                "matter.fabric.create",
+                json!({"idempotency_key": "wrong-endpoint"}),
+            ),
+        )
+        .await;
+        assert_eq!(
+            sensitive_ordinary.error.map(|error| error.code),
+            Some(-32601)
+        );
+
+        let (timeout_services, _unpolled_worker) = fixture.mutation_services();
+        let timeout_services = timeout_services.with_sensitive_timeout(Duration::from_millis(1));
+        let restore = dispatch_matter(
+            Some(&timeout_services),
+            &fixture.actor,
+            matter_request(
+                "matter.fabric.restore.start",
+                json!({"idempotency_key": "rpc-restore-timeout"}),
+            ),
+        )
+        .await;
+        let restore_operation_id = restore
+            .result
+            .as_ref()
+            .unwrap_or_else(|| panic!("restore result"))["operation"]["id"]
+            .clone();
+        let timed_out = dispatch_matter_sensitive(
+            Some(&timeout_services),
+            &fixture.actor,
+            matter_request(
+                "matter.fabric.restore.submit",
+                json!({
+                    "operation_id": restore_operation_id,
+                    "envelope": RESTORE_CANARY,
+                    "recovery_key": RECOVERY_CANARY
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(timed_out.error.map(|error| error.code), Some(-32062));
+        let database = std::fs::read(&fixture.path)
+            .unwrap_or_else(|error| panic!("read Matter mutation database: {error}"));
+        for canary in [RESTORE_CANARY, RECOVERY_CANARY, SIMULATOR_LIGHT_SETUP] {
+            assert!(
+                !database
+                    .windows(canary.len())
+                    .any(|window| window == canary),
+                "sensitive input entered SQLite"
+            );
+        }
+
+        let catalog = matter_mutation_rpc_schema()
+            .unwrap_or_else(|error| panic!("Matter mutation schema: {error}"));
+        assert_eq!(
+            catalog["ordinary_methods"]
+                .as_object()
+                .map(serde_json::Map::len),
+            Some(8)
+        );
+        assert_eq!(
+            catalog["sensitive_methods"]
+                .as_object()
+                .map(serde_json::Map::len),
+            Some(3)
+        );
+        let ordinary = serde_json::to_string(&catalog["ordinary_methods"])
+            .unwrap_or_else(|error| panic!("ordinary Matter schema: {error}"));
+        for forbidden in ["setup_payload", "envelope", "recovery_key", "actor_id"] {
+            assert!(
+                !ordinary.contains(forbidden),
+                "ordinary schema leaked {forbidden}"
+            );
+        }
+
+        let reopened = Arc::new(
+            SqliteRepository::open(&fixture.path)
+                .unwrap_or_else(|error| panic!("reopen Matter mutation repository: {error}")),
+        );
+        let reopened_services = fixture.services(reopened);
+        let operation = dispatch_matter(
+            Some(&reopened_services),
+            &fixture.actor,
+            matter_request(
+                "matter.operations.get",
+                json!({"operation_id": commission_operation_id}),
+            ),
+        )
+        .await;
+        assert_eq!(
+            operation
+                .result
+                .as_ref()
+                .and_then(|result| result["operation"]["phase"].as_str()),
+            Some("completed")
+        );
     }
 
     struct FixedAuthenticator(Actor);

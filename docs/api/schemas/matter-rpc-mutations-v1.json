@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homemagic.dev/schemas/matter-rpc-mutations-v1.json",
+  "title": "HomeMagic Matter mutation RPC v1",
+  "ordinary_methods": {
+    "matter.fabric.create": { "$ref": "#/$defs/idempotent" },
+    "matter.nodes.commission.start": { "$ref": "#/$defs/idempotent" },
+    "matter.commissioning.cancel": {
+      "type": "object",
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/identifier" },
+        "idempotency_key": { "$ref": "#/$defs/idempotency_key" }
+      },
+      "required": ["operation_id", "idempotency_key"],
+      "additionalProperties": false
+    },
+    "matter.nodes.remove": {
+      "type": "object",
+      "properties": {
+        "node_id": { "type": "integer", "minimum": 1 },
+        "idempotency_key": { "$ref": "#/$defs/idempotency_key" }
+      },
+      "required": ["node_id", "idempotency_key"],
+      "additionalProperties": false
+    },
+    "matter.subscriptions.repair": {
+      "type": "object",
+      "properties": {
+        "fabric_id": { "$ref": "#/$defs/identifier" },
+        "node_id": { "type": "integer", "minimum": 1 },
+        "idempotency_key": { "$ref": "#/$defs/idempotency_key" }
+      },
+      "required": ["fabric_id", "node_id", "idempotency_key"],
+      "additionalProperties": false
+    },
+    "matter.fabric.export.start": { "$ref": "#/$defs/idempotent" },
+    "matter.fabric.restore.start": { "$ref": "#/$defs/idempotent" },
+    "matter.unlock.approve": {
+      "type": "object",
+      "properties": { "command_id": { "$ref": "#/$defs/identifier" } },
+      "required": ["command_id"],
+      "additionalProperties": false
+    }
+  },
+  "sensitive_methods": {
+    "matter.nodes.commission.submit": {
+      "type": "object",
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/identifier" },
+        "setup_payload": { "$ref": "#/$defs/secret_bytes" }
+      },
+      "required": ["operation_id", "setup_payload"],
+      "additionalProperties": false
+    },
+    "matter.fabric.export.deliver": {
+      "type": "object",
+      "properties": { "operation_id": { "$ref": "#/$defs/identifier" } },
+      "required": ["operation_id"],
+      "additionalProperties": false
+    },
+    "matter.fabric.restore.submit": {
+      "type": "object",
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/identifier" },
+        "envelope": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "minItems": 1,
+          "maxItems": 1048576
+        },
+        "recovery_key": { "$ref": "#/$defs/secret_bytes" }
+      },
+      "required": ["operation_id", "envelope", "recovery_key"],
+      "additionalProperties": false
+    }
+  },
+  "result_envelopes": {
+    "operation": { "type": "object", "required": ["schema", "operation"] },
+    "unlock_approval": { "type": "object", "required": ["schema", "command"] },
+    "sensitive_export": { "type": "object", "required": ["schema", "operation", "export"] }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1 },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "idempotent": {
+      "type": "object",
+      "properties": { "idempotency_key": { "$ref": "#/$defs/idempotency_key" } },
+      "required": ["idempotency_key"],
+      "additionalProperties": false
+    },
+    "secret_bytes": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+      "minItems": 1,
+      "maxItems": 1024
+    }
+  }
+}
