@@ -6,17 +6,18 @@ use chrono::{DateTime, Utc};
 use homemagic_application::{
     BoxError, MatterCancellationCommit, MatterCommissioningCommit, MatterDesiredCommandSlot,
     MatterDesiredSlotOutcome, MatterDesiredStateWrite, MatterDispatchWrite, MatterFabricStage,
-    MatterOperationBinding, MatterOperationCreateOutcome, MatterOperationNodeResult,
-    MatterOperationProgress, MatterRecovery, MatterRepairRecord, MatterRepository, MatterRetention,
-    MatterRetentionResult, MatterUnlockAuthorization, MatterUnlockConsumption, StoredMatterFabric,
-    StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
+    MatterNodeInventoryRecord, MatterOperationBinding, MatterOperationCreateOutcome,
+    MatterOperationNodeResult, MatterOperationProgress, MatterRecovery, MatterRepairRecord,
+    MatterRepository, MatterRetention, MatterRetentionResult, MatterUnlockAuthorization,
+    MatterUnlockConsumption, StoredMatterFabric, StoredMatterNode, StoredMatterProjection,
+    StoredMatterSubscription,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, ActorId, ActorKind, CommandAction, CommandAggregate,
     CommandAuditRecord, CommandId, CommandPayload, CommandState, GrantScope, InstallationId,
-    MatterConvergence, MatterFabricId, MatterOperation, MatterOperationId, MatterOperationTarget,
-    MatterProjectionId, MatterStateFreshness, MatterStateValue, MatterUnlockAuthorizationId,
-    RiskClass,
+    MatterConvergence, MatterFabricId, MatterNodeId, MatterOperation, MatterOperationId,
+    MatterOperationTarget, MatterProjectionId, MatterStateFreshness, MatterStateValue,
+    MatterUnlockAuthorizationId, RiskClass,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
@@ -117,6 +118,85 @@ impl MatterRepository for SqliteRepository {
     ) -> Result<(), BoxError> {
         run_write(&self.connection, move |transaction| {
             store_node(transaction, &node, expected_revision)
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn matter_node_inventory(
+        &self,
+        installation_id: &InstallationId,
+        fabric_id: &MatterFabricId,
+        limit: usize,
+    ) -> Result<Vec<MatterNodeInventoryRecord>, BoxError> {
+        let installation_id = installation_id.to_string();
+        let fabric_id = fabric_id.to_string();
+        run_read(&self.connection, move |connection| {
+            if limit == 0 || limit > MAX_QUERY_PAGE {
+                return Err(StorageError::InvalidMatter("invalid node inventory limit"));
+            }
+            let mut statement = connection.prepare(
+                "SELECT payload_json FROM matter_nodes
+                 WHERE installation_id = ?1 AND fabric_id = ?2
+                 ORDER BY node_id ASC LIMIT ?3",
+            )?;
+            let nodes = statement
+                .query_map(
+                    params![installation_id, fabric_id, to_i64_usize(limit)?],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|payload| decode::<StoredMatterNode>(&payload))
+                .collect::<Result<Vec<StoredMatterNode>, _>>()?;
+            drop(statement);
+            if nodes.iter().any(|node| {
+                node.installation_id.to_string() != installation_id
+                    || node.descriptor.fabric_id().to_string() != fabric_id
+            }) {
+                return Err(StorageError::InvalidMatter(
+                    "node inventory payload escaped its durable scope",
+                ));
+            }
+            nodes
+                .into_iter()
+                .map(|node| load_node_inventory_record(connection, node))
+                .collect()
+        })
+        .await
+        .map_err(boxed)
+    }
+
+    async fn matter_node_inventory_item(
+        &self,
+        installation_id: &InstallationId,
+        fabric_id: &MatterFabricId,
+        node_id: MatterNodeId,
+    ) -> Result<Option<MatterNodeInventoryRecord>, BoxError> {
+        let installation_id = installation_id.to_string();
+        let fabric_id = fabric_id.to_string();
+        run_read(&self.connection, move |connection| {
+            let node = connection
+                .query_row(
+                    "SELECT payload_json FROM matter_nodes
+                     WHERE installation_id = ?1 AND fabric_id = ?2 AND node_id = ?3",
+                    params![installation_id, fabric_id, to_i64(node_id.get())?],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|payload| decode::<StoredMatterNode>(&payload))
+                .transpose()?;
+            if node.as_ref().is_some_and(|node| {
+                node.installation_id.to_string() != installation_id
+                    || node.descriptor.fabric_id().to_string() != fabric_id
+                    || node.descriptor.node_id() != node_id
+            }) {
+                return Err(StorageError::InvalidMatter(
+                    "node inventory payload escaped its durable scope",
+                ));
+            }
+            node.map(|node| load_node_inventory_record(connection, node))
+                .transpose()
         })
         .await
         .map_err(boxed)
@@ -657,6 +737,67 @@ fn store_fabric(
         ],
     )?;
     Ok(())
+}
+
+fn load_node_inventory_record(
+    connection: &Connection,
+    node: StoredMatterNode,
+) -> Result<MatterNodeInventoryRecord, StorageError> {
+    let fabric_id = node.descriptor.fabric_id().to_string();
+    let node_id = to_i64(node.descriptor.node_id().get())?;
+    let projections = load_payloads(
+        connection,
+        "SELECT payload_json FROM matter_projections
+         WHERE fabric_id = ?1 AND node_id = ?2
+         ORDER BY endpoint_number ASC, capability_schema ASC, id ASC",
+        params![fabric_id, node_id],
+    )?;
+    let subscription = connection
+        .query_row(
+            "SELECT payload_json FROM matter_subscriptions
+             WHERE fabric_id = ?1 AND node_id = ?2",
+            params![fabric_id, node_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|payload| decode(&payload))
+        .transpose()?;
+    let commissioning_result = connection
+        .query_row(
+            "SELECT payload_json FROM matter_operation_node_results
+             WHERE fabric_id = ?1 AND node_id = ?2
+             ORDER BY created_at ASC, operation_id ASC LIMIT 1",
+            params![fabric_id, node_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|payload| decode(&payload))
+        .transpose()?;
+    let record = MatterNodeInventoryRecord {
+        node,
+        projections,
+        subscription,
+        commissioning_result,
+    };
+    let coherent = record.projections.iter().all(|projection| {
+        projection.installation_id == record.node.installation_id
+            && projection.fabric_id == *record.node.descriptor.fabric_id()
+            && projection.node_id == record.node.descriptor.node_id()
+            && projection.device_id == record.node.device_id
+    }) && record.subscription.as_ref().is_none_or(|subscription| {
+        subscription.fabric_id == *record.node.descriptor.fabric_id()
+            && subscription.node_id == record.node.descriptor.node_id()
+    }) && record.commissioning_result.as_ref().is_none_or(|result| {
+        result.fabric_id == *record.node.descriptor.fabric_id()
+            && result.node_id == record.node.descriptor.node_id()
+            && result.device_id == record.node.device_id
+    });
+    if !coherent {
+        return Err(StorageError::InvalidMatter(
+            "node inventory relations are inconsistent",
+        ));
+    }
+    Ok(record)
 }
 
 fn store_node(

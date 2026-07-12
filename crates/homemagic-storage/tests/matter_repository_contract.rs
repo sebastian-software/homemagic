@@ -19,9 +19,10 @@ use homemagic_application::{
     MatterController, MatterCreateFabricRequest, MatterDesiredCommandSlot, MatterDesiredStateWrite,
     MatterDispatchAdmission, MatterDispatchWrite, MatterExportRequest, MatterFabricExportFormat,
     MatterFabricSecretRefs, MatterFabricStageState, MatterFabricState, MatterFabricWorkflowService,
-    MatterNodeWorkflowError, MatterNodeWorkflowService, MatterOperationCreateOutcome,
-    MatterOperationProgress, MatterRepairRecord, MatterRepairStatus, MatterRepository,
-    MatterRestoreRequest, MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
+    MatterNodeInventoryError, MatterNodeInventoryService, MatterNodeWorkflowError,
+    MatterNodeWorkflowService, MatterOperationCreateOutcome, MatterOperationProgress,
+    MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRestoreRequest,
+    MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
     MatterUnlockAuthorization, MatterUnlockConsumption, MatterWorkflowEvidence,
     MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue, StoredMatterFabric,
     StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
@@ -51,6 +52,7 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
+const _: Option<MatterNodeInventoryError> = None;
 
 #[derive(Clone, Copy)]
 struct FixedClock(DateTime<Utc>);
@@ -299,6 +301,14 @@ impl FabricWorkflowFixture {
             MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
             self.repository.clone(),
             controller,
+        )
+    }
+
+    #[allow(dead_code)]
+    fn inventory(&self) -> MatterNodeInventoryService {
+        MatterNodeInventoryService::new(
+            MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
+            self.repository.clone(),
         )
     }
 }
@@ -1189,6 +1199,186 @@ async fn commissioning_should_atomically_project_light_and_lock_and_survive_reop
     assert!(light.state.reported().is_some());
     assert!(lock.state.reported().is_some());
     assert_eq!(reopened_results, expected_results);
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one inventory contract covers bounded ordering, authorization isolation, DTO safety, and reopen"
+)]
+async fn node_inventory_should_be_bounded_secret_free_owned_and_restart_stable() -> TestResult {
+    let fixture = FabricWorkflowFixture::new().await?;
+    let now = Utc::now();
+    let controller = Arc::new(DeterministicMatterSimulator::new(now));
+    let fabric_workflow = fixture.workflow(controller.clone());
+    let MatterOperationCreateOutcome::Created(create) = fabric_workflow
+        .start_create(
+            &fixture.actor,
+            IdempotencyKey::new("inventory-fabric")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("fabric create operation missing".into());
+    };
+    let _created = fabric_workflow
+        .run_create(&fixture.actor, &create.id, now)
+        .await?;
+    let workflow = fixture.node_workflow(controller.clone());
+    let inventory = fixture.inventory();
+    let fabric_id = MatterFabricId::from_installation(&fixture.actor.installation_id);
+    assert!(
+        inventory
+            .list(&fixture.actor, &fabric_id, 16)
+            .await?
+            .is_empty()
+    );
+    assert!(matches!(
+        inventory.list(&fixture.actor, &fabric_id, 0).await,
+        Err(MatterNodeInventoryError::InvalidPageLimit)
+    ));
+    assert!(workflow.list_nodes(&fixture.actor, 16).await?.is_empty());
+    assert!(matches!(
+        workflow.list_nodes(&fixture.actor, 0).await,
+        Err(MatterNodeWorkflowError::InvalidPageLimit)
+    ));
+    assert!(matches!(
+        workflow.list_nodes(&fixture.actor, 257).await,
+        Err(MatterNodeWorkflowError::InvalidPageLimit)
+    ));
+
+    let mut commissioned = Vec::new();
+    for (key, setup) in [
+        ("inventory-lock", SIMULATOR_LOCK_SETUP),
+        ("inventory-light", SIMULATOR_LIGHT_SETUP),
+    ] {
+        let MatterOperationCreateOutcome::Created(operation) = workflow
+            .start_commission(&fixture.actor, IdempotencyKey::new(key)?, now)
+            .await?
+        else {
+            return Err("commissioning operation missing".into());
+        };
+        let MatterWorkflowOutcome::Completed { value, .. } = workflow
+            .run_commission(
+                &fixture.actor,
+                &operation.id,
+                MatterCommissioningInput::new(SecretValue::new(setup)),
+                now,
+            )
+            .await?
+        else {
+            return Err("commissioning did not complete".into());
+        };
+        commissioned.push(value);
+    }
+
+    let first_page = workflow.list_nodes(&fixture.actor, 1).await?;
+    let all = workflow.list_nodes(&fixture.actor, 256).await?;
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(first_page[0].node_id.get(), 0x1001);
+    assert_eq!(all.len(), 2);
+    assert!(all[0].node_id < all[1].node_id);
+    assert!(all.iter().all(|node| {
+        node.subscription_id.is_some()
+            && node.commissioning_operation_id.is_some()
+            && !node.projection_ids.is_empty()
+    }));
+    let detail = workflow
+        .get_node(&fixture.actor, MatterNodeId::new(0x1001)?)
+        .await?
+        .ok_or("inventory detail missing")?;
+    let json = serde_json::to_string(&detail)?;
+    assert_eq!(detail.summary, all[0]);
+    assert_eq!(detail.descriptor.node_id().get(), 0x1001);
+    assert!(!detail.projections.is_empty());
+    assert!(detail.subscription.is_some());
+    assert!(!json.contains("secret"));
+    assert!(!json.contains("controller"));
+    assert!(!json.contains(std::str::from_utf8(SIMULATOR_LIGHT_SETUP)?));
+
+    let foreign_installation = InstallationId::new();
+    fixture
+        .repository
+        .apply(FoundationWrite {
+            installations: vec![Installation {
+                id: foreign_installation.clone(),
+                name: "Foreign home".to_owned(),
+                created_at: now,
+            }],
+            ..FoundationWrite::default()
+        })
+        .await?;
+    let foreign_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: foreign_installation.clone(),
+        kind: homemagic_domain::ActorKind::User,
+        name: "Foreign reader".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(foreign_actor.clone(), None)
+        .await?;
+    fixture
+        .repository
+        .replace_actor_grants(
+            &foreign_actor.id,
+            vec![ActorGrant {
+                id: GrantId::new(),
+                actor_id: foreign_actor.id.clone(),
+                actions: BTreeSet::from([CommandAction::MatterRead]),
+                scope: GrantScope::Installation {
+                    installation_id: foreign_installation,
+                },
+                maximum_risk: RiskClass::Security,
+                enabled: true,
+            }],
+        )
+        .await?;
+    assert!(workflow.list_nodes(&foreign_actor, 16).await?.is_empty());
+    assert!(
+        workflow
+            .get_node(&foreign_actor, MatterNodeId::new(0x1001)?)
+            .await?
+            .is_none()
+    );
+
+    let disabled_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: fixture.actor.installation_id.clone(),
+        kind: homemagic_domain::ActorKind::User,
+        name: "Disabled reader".to_owned(),
+        enabled: false,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(disabled_actor.clone(), None)
+        .await?;
+    assert!(matches!(
+        workflow.list_nodes(&disabled_actor, 16).await,
+        Err(MatterNodeWorkflowError::Administration(_))
+    ));
+
+    let reopened = Arc::new(SqliteRepository::open(&fixture.path)?);
+    let reopened_workflow = MatterNodeWorkflowService::new(
+        MatterAdministrationService::new(reopened.clone(), reopened.clone()),
+        reopened,
+        controller,
+    );
+    let reopened_all = reopened_workflow.list_nodes(&fixture.actor, 256).await?;
+    let reopened_detail = reopened_workflow
+        .get_node(&fixture.actor, commissioned[0].node_id)
+        .await?
+        .ok_or("inventory detail missing after reopen")?;
+
+    assert_eq!(reopened_all, all);
+    assert_eq!(
+        reopened_detail.summary.commissioning_operation_id,
+        Some(commissioned[0].operation_id.clone())
+    );
     Ok(())
 }
 

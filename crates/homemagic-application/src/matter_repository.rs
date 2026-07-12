@@ -173,6 +173,19 @@ pub struct MatterOperationNodeResult {
     pub created_at: DateTime<Utc>,
 }
 
+/// One durable node with every bounded inventory relation needed by callers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MatterNodeInventoryRecord {
+    /// Latest durable node descriptor and stable common device identity.
+    pub node: StoredMatterNode,
+    /// Deterministically ordered capability projections for the node.
+    pub projections: Vec<StoredMatterProjection>,
+    /// Current logical subscription, when one has been created.
+    pub subscription: Option<StoredMatterSubscription>,
+    /// Immutable commissioning result that introduced the node.
+    pub commissioning_result: Option<MatterOperationNodeResult>,
+}
+
 /// One atomic successful commissioning projection commit.
 #[derive(Clone, Debug)]
 pub struct MatterCommissioningCommit {
@@ -437,6 +450,22 @@ pub trait MatterRepository: Send + Sync {
         node: StoredMatterNode,
         expected_revision: Option<u64>,
     ) -> Result<(), BoxError>;
+
+    /// Loads one bounded deterministic node inventory page for an installation fabric.
+    async fn matter_node_inventory(
+        &self,
+        installation_id: &InstallationId,
+        fabric_id: &MatterFabricId,
+        limit: usize,
+    ) -> Result<Vec<MatterNodeInventoryRecord>, BoxError>;
+
+    /// Loads one node and its durable inventory relations within an installation fabric.
+    async fn matter_node_inventory_item(
+        &self,
+        installation_id: &InstallationId,
+        fabric_id: &MatterFabricId,
+        node_id: MatterNodeId,
+    ) -> Result<Option<MatterNodeInventoryRecord>, BoxError>;
 
     /// Inserts or optimistically replaces one projection and its state.
     async fn store_matter_projection(

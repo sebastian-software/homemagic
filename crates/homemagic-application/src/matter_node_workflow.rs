@@ -6,30 +6,33 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use homemagic_domain::{
-    Actor, AvailabilityState, CapabilitySnapshot, CommandAction, DeviceRecord, DeviceSnapshot,
-    EndpointId, EndpointSnapshot, IdempotencyKey, IntegrationId, IntegrationInstance,
-    LifecycleTrigger, MatterAffectedResource, MatterControllerError, MatterControllerErrorCategory,
-    MatterControllerErrorCode, MatterControllerEventKind, MatterFabricId, MatterLockState,
-    MatterNodeDescriptor, MatterOperation, MatterOperationId, MatterOperationKind,
-    MatterOperationPhase, MatterOperationTarget, MatterRetryability, MatterStateValue,
+    Actor, AvailabilityState, CapabilitySnapshot, CommandAction, DeviceId, DeviceRecord,
+    DeviceSnapshot, EndpointId, EndpointSnapshot, IdempotencyKey, IntegrationId,
+    IntegrationInstance, LifecycleTrigger, MatterAffectedResource, MatterControllerError,
+    MatterControllerErrorCategory, MatterControllerErrorCode, MatterControllerEventKind,
+    MatterDescriptorRevision, MatterFabricId, MatterLockState, MatterNodeDescriptor, MatterNodeId,
+    MatterOperation, MatterOperationId, MatterOperationKind, MatterOperationPhase,
+    MatterOperationTarget, MatterProjectionId, MatterRetryability, MatterStateValue,
     MatterSubscriptionId, ObservationSourceKind, RepairId,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     BoxError, MatterAdministrationError, MatterAdministrationRequest, MatterAdministrationService,
     MatterAttributeSelection, MatterCancellationCommit, MatterCancellationOutcome,
     MatterCommissioningCommit, MatterCommissioningRequest, MatterFabricState,
-    MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
-    MatterReadRequest, MatterRepairRecord, MatterRepairStatus, MatterReportCausation,
-    MatterReportDecision, MatterRepository, MatterSubscriptionRequest, MatterWorkflowOutcome,
-    SecretValue, StoredMatterNode, StoredMatterSubscription, StoredMatterSubscriptionState,
-    advance_matter_projected_state, initial_stored_matter_projection, normalize_matter_report,
-    project_matter_node,
+    MatterNodeInventoryRecord, MatterOperationCreateOutcome, MatterOperationNodeResult,
+    MatterOperationProgress, MatterReadRequest, MatterRepairRecord, MatterRepairStatus,
+    MatterReportCausation, MatterReportDecision, MatterRepository, MatterSubscriptionRequest,
+    MatterWorkflowOutcome, SecretValue, StoredMatterNode, StoredMatterSubscription,
+    StoredMatterSubscriptionState, advance_matter_projected_state,
+    initial_stored_matter_projection, normalize_matter_report, project_matter_node,
 };
 
 const SIMULATOR_IMPLEMENTATION: &str = "homemagic-deterministic-simulator";
 const CONTROLLER_EVENT_PAGE: usize = 256;
+const NODE_INVENTORY_PAGE: usize = 256;
 const SUBSCRIPTION_MINIMUM_INTERVAL_MILLIS: u64 = 1_000;
 const SUBSCRIPTION_MAXIMUM_INTERVAL_MILLIS: u64 = 60_000;
 const COMMISSIONING_PHASES: [MatterOperationPhase; 6] = [
@@ -105,6 +108,76 @@ pub struct MatterCancellationResult {
     pub resolution: MatterCancellationResolution,
 }
 
+/// Secret-free stable node metadata for bounded inventory lists.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MatterNodeSummary {
+    /// Owning fabric.
+    pub fabric_id: MatterFabricId,
+    /// Fabric-scoped operational node identity.
+    pub node_id: MatterNodeId,
+    /// Stable common device identity.
+    pub device_id: DeviceId,
+    /// Latest descriptor revision visible in durable state.
+    pub descriptor_revision: MatterDescriptorRevision,
+    /// Optimistic durable node row revision.
+    pub revision: u64,
+    /// Stable capability projections in deterministic order.
+    pub projection_ids: Vec<MatterProjectionId>,
+    /// Stable logical subscription identity, when present.
+    pub subscription_id: Option<MatterSubscriptionId>,
+    /// Commissioning operation that atomically introduced the node.
+    pub commissioning_operation_id: Option<MatterOperationId>,
+    /// Last durable descriptor change.
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Secret-free durable capability metadata for one node projection.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MatterNodeProjectionMetadata {
+    /// Stable projection identity.
+    pub projection_id: MatterProjectionId,
+    /// Stable common endpoint identity.
+    pub endpoint_id: EndpointId,
+    /// Versioned common capability schema.
+    pub capability_schema: String,
+    /// Projection rule revision.
+    pub projection_revision: u64,
+    /// Optimistic durable row revision.
+    pub revision: u64,
+    /// Last durable state or metadata change.
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Secret-free durable subscription metadata for one node.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MatterNodeSubscriptionMetadata {
+    /// Stable logical subscription identity.
+    pub subscription_id: MatterSubscriptionId,
+    /// Recoverable durable state.
+    pub state: StoredMatterSubscriptionState,
+    /// Latest normalized report sequence.
+    pub report_sequence: u64,
+    /// Expected report or verification deadline.
+    pub stale_after: DateTime<Utc>,
+    /// Optimistic durable row revision.
+    pub revision: u64,
+    /// Last durable status change.
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Secret-free detail view over one durable Matter node.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MatterNodeDetail {
+    /// Stable list metadata.
+    pub summary: MatterNodeSummary,
+    /// Latest bounded SDK-neutral descriptor.
+    pub descriptor: MatterNodeDescriptor,
+    /// Deterministically ordered projected capabilities.
+    pub projections: Vec<MatterNodeProjectionMetadata>,
+    /// Current logical subscription, when present.
+    pub subscription: Option<MatterNodeSubscriptionMetadata>,
+}
+
 /// Application-owned orchestration for commissioning, inventory, and removal.
 #[derive(Clone)]
 pub struct MatterNodeWorkflowService {
@@ -166,6 +239,56 @@ impl MatterNodeWorkflowService {
             )
             .await
             .map_err(Into::into)
+    }
+
+    /// Lists a bounded deterministic page of durable nodes for the actor's installation.
+    ///
+    /// # Errors
+    ///
+    /// Fails when current read authority is absent, the page bound is invalid,
+    /// or durable inventory cannot be loaded.
+    pub async fn list_nodes(
+        &self,
+        authenticated_actor: &Actor,
+        limit: usize,
+    ) -> Result<Vec<MatterNodeSummary>, MatterNodeWorkflowError> {
+        if limit == 0 || limit > NODE_INVENTORY_PAGE {
+            return Err(MatterNodeWorkflowError::InvalidPageLimit);
+        }
+        let installation_id = self
+            .administration
+            .authorize_installation_action(authenticated_actor, CommandAction::MatterRead)
+            .await?;
+        let fabric_id = MatterFabricId::from_installation(&installation_id);
+        self.matter
+            .matter_node_inventory(&installation_id, &fabric_id, limit)
+            .await?
+            .iter()
+            .map(node_summary)
+            .collect()
+    }
+
+    /// Returns one durable node detail within the actor's installation.
+    ///
+    /// # Errors
+    ///
+    /// Fails when current read authority is absent or durable inventory cannot
+    /// be loaded. Nodes outside the actor's installation use the missing path.
+    pub async fn get_node(
+        &self,
+        authenticated_actor: &Actor,
+        node_id: MatterNodeId,
+    ) -> Result<Option<MatterNodeDetail>, MatterNodeWorkflowError> {
+        let installation_id = self
+            .administration
+            .authorize_installation_action(authenticated_actor, CommandAction::MatterRead)
+            .await?;
+        let fabric_id = MatterFabricId::from_installation(&installation_id);
+        self.matter
+            .matter_node_inventory_item(&installation_id, &fabric_id, node_id)
+            .await?
+            .map(node_detail)
+            .transpose()
     }
 
     /// Cancels locally while requested or admits a separate in-flight cancellation.
@@ -822,6 +945,12 @@ pub enum MatterNodeWorkflowError {
     /// Timestamp arithmetic exceeded the supported range.
     #[error("Matter node workflow timestamp overflow")]
     TimeOverflow,
+    /// Requested node inventory page was zero or exceeded the fixed maximum.
+    #[error("Matter node inventory page limit must be between 1 and 256")]
+    InvalidPageLimit,
+    /// Durable node inventory relations were internally inconsistent.
+    #[error("Matter node inventory state is inconsistent")]
+    InvalidInventoryState,
     /// This Track A workflow accepts only deterministic simulator evidence.
     #[error("workflow is available only for deterministic simulator evidence")]
     SimulatorOnly,
@@ -833,6 +962,90 @@ struct PreparedCommissioning {
     node: StoredMatterNode,
     projections: Vec<crate::StoredMatterProjection>,
     subscription_request: MatterSubscriptionRequest,
+}
+
+fn node_summary(
+    record: &MatterNodeInventoryRecord,
+) -> Result<MatterNodeSummary, MatterNodeWorkflowError> {
+    node_summary_ref(record)
+}
+
+fn node_summary_ref(
+    record: &MatterNodeInventoryRecord,
+) -> Result<MatterNodeSummary, MatterNodeWorkflowError> {
+    let descriptor = &record.node.descriptor;
+    let fabric_id = descriptor.fabric_id();
+    let node_id = descriptor.node_id();
+    let coherent = record.projections.iter().all(|projection| {
+        projection.installation_id == record.node.installation_id
+            && &projection.fabric_id == fabric_id
+            && projection.node_id == node_id
+            && projection.device_id == record.node.device_id
+    }) && record.subscription.as_ref().is_none_or(|subscription| {
+        &subscription.fabric_id == fabric_id && subscription.node_id == node_id
+    }) && record.commissioning_result.as_ref().is_none_or(|result| {
+        &result.fabric_id == fabric_id
+            && result.node_id == node_id
+            && result.device_id == record.node.device_id
+    });
+    if !coherent {
+        return Err(MatterNodeWorkflowError::InvalidInventoryState);
+    }
+    Ok(MatterNodeSummary {
+        fabric_id: fabric_id.clone(),
+        node_id,
+        device_id: record.node.device_id.clone(),
+        descriptor_revision: descriptor.descriptor_revision(),
+        revision: record.node.revision,
+        projection_ids: record
+            .projections
+            .iter()
+            .map(|projection| projection.projection_id.clone())
+            .collect(),
+        subscription_id: record
+            .subscription
+            .as_ref()
+            .map(|subscription| subscription.subscription_id.clone()),
+        commissioning_operation_id: record
+            .commissioning_result
+            .as_ref()
+            .map(|result| result.operation_id.clone()),
+        updated_at: record.node.updated_at,
+    })
+}
+
+fn node_detail(
+    record: MatterNodeInventoryRecord,
+) -> Result<MatterNodeDetail, MatterNodeWorkflowError> {
+    let summary = node_summary_ref(&record)?;
+    let projections = record
+        .projections
+        .into_iter()
+        .map(|projection| MatterNodeProjectionMetadata {
+            projection_id: projection.projection_id,
+            endpoint_id: projection.endpoint_id,
+            capability_schema: projection.capability_schema,
+            projection_revision: projection.projection_revision,
+            revision: projection.revision,
+            updated_at: projection.updated_at,
+        })
+        .collect();
+    let subscription = record
+        .subscription
+        .map(|subscription| MatterNodeSubscriptionMetadata {
+            subscription_id: subscription.subscription_id,
+            state: subscription.state,
+            report_sequence: subscription.report_sequence,
+            stale_after: subscription.stale_after,
+            revision: subscription.revision,
+            updated_at: subscription.updated_at,
+        });
+    Ok(MatterNodeDetail {
+        summary,
+        descriptor: record.node.descriptor,
+        projections,
+        subscription,
+    })
 }
 
 fn operation_fabric_id(
