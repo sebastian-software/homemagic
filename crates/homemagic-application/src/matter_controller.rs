@@ -383,6 +383,20 @@ pub enum MatterFabricExportFormat {
     ProtectedV1,
 }
 
+impl MatterFabricExportFormat {
+    /// Rejects simulator envelopes at the production import boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable contract error for simulator-only envelopes.
+    pub const fn ensure_protected(self) -> Result<(), MatterControllerContractError> {
+        match self {
+            Self::SimulatorV1 => Err(MatterControllerContractError::SimulatorExportNotImportable),
+            Self::ProtectedV1 => Ok(()),
+        }
+    }
+}
+
 /// Sensitive protected fabric export and one-time recovery key.
 #[derive(Clone)]
 pub struct MatterFabricExport {
@@ -476,6 +490,15 @@ impl MatterRestoreRequest {
     #[must_use]
     pub const fn format(&self) -> MatterFabricExportFormat {
         self.format
+    }
+
+    /// Enforces the production-only protected-envelope boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects simulator-only fixture exports before an adapter sees bytes.
+    pub const fn ensure_protected_format(&self) -> Result<(), MatterControllerContractError> {
+        self.format.ensure_protected()
     }
 
     /// Exposes the encrypted envelope only to the controller implementation.
@@ -582,6 +605,9 @@ pub enum MatterControllerContractError {
     /// Controller response exceeded its fixed batch/page bound.
     #[error("Matter controller response exceeds 256 items")]
     TooManyResponseItems,
+    /// Simulator-only fixture exports cannot cross a production import path.
+    #[error("simulator Matter exports cannot be imported by a production adapter")]
+    SimulatorExportNotImportable,
 }
 
 /// SDK-neutral runtime boundary implemented by the simulator and production adapter.
@@ -840,6 +866,18 @@ mod tests {
         let debug = format!("{export:?}");
 
         assert_eq!(debug.matches("[REDACTED]").count(), 2);
+    }
+
+    #[test]
+    fn simulator_export_should_fail_production_format_guard() {
+        assert_eq!(
+            MatterFabricExportFormat::SimulatorV1.ensure_protected(),
+            Err(MatterControllerContractError::SimulatorExportNotImportable)
+        );
+        assert_eq!(
+            MatterFabricExportFormat::ProtectedV1.ensure_protected(),
+            Ok(())
+        );
     }
 
     #[test]

@@ -544,6 +544,14 @@ async fn every_lifecycle_restart_phase_should_capture_resumable_state() -> TestR
 #[tokio::test]
 async fn protected_format_should_be_rejected_by_simulator_import() -> TestResult {
     let simulator = DeterministicMatterSimulator::new(started_at()?);
+    let simulator_only = MatterRestoreRequest::new(
+        operation_id(8)?,
+        fabric_id()?,
+        MatterFabricExportFormat::SimulatorV1,
+        SecretValue::new("simulator-envelope"),
+        SecretValue::new("simulator-key"),
+    );
+    assert!(simulator_only.ensure_protected_format().is_err());
     let result = simulator
         .restore_fabric(MatterRestoreRequest::new(
             operation_id(9)?,
