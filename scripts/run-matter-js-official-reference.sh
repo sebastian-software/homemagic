@@ -78,7 +78,9 @@ export GITHUB_ACTION=1
 export PW_ENVIRONMENT_ROOT="$workspace/environment"
 (
   cd "$workspace/reference-source"
+  set +u
   source scripts/bootstrap.sh -p "$platform"
+  set -u
   python3 scripts/build/build_examples.py --target "$target" build
 )
 
