@@ -5,6 +5,7 @@ import "@matter/nodejs";
 import { Environment, Logger } from "@matter/main";
 import { OnOffClient } from "@matter/main/behaviors/on-off";
 import { BasicInformationCluster, GeneralCommissioning } from "@matter/main/clusters";
+import { ControllerCommissioningFlow } from "@matter/protocol";
 import { CommissioningController } from "@project-chip/matter.js";
 import { writeFile } from "node:fs/promises";
 
@@ -40,6 +41,36 @@ const fail = async (phase, error) => {
     };
     await persist();
 };
+
+class InstrumentedCommissioningFlow extends ControllerCommissioningFlow {
+    constructor(...args) {
+        super(...args);
+        report.commissioning_stages = [];
+        for (const step of this.commissioningSteps) {
+            const execute = step.stepLogic;
+            step.stepLogic = async () => {
+                const stage = {
+                    step: `${step.stepNumber}.${step.subStepNumber}`,
+                    name: step.name,
+                    status: "started",
+                };
+                report.commissioning_stages.push(stage);
+                await persist();
+                try {
+                    const result = await execute();
+                    stage.status = "completed";
+                    await persist();
+                    return result;
+                } catch (error) {
+                    stage.status = "failed";
+                    stage.error_name = error?.name ?? "Error";
+                    await persist();
+                    throw error;
+                }
+            };
+        }
+    }
+}
 
 const watchdog = setTimeout(() => {
     outcomes.timeout = "fail";
@@ -85,7 +116,10 @@ try {
                         subscribeMinIntervalFloorSeconds: 0,
                         subscribeMaxIntervalCeilingSeconds: 5,
                     },
-                    { connectNodeAfterCommissioning: false },
+                    {
+                        connectNodeAfterCommissioning: false,
+                        commissioningFlowImpl: InstrumentedCommissioningFlow,
+                    },
                 );
             } catch (error) {
                 await fail("commission", error);
