@@ -35,12 +35,12 @@ request facts.
 
 ## Durable result boundary
 
-Schema 10 adds `matter_operation_node_results`. Each future row links exactly
+Schema 10 adds `matter_operation_node_results`. Each row links exactly
 one commissioning operation to a stored fabric-scoped node and stable common
 device. Foreign keys require the operation, node, and device to exist. The
-repository currently exposes a typed read contract; E4-007-03-02 will add the
-single atomic write that commits the node, projections, subscriptions, result,
-and terminal operation progress together.
+repository exposes typed read and atomic write contracts so the node,
+projections, subscription, result, and terminal operation progress become
+visible together.
 
 ## Commissioning execution
 
@@ -63,12 +63,50 @@ operation progress. A failure at any point rolls back every newly visible node
 fact. A second attempt to commission an already-present simulator node ends as a
 structured conflict and cannot duplicate common identities.
 
+## Cancellation and restart recovery
+
+Cancellation always names an owned commissioning operation. While commissioning
+is still `requested`, HomeMagic transitions it directly to `cancelled` and does
+not call the controller. Once work has crossed the dispatch boundary,
+`start_cancel_commissioning` first persists a separate actor-bound
+`CancelCommissioning` operation targeted at the original operation. Its runner
+then records `cancelling` before invoking the controller.
+
+The controller's three normalized outcomes have deliberately different durable
+meanings:
+
+- `cancelled` commits the original as `cancelled` and the cancellation as
+  `completed`;
+- `already_completed` never claims reversal: the original becomes
+  `repair_required` while the cancellation records a completed best-effort
+  request;
+- `outcome_unknown` makes both histories `repair_required`.
+
+Both operation transitions, their immutable progress facts, and any repair
+records share one SQLite transaction. A failed commit therefore leaves both
+prior phases intact instead of creating contradictory histories. A cancellation
+left durably in `cancelling` can be retried after reopen; this repeats only the
+idempotent best-effort cancellation request, never commissioning. Ownership is
+checked before disclosure, so an operation owned by another actor is returned
+through the same not-found path as an absent operation.
+
+`recover_commissioning` never accepts or reconstructs setup input and never
+calls `commission`. A completed atomic operation returns its stored node result;
+an already terminal operation is returned unchanged. For an interrupted
+nonterminal operation it inspects only bounded controller progress and inventory.
+Those sources currently lack an operation-to-node correlation fact, so they
+cannot prove which operation created a visible node. Recovery therefore fails
+closed to `repair_required` rather than guessing. This is intentional until the
+controller contract can carry authoritative correlation evidence.
+
 ## Verification
 
 SQLite contracts cover allowed, denied, duplicate, conflicting-key,
 inactive-fabric, light and lock projection, actual initial state, subscription,
-atomic rollback, reopen, and setup-canary behavior. Unit contracts reject
-skipped, reordered, and duplicate controller phases. Historical migration
-fixtures cover schema 9 to schema 10. Full workspace tests, all-feature strict
-Clippy, Matter dependency boundaries, and the repository secret scan remain
-required before each committed child slice closes.
+atomic rollback, reopen, setup-canary, owner isolation, local and in-flight
+cancellation, all cancellation outcomes, dual-history rollback, and all six
+commissioning restart checkpoints. Unit contracts reject skipped, reordered,
+and duplicate controller phases. Historical migration fixtures cover schema 9
+to schema 10. Full workspace tests, all-feature strict Clippy, Matter dependency
+boundaries, and the repository secret scan remain required before each committed
+child slice closes.
