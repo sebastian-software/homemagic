@@ -21,6 +21,7 @@ mod matter_node_workflow;
 mod matter_projection;
 mod matter_repository;
 mod matter_subscription;
+mod matter_subscription_repair;
 mod memory;
 mod policy;
 mod ports;
@@ -94,6 +95,7 @@ pub use matter_node_workflow::*;
 pub use matter_projection::*;
 pub use matter_repository::*;
 pub use matter_subscription::*;
+pub use matter_subscription_repair::*;
 pub use memory::{BroadcastDomainEventSink, MemoryFoundationRepository, NoopDomainEventSink};
 pub use policy::{
     CommandLimitCapacities, CommandLimitConfig, CommandLimitConfigError, CommandLimits,

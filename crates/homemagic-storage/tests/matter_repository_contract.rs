@@ -23,11 +23,12 @@ use homemagic_application::{
     MatterNodeInventoryService, MatterNodeWorkflowError, MatterNodeWorkflowService,
     MatterOperationCreateOutcome, MatterOperationNodeResult, MatterOperationProgress,
     MatterRepairRecord, MatterRepairStatus, MatterRepository, MatterRestoreRequest,
-    MatterRetention, MatterSimulatorRestoreInput, MatterSupersededCommand,
-    MatterUnlockAuthorization, MatterUnlockConsumption, MatterWorkflowEvidence,
-    MatterWorkflowOutcome, SecretStore, SecretStoreError, SecretValue, StoredMatterFabric,
-    StoredMatterNode, StoredMatterProjection, StoredMatterSubscription,
-    StoredMatterSubscriptionRecovery, StoredMatterSubscriptionState,
+    MatterRetention, MatterSimulatorRestoreInput, MatterSubscriptionRecoveryPolicy,
+    MatterSubscriptionRepairError, MatterSubscriptionRepairOutcome,
+    MatterSubscriptionRepairService, MatterSupersededCommand, MatterUnlockAuthorization,
+    MatterUnlockConsumption, MatterWorkflowEvidence, MatterWorkflowOutcome, SecretStore,
+    SecretStoreError, SecretValue, StoredMatterFabric, StoredMatterNode, StoredMatterProjection,
+    StoredMatterSubscription, StoredMatterSubscriptionRecovery, StoredMatterSubscriptionState,
 };
 use homemagic_domain::{
     AccessControlCommand, Actor, ActorGrant, AuditId, CapabilityDescriptor, CapabilitySnapshot,
@@ -40,10 +41,10 @@ use homemagic_domain::{
     MatterDeviceType, MatterEndpointDescriptor, MatterEndpointNumber, MatterFabricId,
     MatterLockState, MatterNodeDescriptor, MatterNodeId, MatterOperation, MatterOperationId,
     MatterOperationKind, MatterOperationPhase, MatterOperationTarget, MatterProjectedState,
-    MatterProjectionId, MatterRetryability, MatterStateFreshness, MatterStateRevision,
-    MatterStateValue, MatterSubscriptionId, MatterSubscriptionLossReason,
-    MatterUnlockAuthorizationId, OnOffCommand, PolicyDecision, PolicyReason, RepairId, RiskClass,
-    SecretRef,
+    MatterProjectionId, MatterReportedState, MatterRetryability, MatterStateFreshness,
+    MatterStateRevision, MatterStateUncertainty, MatterStateValue, MatterSubscriptionId,
+    MatterSubscriptionLossReason, MatterUnlockAuthorizationId, OnOffCommand, PolicyDecision,
+    PolicyReason, RepairId, RiskClass, SecretRef,
 };
 use homemagic_matter::{
     DeterministicMatterSimulator, MatterCommandAdapter, SIMULATOR_LIGHT_SETUP,
@@ -85,6 +86,7 @@ impl CommandDispatcher for CountingDispatcher {
 struct CountingDiagnosticsController {
     inner: Arc<DeterministicMatterSimulator>,
     status_calls: AtomicUsize,
+    read_calls: AtomicUsize,
     mutation_calls: AtomicUsize,
 }
 
@@ -93,6 +95,7 @@ impl CountingDiagnosticsController {
         Self {
             inner,
             status_calls: AtomicUsize::new(0),
+            read_calls: AtomicUsize::new(0),
             mutation_calls: AtomicUsize::new(0),
         }
     }
@@ -169,6 +172,7 @@ impl MatterController for CountingDiagnosticsController {
         homemagic_application::MatterControllerItems<MatterAttributeReport>,
         MatterControllerError,
     > {
+        self.read_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.read(request).await
     }
 
@@ -401,6 +405,7 @@ impl FabricWorkflowFixture {
                         CommandAction::MatterCommissionNode,
                         CommandAction::MatterCancelOperation,
                         CommandAction::MatterRemoveNode,
+                        CommandAction::MatterRepairSubscription,
                         CommandAction::MatterExportFabric,
                         CommandAction::MatterRestoreFabric,
                     ]),
@@ -451,6 +456,19 @@ impl FabricWorkflowFixture {
             MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
             self.repository.clone(),
             controller,
+        )
+    }
+
+    fn subscription_repair(
+        &self,
+        controller: Arc<dyn MatterController>,
+        policy: MatterSubscriptionRecoveryPolicy,
+    ) -> MatterSubscriptionRepairService {
+        MatterSubscriptionRepairService::new(
+            MatterAdministrationService::new(self.repository.clone(), self.repository.clone()),
+            self.repository.clone(),
+            controller,
+            policy,
         )
     }
 }
@@ -1788,6 +1806,486 @@ async fn matter_diagnostics_should_be_bounded_redacted_read_only_and_restart_sta
     );
     assert_eq!(counted_controller.status_calls.load(Ordering::SeqCst), 6);
     assert_eq!(counted_controller.mutation_calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the contract keeps idempotency, ownership, persistence, and projections together"
+)]
+async fn explicit_subscription_repair_should_be_idempotent_bounded_and_atomic() -> TestResult {
+    let (fixture, controller, _node_workflow, node, now) =
+        commissioned_node("subscription-repair", SIMULATOR_LIGHT_SETUP).await?;
+    let policy = MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?;
+    let workflow = fixture.subscription_repair(controller, policy);
+    let key = IdempotencyKey::new("subscription-repair-explicit")?;
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id.clone(),
+            node.node_id,
+            key.clone(),
+            now,
+        )
+        .await?
+    else {
+        return Err("subscription repair operation was not created".into());
+    };
+    let MatterOperationCreateOutcome::ExistingEquivalent(replayed) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id.clone(),
+            node.node_id,
+            key,
+            now,
+        )
+        .await?
+    else {
+        return Err("subscription repair retry was not idempotent".into());
+    };
+    assert_eq!(replayed.id, operation.id);
+
+    let foreign_actor = Actor {
+        id: homemagic_domain::ActorId::new(),
+        installation_id: fixture.actor.installation_id.clone(),
+        kind: homemagic_domain::ActorKind::Agent,
+        name: "Foreign repair agent".to_owned(),
+        enabled: true,
+        created_at: now,
+    };
+    fixture
+        .repository
+        .store_actor(foreign_actor.clone(), None)
+        .await?;
+    fixture
+        .repository
+        .replace_actor_grants(
+            &foreign_actor.id,
+            vec![ActorGrant {
+                id: GrantId::new(),
+                actor_id: foreign_actor.id.clone(),
+                actions: BTreeSet::from([CommandAction::MatterRepairSubscription]),
+                scope: GrantScope::Installation {
+                    installation_id: fixture.actor.installation_id.clone(),
+                },
+                maximum_risk: RiskClass::Security,
+                enabled: true,
+            }],
+        )
+        .await?;
+    assert!(matches!(
+        workflow.run(&foreign_actor, &operation.id, now).await,
+        Err(MatterSubscriptionRepairError::Administration(
+            MatterAdministrationError::OperationNotFound
+        ))
+    ));
+
+    let MatterSubscriptionRepairOutcome::Completed(completed) = workflow
+        .run(
+            &fixture.actor,
+            &operation.id,
+            now + TimeDelta::milliseconds(1),
+        )
+        .await?
+    else {
+        return Err("subscription repair did not complete".into());
+    };
+    assert_eq!(completed.phase, MatterOperationPhase::Completed);
+    let inventory = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &node.fabric_id,
+            node.node_id,
+        )
+        .await?
+        .ok_or("repaired inventory missing")?;
+    let subscription = inventory
+        .subscription
+        .ok_or("repaired subscription missing")?;
+    assert_eq!(
+        subscription.state,
+        StoredMatterSubscriptionState::Established
+    );
+    assert_eq!(subscription.recovery.gap_reason, None);
+    assert_eq!(subscription.recovery.gap_reads, 0);
+    assert_eq!(subscription.recovery.subscribe_attempts, 0);
+    assert!(
+        inventory
+            .projections
+            .iter()
+            .all(|projection| projection.state.freshness() == MatterStateFreshness::Fresh)
+    );
+    let reopened = SqliteRepository::open(&fixture.path)?;
+    let reopened_operation = reopened
+        .matter_administration_operation(&operation.id)
+        .await?
+        .ok_or("repaired operation missing after reopen")?
+        .0;
+    assert_eq!(reopened_operation, completed);
+    Ok(())
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the contract keeps every durable retry boundary and call count visible"
+)]
+async fn subscription_repair_should_wait_and_exhaust_without_exceeding_policy() -> TestResult {
+    let (fixture, controller, _node_workflow, node, now) =
+        commissioned_node("subscription-repair-exhaust", SIMULATOR_LIGHT_SETUP).await?;
+    let counted = Arc::new(CountingDiagnosticsController::new(controller.clone()));
+    let policy = MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?;
+    let workflow = fixture.subscription_repair(counted.clone(), policy);
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id.clone(),
+            node.node_id,
+            IdempotencyKey::new("subscription-repair-exhaust-explicit")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("subscription repair operation was not created".into());
+    };
+    let error = MatterControllerError::new(
+        MatterControllerErrorCategory::Protocol,
+        MatterControllerErrorCode::SubscriptionLost,
+        MatterRetryability::Safe,
+        Some(homemagic_domain::MatterAffectedResource::Node {
+            fabric_id: node.fabric_id.clone(),
+            node_id: node.node_id,
+        }),
+        None,
+    );
+    controller
+        .inject_fault(SimulatorFault::FailNext {
+            operation: SimulatorOperation::Subscribe,
+            error: error.clone(),
+        })
+        .await;
+    let MatterSubscriptionRepairOutcome::Waiting {
+        retry_at,
+        operation: waiting,
+    } = workflow
+        .run(
+            &fixture.actor,
+            &operation.id,
+            now + TimeDelta::milliseconds(1),
+        )
+        .await?
+    else {
+        return Err("first subscribe failure did not persist waiting".into());
+    };
+    assert_eq!(waiting.phase, MatterOperationPhase::Subscribing);
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        workflow
+            .run(
+                &fixture.actor,
+                &operation.id,
+                retry_at - TimeDelta::nanoseconds(1)
+            )
+            .await?,
+        MatterSubscriptionRepairOutcome::Waiting { .. }
+    ));
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 1);
+
+    controller
+        .inject_fault(SimulatorFault::FailNext {
+            operation: SimulatorOperation::Subscribe,
+            error,
+        })
+        .await;
+    let MatterSubscriptionRepairOutcome::RepairRequired(exhausted) = workflow
+        .run(&fixture.actor, &operation.id, retry_at)
+        .await?
+    else {
+        return Err("second subscribe failure did not exhaust repair".into());
+    };
+    assert_eq!(exhausted.phase, MatterOperationPhase::RepairRequired);
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 2);
+    let inventory = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &node.fabric_id,
+            node.node_id,
+        )
+        .await?
+        .ok_or("exhausted inventory missing")?;
+    let subscription = inventory
+        .subscription
+        .ok_or("exhausted subscription missing")?;
+    assert_eq!(
+        subscription.state,
+        StoredMatterSubscriptionState::RepairRequired
+    );
+    assert_eq!(subscription.recovery.gap_reads, 1);
+    assert_eq!(subscription.recovery.subscribe_attempts, 2);
+    assert_eq!(subscription.recovery.maximum_subscribe_attempts, 2);
+    assert_eq!(subscription.recovery.retry_at, None);
+    let recovery = fixture
+        .repository
+        .recover_matter(&fixture.actor.installation_id, retry_at, 16)
+        .await?;
+    assert!(recovery.repairs.iter().any(|repair| {
+        repair.operation_id == operation.id && repair.status == MatterRepairStatus::Open
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn subscription_repair_phase_commit_should_roll_back_every_related_fact() -> TestResult {
+    let (fixture, controller, _node_workflow, node, now) =
+        commissioned_node("subscription-repair-atomic", SIMULATOR_LIGHT_SETUP).await?;
+    let workflow = fixture.subscription_repair(
+        controller,
+        MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?,
+    );
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id.clone(),
+            node.node_id,
+            IdempotencyKey::new("subscription-repair-atomic-explicit")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("subscription repair operation was not created".into());
+    };
+    let before = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &node.fabric_id,
+            node.node_id,
+        )
+        .await?
+        .ok_or("subscription inventory missing before rollback")?;
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch(&format!(
+        "CREATE TRIGGER fail_subscription_repair_phase
+         BEFORE INSERT ON matter_operation_progress
+         WHEN NEW.operation_id = '{}' AND NEW.phase = 'reading_gap'
+         BEGIN
+           SELECT RAISE(ABORT, 'injected subscription repair phase failure');
+         END;",
+        operation.id
+    ))?;
+    drop(connection);
+
+    assert!(
+        workflow
+            .run(
+                &fixture.actor,
+                &operation.id,
+                now + TimeDelta::milliseconds(1)
+            )
+            .await
+            .is_err()
+    );
+    let after = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &node.fabric_id,
+            node.node_id,
+        )
+        .await?
+        .ok_or("subscription inventory missing after rollback")?;
+    assert_eq!(after, before);
+    let durable = fixture
+        .repository
+        .matter_administration_operation(&operation.id)
+        .await?
+        .ok_or("subscription repair operation missing after rollback")?
+        .0;
+    assert_eq!(durable.phase, MatterOperationPhase::Requested);
+
+    let connection = Connection::open(&fixture.path)?;
+    connection.execute_batch("DROP TRIGGER fail_subscription_repair_phase;")?;
+    drop(connection);
+    assert!(matches!(
+        workflow
+            .run(
+                &fixture.actor,
+                &operation.id,
+                now + TimeDelta::milliseconds(2)
+            )
+            .await?,
+        MatterSubscriptionRepairOutcome::Completed(_)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn subscription_repair_gap_failure_should_remain_visible_without_extra_io() -> TestResult {
+    let (fixture, controller, _node_workflow, node, now) =
+        commissioned_node("subscription-repair-gap-failure", SIMULATOR_LIGHT_SETUP).await?;
+    let counted = Arc::new(CountingDiagnosticsController::new(controller.clone()));
+    let workflow = fixture.subscription_repair(
+        counted.clone(),
+        MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?,
+    );
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id.clone(),
+            node.node_id,
+            IdempotencyKey::new("subscription-repair-gap-failure-explicit")?,
+            now,
+        )
+        .await?
+    else {
+        return Err("subscription repair operation was not created".into());
+    };
+    controller
+        .inject_fault(SimulatorFault::FailNext {
+            operation: SimulatorOperation::Read,
+            error: MatterControllerError::new(
+                MatterControllerErrorCategory::Protocol,
+                MatterControllerErrorCode::ReadFailed,
+                MatterRetryability::Safe,
+                None,
+                None,
+            ),
+        })
+        .await;
+    assert!(matches!(
+        workflow
+            .run(
+                &fixture.actor,
+                &operation.id,
+                now + TimeDelta::milliseconds(1)
+            )
+            .await?,
+        MatterSubscriptionRepairOutcome::Completed(_)
+    ));
+    assert_eq!(counted.read_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counted.mutation_calls.load(Ordering::SeqCst), 1);
+    let inventory = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &node.fabric_id,
+            node.node_id,
+        )
+        .await?
+        .ok_or("gap-failed inventory missing")?;
+    assert_eq!(
+        inventory
+            .subscription
+            .ok_or("gap-failed subscription missing")?
+            .state,
+        StoredMatterSubscriptionState::Established
+    );
+    assert!(inventory.projections.iter().all(|projection| {
+        projection.state.freshness() == MatterStateFreshness::Stale
+            && projection.state.uncertainty() == Some(MatterStateUncertainty::ReadFailed)
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn subscription_repair_should_not_overwrite_newer_durable_report_with_stale_read()
+-> TestResult {
+    let (fixture, controller, _node_workflow, node, now) =
+        commissioned_node("subscription-repair-stale-report", SIMULATOR_LIGHT_SETUP).await?;
+    let inventory = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &node.fabric_id,
+            node.node_id,
+        )
+        .await?
+        .ok_or("subscription inventory missing")?;
+    let mut projection = inventory.projections[0].clone();
+    let current = projection
+        .state
+        .reported()
+        .cloned()
+        .ok_or("commissioned report missing")?;
+    let future_sequence = current.report_sequence().saturating_add(100);
+    let future = MatterReportedState::new(
+        current.value().clone(),
+        current.data_version(),
+        future_sequence,
+        current.observed_at(),
+        now + TimeDelta::milliseconds(1),
+    )?;
+    projection.state = MatterProjectedState::new(
+        projection.projection_id.clone(),
+        projection.state.desired().cloned(),
+        Some(future),
+        projection.state.confirmed_revision(),
+        MatterStateFreshness::Fresh,
+        projection.state.convergence(),
+        None,
+    )?;
+    let expected_revision = projection.revision;
+    projection.revision += 1;
+    projection.updated_at = now + TimeDelta::milliseconds(1);
+    fixture
+        .repository
+        .store_matter_projection(projection, Some(expected_revision))
+        .await?;
+
+    let workflow = fixture.subscription_repair(
+        controller,
+        MatterSubscriptionRecoveryPolicy::new(2, 1, 10, 100, 0, 60_000)?,
+    );
+    let MatterOperationCreateOutcome::Created(operation) = workflow
+        .start(
+            &fixture.actor,
+            node.fabric_id.clone(),
+            node.node_id,
+            IdempotencyKey::new("subscription-repair-stale-report-explicit")?,
+            now + TimeDelta::milliseconds(2),
+        )
+        .await?
+    else {
+        return Err("subscription repair operation was not created".into());
+    };
+    assert!(matches!(
+        workflow
+            .run(
+                &fixture.actor,
+                &operation.id,
+                now + TimeDelta::milliseconds(3)
+            )
+            .await?,
+        MatterSubscriptionRepairOutcome::Completed(_)
+    ));
+    let after = fixture
+        .repository
+        .matter_node_inventory_item(
+            &fixture.actor.installation_id,
+            &node.fabric_id,
+            node.node_id,
+        )
+        .await?
+        .ok_or("repaired inventory missing")?;
+    let reported = after.projections[0]
+        .state
+        .reported()
+        .ok_or("durable report disappeared")?;
+    assert_eq!(reported.report_sequence(), future_sequence);
+    assert_eq!(
+        after.projections[0].state.freshness(),
+        MatterStateFreshness::Stale
+    );
+    assert_eq!(
+        after.projections[0].state.uncertainty(),
+        Some(MatterStateUncertainty::ReportGap)
+    );
     Ok(())
 }
 

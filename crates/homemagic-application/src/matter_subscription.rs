@@ -515,6 +515,23 @@ fn deterministic_jitter(subscription_id: &MatterSubscriptionId, attempt: u8, max
     value % maximum.saturating_add(1)
 }
 
+/// Computes the deterministic retry deadline after one consumed subscribe call.
+#[must_use]
+pub fn matter_subscription_retry_at(
+    subscription_id: &MatterSubscriptionId,
+    attempt: u8,
+    now: DateTime<Utc>,
+    policy: MatterSubscriptionRecoveryPolicy,
+) -> Option<DateTime<Utc>> {
+    let exponent = u32::from(attempt.saturating_sub(1)).min(31);
+    let base = policy.base_delay_millis.saturating_mul(1_u64 << exponent);
+    let jitter = deterministic_jitter(subscription_id, attempt, policy.jitter_millis);
+    add_millis(
+        now,
+        base.saturating_add(jitter).min(policy.maximum_delay_millis),
+    )
+}
+
 fn add_millis(time: DateTime<Utc>, millis: u64) -> Option<DateTime<Utc>> {
     i64::try_from(millis)
         .ok()

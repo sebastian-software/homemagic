@@ -215,6 +215,34 @@ pub struct MatterOperationNodeResult {
     pub created_at: DateTime<Utc>,
 }
 
+/// One optimistic projection replacement in an atomic subscription-repair step.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MatterSubscriptionProjectionWrite {
+    /// Replacement projection state.
+    pub projection: StoredMatterProjection,
+    /// Revision observed before the step began.
+    pub expected_revision: u64,
+}
+
+/// One atomic durable subscription-repair phase transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MatterSubscriptionRepairCommit {
+    /// Repair operation after its validated phase transition.
+    pub operation: MatterOperation,
+    /// Operation revision observed before the transition.
+    pub expected_operation_revision: u64,
+    /// Matching immutable progress fact.
+    pub progress: MatterOperationProgress,
+    /// Logical subscription checkpoint committed with the phase.
+    pub subscription: StoredMatterSubscription,
+    /// Subscription revision observed before the step began.
+    pub expected_subscription_revision: u64,
+    /// Projection replacements committed with the phase.
+    pub projections: Vec<MatterSubscriptionProjectionWrite>,
+    /// Optional terminal structured repair evidence.
+    pub repair: Option<MatterRepairRecord>,
+}
+
 /// One durable node with every bounded inventory relation needed by callers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatterNodeInventoryRecord {
@@ -606,6 +634,12 @@ pub trait MatterRepository: Send + Sync {
         &self,
         commit: MatterNodeRemovalCommit,
         expected_operation_revision: u64,
+    ) -> Result<(), BoxError>;
+
+    /// Atomically commits one subscription-repair phase and related state.
+    async fn commit_matter_subscription_repair(
+        &self,
+        commit: MatterSubscriptionRepairCommit,
     ) -> Result<(), BoxError>;
 
     /// Atomically replaces an operation and appends its progress fact.
