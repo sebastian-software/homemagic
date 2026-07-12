@@ -19,8 +19,8 @@ updated: 2026-07-12
 | [E4-007-01](E4-007-01-administration-service.md) | Done | One authenticated durable administration boundary |
 | [E4-007-02](E4-007-02-fabric-workflows.md) | Done | Fabric status, create, simulated export, and restore |
 | [E4-007-03](E4-007-03-node-operation-workflows.md) | Done | Commissioning, removal, cancellation, and restart recovery |
-| [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Ready | Bounded diagnostics and explicit subscription repair |
-| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | Versioned `matter.*` RPC and actor-filtered operation events |
+| [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Done | Bounded diagnostics and explicit subscription repair |
+| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Ready | Versioned `matter.*` RPC and actor-filtered operation events |
 
 ## Outcome
 
@@ -38,8 +38,8 @@ capability-oriented.
 - [x] Implement commissioning start, cancel, get, list, restart recovery, and
   repair-required handling.
 - [x] Implement node list/get/remove and partial-cleanup reporting.
-- [ ] Implement subscription status and explicit repair workflows.
-- [ ] Implement bounded redacted controller/fabric/node/endpoint diagnostics.
+- [x] Implement subscription status and explicit repair workflows.
+- [x] Implement bounded redacted controller/fabric/node/endpoint diagnostics.
 - [ ] Implement interactive unlock-authorization creation with server-derived
   actor and policy context.
 - [ ] Finalize versioned JSON-RPC schemas and stable error mappings for the
@@ -87,3 +87,6 @@ capability-oriented.
 - 2026-07-12: E4-007-03 completed durable commissioning, cancellation, bounded
   inventory, phase-by-phase restart recovery, and node removal with visible
   partial cleanup. Public CI run `29205464608` passed; E4-007-04 is ready.
+- 2026-07-12: E4-007-04 completed bounded read-only diagnostics, durable
+  subscription health, explicit repair, and fail-closed restart reconciliation.
+  Public CI run `29207369049` passed; E4-007-05 is ready.

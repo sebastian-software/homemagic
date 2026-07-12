@@ -40,12 +40,12 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 | [E4-007-03-03](E4-007-03-03-cancellation-recovery.md) | Done | E4-007-03-01, E4-007-03-02 | Cancellation and restart reconciliation |
 | [E4-007-03-04](E4-007-03-04-node-inventory.md) | Done | E4-007-03-02 | Authenticated bounded node inventory |
 | [E4-007-03-05](E4-007-03-05-node-removal.md) | Done | E4-007-03-03, E4-007-03-04 | Removal with visible partial cleanup |
-| [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | In progress | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
+| [E4-007-04](E4-007-04-subscription-diagnostics-repair.md) | Done | E4-007-01, E4-007-03 | Bounded diagnostics and subscription repair |
 | [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Done | E4-007-03 | Authenticated bounded read-only diagnostics |
 | [E4-007-04-02](E4-007-04-02-subscription-status.md) | Done | E4-007-04-01 | Deterministic subscription status |
 | [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Done | E4-007-04-02 | Explicit gap-read and resubscribe repair |
-| [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | In progress | E4-007-04-03 | Restart and exhaustion reconciliation |
-| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Planned | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
+| [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Done | E4-007-04-03 | Restart and exhaustion reconciliation |
+| [E4-007-05](E4-007-05-authenticated-rpc-events.md) | Ready | E4-007-02, E4-007-03, E4-007-04 | Authenticated RPC schemas and durable operation events |
 | [E4-008](E4-008-controller-feasibility.md) | Planned | E4-004 | Reproducible candidate evidence and accepted selection ADR |
 | [E4-009](E4-009-production-controller-adapter.md) | Planned | E4-005, E4-006, E4-008 | Selected production controller adapter |
 | [E4-010](E4-010-portability-interoperability.md) | Planned | E4-007, E4-009 | Protected fabric portability and reference interoperability |
@@ -164,3 +164,5 @@ Plan: [EPIC-004 Matter Controller Implementation Plan](../../plans/2026-07-12-ep
 - 2026-07-12: E4-007-04-04 fail-closed restart and unresolved-repair retention
   are implemented; all local CI-equivalent gates pass and public CI remains
   pending.
+- 2026-07-12: E4-007-04-04 passed public CI run `29207369049`; E4-007-04 and
+  all four children are done. E4-007-05 is ready.

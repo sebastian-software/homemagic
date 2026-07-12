@@ -3,7 +3,7 @@ id: E4-007-04-04
 epic: EPIC-004
 parent: E4-007-04
 title: Reconcile subscription repair restart and exhaustion
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-04-03]
 adrs: [ADR-0014, ADR-0033, ADR-0034, ADR-0041]
@@ -37,7 +37,7 @@ ends with explicit repair guidance; controller work is never blindly replayed.
 - [x] Phase-by-phase restart, deadline, exhaustion, retention, and reopen tests
   pass.
 - [x] Full local workspace, strict Clippy, boundary, and secret-scan gates pass.
-- [ ] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
+- [x] Public Linux x86_64/macOS ARM64 CI passes for the committed slice.
 
 ## Progress log
 
@@ -49,4 +49,6 @@ ends with explicit repair guidance; controller work is never blindly replayed.
   Seven targeted repair contracts and strict Clippy pass.
 - 2026-07-12: All 52 Matter repository contracts, historical migrations, the
   all-feature workspace, strict Clippy, Matter boundaries, and secret scan pass.
-  Commit, push, and public CI remain pending.
+  Commit and push remained pending.
+- 2026-07-12: Commits `5434412` and `ac89d39` passed public CI run
+  `29207369049` across Linux x86_64 and macOS ARM64. This issue is done.

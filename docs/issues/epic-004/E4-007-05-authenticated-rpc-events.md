@@ -3,7 +3,7 @@ id: E4-007-05
 epic: EPIC-004
 parent: E4-007
 title: Publish authenticated Matter RPC and operation events
-status: planned
+status: ready
 priority: high
 depends_on: [E4-007-02, E4-007-03, E4-007-04]
 adrs: [ADR-0003, ADR-0012, ADR-0013, ADR-0016, ADR-0035]
@@ -46,3 +46,8 @@ normal device-action API.
   matrices pass.
 - [ ] Actor isolation and event-cursor reconnect contracts pass.
 - [ ] API examples validate against executable schemas.
+
+## Progress log
+
+- 2026-07-12: E4-007-04 and all four diagnostics/repair children completed with
+  public cross-platform CI. This issue is ready.

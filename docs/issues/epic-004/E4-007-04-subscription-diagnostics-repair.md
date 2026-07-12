@@ -3,7 +3,7 @@ id: E4-007-04
 epic: EPIC-004
 parent: E4-007
 title: Expose bounded diagnostics and subscription repair
-status: in_progress
+status: done
 priority: high
 depends_on: [E4-007-01, E4-007-03]
 adrs: [ADR-0033, ADR-0034, ADR-0041]
@@ -20,7 +20,7 @@ updated: 2026-07-12
 | [E4-007-04-01](E4-007-04-01-read-only-diagnostics.md) | Done | Authenticated bounded read-only diagnostics |
 | [E4-007-04-02](E4-007-04-02-subscription-status.md) | Done | Deterministic freshness, budgets, and guidance |
 | [E4-007-04-03](E4-007-04-03-explicit-subscription-repair.md) | Done | Explicit gap-read and resubscribe workflow |
-| [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | In progress | Restart, exhaustion, retention, and exit evidence |
+| [E4-007-04-04](E4-007-04-04-repair-restart-exhaustion.md) | Done | Restart, exhaustion, retention, and exit evidence |
 
 ## Outcome
 
@@ -30,23 +30,23 @@ raw protocol mutation access.
 
 ## Tasks
 
-- [ ] Implement bounded fabric/node/endpoint and controller diagnostics.
-- [ ] Implement subscription status with freshness, retry, and repair state.
-- [ ] Add explicit resubscribe and bounded gap-read repair workflows.
-- [ ] Persist repair attempts and outcomes through administration operations.
-- [ ] Redact native identifiers, network material, setup data, and secrets.
+- [x] Implement bounded fabric/node/endpoint and controller diagnostics.
+- [x] Implement subscription status with freshness, retry, and repair state.
+- [x] Add explicit resubscribe and bounded gap-read repair workflows.
+- [x] Persist repair attempts and outcomes through administration operations.
+- [x] Redact native identifiers, network material, setup data, and secrets.
 
 ## Acceptance criteria
 
-- [ ] Diagnostics cannot trigger writes or expose raw cluster write methods.
-- [ ] Repair is explicit and never inferred as automatic catch-up permission.
-- [ ] Exhausted repair remains visible with stable remediation guidance.
+- [x] Diagnostics cannot trigger writes or expose raw cluster write methods.
+- [x] Repair is explicit and never inferred as automatic catch-up permission.
+- [x] Exhausted repair remains visible with stable remediation guidance.
 
 ## Verification
 
-- [ ] Pagination, redaction, retry exhaustion, restart, and repaired-gap tests
+- [x] Pagination, redaction, retry exhaustion, restart, and repaired-gap tests
   pass.
-- [ ] Diagnostic secret-canary scans remain clean.
+- [x] Diagnostic secret-canary scans remain clean.
 
 ## Progress log
 
@@ -71,3 +71,5 @@ raw protocol mutation access.
   E4-007-04-04 is ready.
 - 2026-07-12: E4-007-04-04 restart and retention reconciliation is implemented;
   all local CI-equivalent gates pass and public CI remains pending.
+- 2026-07-12: E4-007-04-04 passed public CI run `29207369049`; all four child
+  issues and this parent are done.
