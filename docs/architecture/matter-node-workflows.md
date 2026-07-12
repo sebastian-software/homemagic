@@ -42,10 +42,33 @@ repository currently exposes a typed read contract; E4-007-03-02 will add the
 single atomic write that commits the node, projections, subscriptions, result,
 and terminal operation progress together.
 
+## Commissioning execution
+
+`run_commission` reloads operation ownership and current authority, persists
+`validating_setup`, and only then consumes `MatterCommissioningInput`. The
+controller's bounded event page must contain the exact declared commissioning
+phase sequence for that operation. Missing, duplicate, or reordered phases
+become structured repair-required evidence instead of being inferred.
+
+After the controller returns an authoritative descriptor, HomeMagic applies the
+same versioned projection rules used everywhere else, performs one bounded read
+for the selected scalar paths, and establishes one stable logical subscription.
+The read supplies real initial on/off or lock state; no default state is
+invented for the common device snapshot.
+
+One repository transaction then writes or updates the stable Matter integration
+and enrolled common device, inserts the node descriptor, capability projections,
+established subscription, immutable operation-to-node result, and completed
+operation progress. A failure at any point rolls back every newly visible node
+fact. A second attempt to commission an already-present simulator node ends as a
+structured conflict and cannot duplicate common identities.
+
 ## Verification
 
 SQLite contracts cover allowed, denied, duplicate, conflicting-key,
-inactive-fabric, reopen, and setup-canary behavior. Historical migration
+inactive-fabric, light and lock projection, actual initial state, subscription,
+atomic rollback, reopen, and setup-canary behavior. Unit contracts reject
+skipped, reordered, and duplicate controller phases. Historical migration
 fixtures cover schema 9 to schema 10. Full workspace tests, all-feature strict
 Clippy, Matter dependency boundaries, and the repository secret scan remain
 required before each committed child slice closes.
