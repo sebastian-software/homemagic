@@ -10,9 +10,10 @@ use homemagic_application::{
     AutomationRepository, AutomationRetention, AutomationRuntime, AutomationRuntimeStep,
     AutomationScheduler, AutomationSimulationEvidence, AutomationSimulationFixture,
     AutomationSimulationInput, AutomationSimulationStatus, AutomationSimulator,
-    AutomationStepWrite, AutomationValidationEvidence, BoxError, Clock, FoundationRepository,
-    FoundationSnapshot, FoundationWrite, MemoryFoundationRepository, SimulationTriggerContext,
-    SimulationTriggerKind, StoredAutomationVersion,
+    AutomationStepWrite, AutomationValidationEvidence, BoxError, BroadcastDomainEventSink, Clock,
+    DomainEventSink, FoundationRepository, FoundationSnapshot, FoundationWrite,
+    MemoryFoundationRepository, SimulationTriggerContext, SimulationTriggerKind,
+    StoredAutomationVersion,
 };
 use homemagic_domain::{
     Actor, ActorId, AutomationAction, AutomationApprovalId, AutomationApprovalRecord,
@@ -43,17 +44,16 @@ async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version()
         .with_ymd_and_hms(2026, 7, 12, 12, 0, 0)
         .single()
         .ok_or("valid lifecycle instant")?;
-    let actor = Actor {
-        id: ActorId::new(),
-        installation_id: InstallationId::new(),
-        name: "Automation owner".to_owned(),
-        enabled: true,
-        created_at: now,
-    };
+    let actor = actor_at(now, "Automation owner");
     let mut document = document();
     document.provenance.author_id = actor.id.clone();
+    let event_sink = Arc::new(BroadcastDomainEventSink::new(16));
+    let mut wakeups = event_sink
+        .subscribe()
+        .ok_or("broadcast event subscription missing")?;
     let service =
-        AutomationLifecycleService::new(repository.clone(), foundation, Arc::new(FixedClock(now)));
+        AutomationLifecycleService::new(repository.clone(), foundation, Arc::new(FixedClock(now)))
+            .with_event_sink(event_sink);
 
     let draft = service.put_draft(&actor, document.clone(), None).await?;
     assert_eq!(draft.revision, 0);
@@ -70,6 +70,7 @@ async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version()
     };
     assert!(service.draft(&stranger, &document.id).await.is_err());
     let validated = service.validate(&actor, &document.id).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(1), wakeups.recv()).await??;
     assert_eq!(validated.state, AutomationVersionState::Validated);
     let simulated = service
         .simulate(
@@ -130,7 +131,38 @@ async fn lifecycle_service_should_enforce_owner_and_auto_ready_comfort_version()
             .await
             .is_err()
     );
+    let events = repository.events_after(0, 100).await?.events;
+    assert_lifecycle_events(&events);
     Ok(())
+}
+
+fn assert_lifecycle_events(events: &[homemagic_application::CursorEvent]) {
+    assert!(events.iter().all(|event| event.event.device_id.is_none()));
+    assert!(events.iter().any(|event| matches!(
+        event.event.kind,
+        DomainEventKind::AutomationVersionTransitioned {
+            to: AutomationVersionState::Ready,
+            ..
+        }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event.event.kind,
+        DomainEventKind::AutomationOperationalTransitioned {
+            to: homemagic_domain::AutomationOperationalState::Retired,
+            revision: 4,
+            ..
+        }
+    )));
+}
+
+fn actor_at(now: chrono::DateTime<Utc>, name: &str) -> Actor {
+    Actor {
+        id: ActorId::new(),
+        installation_id: InstallationId::new(),
+        name: name.to_owned(),
+        enabled: true,
+        created_at: now,
+    }
 }
 
 #[tokio::test]
@@ -263,6 +295,17 @@ async fn lifecycle_run_cancel_should_atomically_cancel_timer_and_append_outcome(
             .map(|step| step.kind),
         Some(AutomationTraceKind::Outcome)
     );
+    let events = repository.events_after(0, 100).await?.events;
+    assert!(events.iter().any(|event| matches!(
+        event.event.kind,
+        DomainEventKind::AutomationRunTransitioned {
+            ref run_id,
+            from: Some(AutomationRunState::Pending),
+            to: AutomationRunState::Cancelled,
+            revision: 1,
+            ..
+        } if *run_id == run.id
+    )));
     assert!(service.cancel_run(&actor, &run.id).await.is_err());
     Ok(())
 }
@@ -659,9 +702,15 @@ async fn engine_should_isolate_one_run_failure_and_advance_its_sibling() -> Test
         AutomationEventProcessor::new(repository.clone(), foundation.clone(), clock.clone());
     let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
     let runtime = AutomationRuntime::new(repository.clone(), foundation, clock);
-    let engine = AutomationEngine::new(repository.clone(), events, scheduler, runtime);
+    let event_sink = Arc::new(BroadcastDomainEventSink::new(4));
+    let mut wakeups = event_sink
+        .subscribe()
+        .ok_or("engine event subscription missing")?;
+    let engine = AutomationEngine::new(repository.clone(), events, scheduler, runtime)
+        .with_event_sink(event_sink);
 
     let tick = engine.tick(now, now).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(1), wakeups.recv()).await??;
 
     assert_eq!(tick.failures.len(), 1);
     assert_eq!(tick.failures[0].run_id, expired.id);
@@ -814,7 +863,7 @@ fn command_event(
 ) -> DomainEvent {
     DomainEvent {
         id: EventId::new(),
-        device_id,
+        device_id: Some(device_id),
         occurred_at,
         causation: CausationMetadata {
             correlation_id: CorrelationId::new(),

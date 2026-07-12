@@ -138,7 +138,7 @@ async fn repository_should_report_schema_and_wal_health() -> Result<(), BoxError
 
     let health = fixture.repository.health().await?;
 
-    assert_eq!(health.schema_version, 4);
+    assert_eq!(health.schema_version, 5);
     assert_eq!(health.integrity, "ok");
     assert!(health.wal_enabled);
     Ok(())
@@ -152,7 +152,7 @@ async fn repository_should_page_events_in_durable_cursor_order() -> Result<(), B
         .into_iter()
         .map(|to| DomainEvent {
             id: EventId::new(),
-            device_id: fixture.device.snapshot.id.clone(),
+            device_id: Some(fixture.device.snapshot.id.clone()),
             occurred_at,
             causation: CausationMetadata {
                 correlation_id: CorrelationId::new(),

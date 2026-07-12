@@ -44,3 +44,4 @@ decision supersedes an earlier one rather than silently rewriting history.
 - [ADR-0029: Require an explicit request for schedule catch-up](0029-require-explicit-schedule-catch-up.md)
 - [ADR-0030: Centralize authenticated automation lifecycle operations](0030-centralize-authenticated-automation-lifecycle.md)
 - [ADR-0031: Generate automation envelope fields server-side](0031-generate-automation-envelope-fields-server-side.md)
+- [ADR-0032: Stream automation transitions as general durable events](0032-stream-automation-transitions-as-general-events.md)

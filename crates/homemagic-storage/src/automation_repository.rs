@@ -9,7 +9,8 @@ use homemagic_application::{
 use homemagic_domain::{
     AutomationApprovalRecord, AutomationApprovalRequirement, AutomationApprovalState, AutomationId,
     AutomationOccurrence, AutomationOperationalState, AutomationRun, AutomationRunId,
-    AutomationTimer, AutomationTraceStep, AutomationVersion, canonical_automation_hash,
+    AutomationTimer, AutomationTraceStep, AutomationVersion, CausationMetadata, CorrelationId,
+    DomainEvent, DomainEventKind, EventId, canonical_automation_hash,
     canonical_automation_plan_hash,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -568,6 +569,11 @@ fn store_version(
                 "immutable automation version conflict",
             ));
         }
+    } else {
+        append_event(
+            transaction,
+            &version_event(version, None, version.validation.validated_at),
+        )?;
     }
     Ok(())
 }
@@ -634,6 +640,16 @@ fn transition_version(
             enum_name(&version.state)?,
             encode(version)?
         ],
+    )?;
+    let occurred_at = version
+        .simulation
+        .as_ref()
+        .map_or(version.validation.validated_at, |evidence| {
+            evidence.simulated_at
+        });
+    append_event(
+        transaction,
+        &version_event(version, Some(current.state), occurred_at),
     )?;
     Ok(())
 }
@@ -725,6 +741,7 @@ fn activate(
             found: identity.revision,
         });
     }
+    let previous_state = identity.state;
     identity.state = AutomationOperationalState::Active;
     identity.active_version = Some(activation.version);
     identity.revision = identity.revision.saturating_add(1);
@@ -741,6 +758,14 @@ fn activate(
             identity.updated_at,
             encode(&identity)?
         ],
+    )?;
+    append_event(
+        transaction,
+        &operational_event(
+            &identity,
+            previous_state,
+            Some(version.document.provenance.author_id.to_string()),
+        ),
     )?;
     Ok(identity)
 }
@@ -768,6 +793,17 @@ fn transition_identity(
             "invalid automation identity transition",
         ));
     }
+    let actor = if let Some(version) = current.active_version {
+        load_version(transaction, &current.id, version)?
+            .map(|version| version.document.provenance.author_id.to_string())
+    } else {
+        load_optional_payload::<AutomationDraft>(
+            transaction,
+            "SELECT payload_json FROM automation_drafts WHERE automation_id = ?1",
+            &current.id.to_string(),
+        )?
+        .map(|draft| draft.document.provenance.author_id.to_string())
+    };
     transaction.execute(
         "UPDATE automation_identities SET operational_state = ?2, revision = ?3,
                                           updated_at = ?4, payload_json = ?5
@@ -779,6 +815,10 @@ fn transition_identity(
             identity.updated_at,
             encode(identity)?
         ],
+    )?;
+    append_event(
+        transaction,
+        &operational_event(identity, current.state, actor),
     )?;
     Ok(identity.clone())
 }
@@ -926,6 +966,7 @@ fn create_run(transaction: &Transaction<'_>, run: &AutomationRun) -> Result<(), 
                     payload
                 ],
             )?;
+            append_event(transaction, &run_event(run, None))?;
             Ok(())
         },
     )
@@ -971,6 +1012,97 @@ fn transition_run(
             run.updated_at,
             encode(run)?
         ],
+    )?;
+    append_event(transaction, &run_event(run, Some(current.state)))?;
+    Ok(())
+}
+
+fn version_event(
+    version: &StoredAutomationVersion,
+    from: Option<homemagic_domain::AutomationVersionState>,
+    occurred_at: chrono::DateTime<chrono::Utc>,
+) -> DomainEvent {
+    DomainEvent {
+        id: EventId::new(),
+        device_id: None,
+        occurred_at,
+        causation: CausationMetadata {
+            correlation_id: CorrelationId::from_key(&format!(
+                "automation-version:{}:{}",
+                version.document.id,
+                version.document.version.get()
+            )),
+            causation_event_id: None,
+            actor: Some(version.document.provenance.author_id.to_string()),
+            automation: None,
+        },
+        kind: DomainEventKind::AutomationVersionTransitioned {
+            automation_id: version.document.id.clone(),
+            version: version.document.version,
+            from,
+            to: version.state,
+        },
+    }
+}
+
+fn operational_event(
+    identity: &AutomationIdentityState,
+    from: AutomationOperationalState,
+    actor: Option<String>,
+) -> DomainEvent {
+    DomainEvent {
+        id: EventId::new(),
+        device_id: None,
+        occurred_at: identity.updated_at,
+        causation: CausationMetadata {
+            correlation_id: CorrelationId::from_key(&format!(
+                "automation-operation:{}:{}",
+                identity.id, identity.revision
+            )),
+            causation_event_id: None,
+            actor,
+            automation: None,
+        },
+        kind: DomainEventKind::AutomationOperationalTransitioned {
+            automation_id: identity.id.clone(),
+            active_version: identity.active_version,
+            from,
+            to: identity.state,
+            revision: identity.revision,
+        },
+    }
+}
+
+fn run_event(
+    run: &AutomationRun,
+    from: Option<homemagic_domain::AutomationRunState>,
+) -> DomainEvent {
+    DomainEvent {
+        id: EventId::new(),
+        device_id: None,
+        occurred_at: run.updated_at,
+        causation: CausationMetadata {
+            correlation_id: run.correlation_id.clone(),
+            causation_event_id: run.causation_event_id.clone(),
+            actor: Some(run.actor_id.to_string()),
+            automation: None,
+        },
+        kind: DomainEventKind::AutomationRunTransitioned {
+            automation_id: run.automation_id.clone(),
+            version: run.version,
+            run_id: run.id.clone(),
+            from,
+            to: run.state,
+            revision: run.revision,
+        },
+    }
+}
+
+fn append_event(transaction: &Transaction<'_>, event: &DomainEvent) -> Result<(), StorageError> {
+    transaction.execute(
+        "INSERT INTO events(id, device_id, occurred_at, payload_json)
+         VALUES (?1, NULL, ?2, ?3)",
+        params![event.id.to_string(), event.occurred_at, encode(event)?],
     )?;
     Ok(())
 }

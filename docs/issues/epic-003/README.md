@@ -20,8 +20,8 @@ updated: 2026-07-12
 | [E3-004](E3-004-automation-storage.md) | Done | E3-002 | Durable versions, runs, timers, trace, retention |
 | [E3-005](E3-005-deterministic-simulator.md) | Done | E3-003 | Virtual-time side-effect-free simulation |
 | [E3-006](E3-006-runtime-scheduler.md) | Done | E3-003, E3-004 | Durable interpreter and scheduler |
-| [E3-007](E3-007-automation-rpc.md) | In progress | E3-004, E3-005, E3-006 | Governance and authenticated RPC |
-| [E3-008](E3-008-automation-exit-audit.md) | Planned | E3-007 | Operations and exit evidence |
+| [E3-007](E3-007-automation-rpc.md) | Done | E3-004, E3-005, E3-006 | Governance and authenticated RPC |
+| [E3-008](E3-008-automation-exit-audit.md) | In progress | E3-007 | Operations and exit evidence |
 
 ## Progress log
 
@@ -54,3 +54,7 @@ updated: 2026-07-12
   isolation, and same-timestamp load evidence. E3-007 is ready.
 - 2026-07-12: E3-007 started with one authenticated lifecycle boundary shared
   by internal callers and the upcoming JSON-RPC surface.
+- 2026-07-12: E3-007 completed with the full authenticated lifecycle RPC,
+  server-generated authoring envelopes, bounded owner-filtered queries, exact
+  approval gates, operational/run controls, and actor-isolated automation
+  transitions on the existing durable event cursor. E3-008 is active.

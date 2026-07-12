@@ -233,7 +233,8 @@ fn trigger_matches(trigger: &ResolvedAutomationTrigger, event: &DomainEvent) -> 
         ) => {
             expected == actual
                 && targets.iter().any(|target| {
-                    target.device_id == event.device_id && target.endpoint_id == *endpoint_id
+                    event.device_id.as_ref() == Some(&target.device_id)
+                        && target.endpoint_id == *endpoint_id
                 })
         }
         (
@@ -266,7 +267,7 @@ fn exact_target(
     endpoint_id: &homemagic_domain::EndpointId,
     capability: &str,
 ) -> bool {
-    target.device_id == event.device_id
+    event.device_id.as_ref() == Some(&target.device_id)
         && target.endpoint_id == *endpoint_id
         && target.capability == capability
 }
@@ -286,7 +287,7 @@ mod tests {
     fn event(kind: DomainEventKind) -> DomainEvent {
         DomainEvent {
             id: EventId::new(),
-            device_id: DeviceId::from_native("events", "relay"),
+            device_id: Some(DeviceId::from_native("events", "relay")),
             occurred_at: Utc::now(),
             causation: CausationMetadata {
                 correlation_id: CorrelationId::new(),

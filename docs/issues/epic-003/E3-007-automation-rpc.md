@@ -2,10 +2,10 @@
 id: E3-007
 epic: EPIC-003
 title: Expose governed automation lifecycle RPCs
-status: in_progress
+status: done
 priority: high
 depends_on: [E3-004, E3-005, E3-006]
-adrs: [ADR-0003, ADR-0013, ADR-0016, ADR-0019, ADR-0030, ADR-0031]
+adrs: [ADR-0003, ADR-0013, ADR-0016, ADR-0019, ADR-0030, ADR-0031, ADR-0032]
 created: 2026-07-11
 updated: 2026-07-12
 ---
@@ -20,17 +20,17 @@ updated: 2026-07-12
 - [x] Add atomic activate, rollback, disable, and retire methods.
 - [x] Add run list/get, trace cursor, cancel, and explicit catch-up methods.
 - [x] Derive Actor exclusively from authentication and enforce ownership/grants.
-- [ ] Stream durable lifecycle/run transitions on the existing event channel.
+- [x] Stream durable lifecycle/run transitions on the existing event channel.
 - [x] Add stable error mappings and bounded filters/cursors.
 - [x] Document executable agent-oriented examples without hand-built internal IDs.
-- [ ] Test RPC/internal parity, isolation, conflicts, governance, and redaction.
+- [x] Test RPC/internal parity, isolation, conflicts, governance, and redaction.
 
 ## Acceptance criteria
 
-- [ ] Complete lifecycle management is possible solely through RPC.
+- [x] Complete lifecycle management is possible solely through RPC.
 - [x] Sensitive profiles cannot activate without explicit version approval.
 - [x] Comfort and constrained comfort-motion follow the simple auto-ready rule.
-- [ ] Tokens, secrets, vendor payloads, and untrusted actor fields never leak.
+- [x] Tokens, secrets, vendor payloads, and untrusted actor fields never leak.
 
 ## Progress
 
@@ -62,3 +62,12 @@ updated: 2026-07-12
   risk metadata now conservatively derives the `security` profile, and
   lifecycle evidence proves activation fails until the owner approves the exact
   immutable version. Comfort remains auto-ready after successful simulation.
+- 2026-07-12: Accepted ADR-0032 and migration 0005. Automation version,
+  operational, and run transitions now commit atomically into the existing
+  durable cursor stream without fake device IDs. Shared wake-ups provide live
+  delivery, actor filtering preserves ownership, and event payloads exclude
+  authored content, plans, traces, vendor data, credentials, and transport
+  input.
+- 2026-07-12: Closed after `cargo test --workspace --all-features` and strict
+  all-target Clippy passed with lifecycle, sensitive approval, event migration,
+  live wake-up, actor isolation, and RPC parity coverage.

@@ -271,7 +271,7 @@ fn apply(connection: &mut Connection, write: &FoundationWrite) -> Result<(), Sto
              VALUES (?1, ?2, ?3, ?4)",
             params![
                 event.id.to_string(),
-                event.device_id.to_string(),
+                event.device_id.as_ref().map(ToString::to_string),
                 event.occurred_at,
                 encode(event)?,
             ],

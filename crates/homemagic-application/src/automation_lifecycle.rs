@@ -21,8 +21,9 @@ use crate::{
     AutomationActivation, AutomationCompilationError, AutomationDraft, AutomationRepository,
     AutomationSimulationEvidence, AutomationSimulationFixture, AutomationSimulationResult,
     AutomationSimulationStatus, AutomationSimulator, AutomationValidationEvidence, BoxError, Clock,
-    FoundationRepository, SimulationCommandOutcome, SimulationObservationKey,
-    SimulationStateChange, SimulationTriggerContext, StoredAutomationVersion,
+    DomainEventSink, FoundationRepository, NoopDomainEventSink, SimulationCommandOutcome,
+    SimulationObservationKey, SimulationStateChange, SimulationTriggerContext,
+    StoredAutomationVersion,
 };
 
 /// Caller-supplied synthetic history without compiler-owned plan or run IDs.
@@ -103,6 +104,9 @@ pub enum AutomationLifecycleError {
     /// Explicit scheduler request failed after ownership was established.
     #[error("automation lifecycle scheduler request failed")]
     Scheduler(#[from] crate::AutomationSchedulerError),
+    /// Durable transition committed but subscriber wake-up failed.
+    #[error("automation lifecycle event wake-up failed")]
+    EventWakeup(#[source] BoxError),
     /// Canonical simulation input hashing failed.
     #[error("automation simulation input is not canonical")]
     CanonicalInput,
@@ -114,6 +118,7 @@ pub struct AutomationLifecycleService {
     repository: Arc<dyn AutomationRepository>,
     foundation: Arc<dyn FoundationRepository>,
     clock: Arc<dyn Clock>,
+    event_wakeups: Arc<dyn DomainEventSink>,
 }
 
 impl AutomationLifecycleService {
@@ -128,7 +133,15 @@ impl AutomationLifecycleService {
             repository,
             foundation,
             clock,
+            event_wakeups: Arc::new(NoopDomainEventSink),
         }
+    }
+
+    /// Uses the shared durable-event subscriber wake-up sink.
+    #[must_use]
+    pub fn with_event_sink(mut self, event_wakeups: Arc<dyn DomainEventSink>) -> Self {
+        self.event_wakeups = event_wakeups;
+        self
     }
 
     /// Creates an actor-owned version-one draft with server-owned identity and timestamps.
@@ -267,6 +280,7 @@ impl AutomationLifecycleService {
             .store_automation_version(version.clone())
             .await
             .map_err(AutomationLifecycleError::Repository)?;
+        self.wake_events().await?;
         Ok(version)
     }
 
@@ -330,6 +344,7 @@ impl AutomationLifecycleService {
                 .await
                 .map_err(AutomationLifecycleError::Repository)?;
         }
+        self.wake_events().await?;
         Ok(AutomationLifecycleSimulation {
             version: stored,
             result,
@@ -495,6 +510,7 @@ impl AutomationLifecycleService {
             .transition_automation_version(stored.clone(), AutomationVersionState::AwaitingApproval)
             .await
             .map_err(AutomationLifecycleError::Repository)?;
+        self.wake_events().await?;
         Ok(stored)
     }
 
@@ -514,7 +530,8 @@ impl AutomationLifecycleService {
         if stored.state != AutomationVersionState::Ready {
             return Err(AutomationLifecycleError::InvalidState);
         }
-        self.repository
+        let identity = self
+            .repository
             .activate_automation(AutomationActivation {
                 automation_id: automation_id.clone(),
                 version,
@@ -525,7 +542,9 @@ impl AutomationLifecycleService {
                 activated_at: self.clock.now(),
             })
             .await
-            .map_err(AutomationLifecycleError::Repository)
+            .map_err(AutomationLifecycleError::Repository)?;
+        self.wake_events().await?;
+        Ok(identity)
     }
 
     /// Rolls back by atomically activating one older exact ready version.
@@ -600,15 +619,18 @@ impl AutomationLifecycleService {
         if versions.is_empty() {
             return Err(AutomationLifecycleError::NotFound);
         }
-        crate::AutomationScheduler::new(self.repository.clone(), self.clock.clone())
-            .request_catch_up(
-                automation_id,
-                scheduled_for,
-                actor.id.clone(),
-                idempotency_key,
-            )
-            .await
-            .map_err(AutomationLifecycleError::Scheduler)
+        let occurrence =
+            crate::AutomationScheduler::new(self.repository.clone(), self.clock.clone())
+                .request_catch_up(
+                    automation_id,
+                    scheduled_for,
+                    actor.id.clone(),
+                    idempotency_key,
+                )
+                .await
+                .map_err(AutomationLifecycleError::Scheduler)?;
+        self.wake_events().await?;
+        Ok(occurrence)
     }
 
     async fn transition_operational(
@@ -635,10 +657,13 @@ impl AutomationLifecycleService {
         identity.state = state;
         identity.revision = identity.revision.saturating_add(1);
         identity.updated_at = self.clock.now();
-        self.repository
+        let identity = self
+            .repository
             .transition_automation_identity(identity, expected_revision)
             .await
-            .map_err(AutomationLifecycleError::Repository)
+            .map_err(AutomationLifecycleError::Repository)?;
+        self.wake_events().await?;
+        Ok(identity)
     }
 
     /// Cancels one non-terminal actor-owned run with atomic trace and timer cleanup.
@@ -703,7 +728,15 @@ impl AutomationLifecycleService {
             })
             .await
             .map_err(AutomationLifecycleError::Repository)?;
+        self.wake_events().await?;
         Ok(next)
+    }
+
+    async fn wake_events(&self) -> Result<(), AutomationLifecycleError> {
+        self.event_wakeups
+            .wake()
+            .await
+            .map_err(AutomationLifecycleError::EventWakeup)
     }
 
     async fn next_trace_sequence(

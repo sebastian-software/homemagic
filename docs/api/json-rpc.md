@@ -261,6 +261,18 @@ Events then arrive in durable cursor order:
 }
 ```
 
+`device_id` is `null` for installation-scoped automation facts. Automation
+version, operational, and run transitions use the typed
+`automation_version_transitioned`, `automation_operational_transitioned`, and
+`automation_run_transitioned` payloads. They contain only stable IDs, states,
+revisions, timestamps, and causation.
+
+Automation events are delivered only to their authenticated owner. The cursor
+is installation-global, so an owner can legitimately receive cursor 47 after
+cursor 43 when intervening events were outside that actor's visibility. The
+server advances across those hidden rows; clients must persist the cursor from
+each delivered item and must not infer missing data from numeric gaps.
+
 The bounded live channel only wakes the subscriber; event payloads are read from
 durable storage. If wake-ups overrun while the socket is blocked, the server emits
 `events.lagged` with `last_delivered_cursor`, then catches up from the database.

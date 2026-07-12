@@ -121,8 +121,13 @@ impl BroadcastDomainEventSink {
 impl DomainEventSink for BroadcastDomainEventSink {
     async fn publish(&self, events: &[DomainEvent]) -> Result<(), BoxError> {
         if !events.is_empty() {
-            let _ = self.sender.send(());
+            self.wake().await?;
         }
+        Ok(())
+    }
+
+    async fn wake(&self) -> Result<(), BoxError> {
+        let _ = self.sender.send(());
         Ok(())
     }
 

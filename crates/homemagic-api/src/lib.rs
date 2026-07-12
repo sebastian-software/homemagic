@@ -19,8 +19,9 @@ use homemagic_application::{
 };
 use homemagic_domain::{
     Actor, AutomationDocument, AutomationId, AutomationRunId, AutomationVersion, AvailabilityState,
-    CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId,
-    EventId, ExpectedObservation, FreshnessState, IdempotencyKey, RepairId, RepairStatus, SpaceId,
+    CommandId, CommandPayload, CommandState, CorrelationId, DeviceId, DeviceLifecycle,
+    DomainEventKind, EndpointId, EventId, ExpectedObservation, FreshnessState, IdempotencyKey,
+    RepairId, RepairStatus, SpaceId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -175,7 +176,8 @@ struct ActiveSubscription {
     cursor: u64,
 }
 
-async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication, _actor: Actor) {
+async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication, actor: Actor) {
+    let actor_id = actor.id.to_string();
     let Some(mut subscription) = accept_subscription(&mut socket, &application).await else {
         return;
     };
@@ -184,6 +186,7 @@ async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication, 
         &application,
         &subscription.id,
         &mut subscription.cursor,
+        &actor_id,
     )
     .await
     {
@@ -238,6 +241,7 @@ async fn event_socket(mut socket: WebSocket, application: HomeMagicApplication, 
             &application,
             &subscription.id,
             &mut subscription.cursor,
+            &actor_id,
         )
         .await
         {
@@ -335,6 +339,7 @@ async fn drain_events(
     application: &HomeMagicApplication,
     subscription_id: &str,
     cursor: &mut u64,
+    actor_id: &str,
 ) -> bool {
     loop {
         let page = match application.events_after(*cursor, EVENT_PAGE_LIMIT).await {
@@ -348,6 +353,9 @@ async fn drain_events(
         let count = page.events.len();
         for event in page.events {
             *cursor = event.cursor;
+            if !event_visible_to_actor(&event.event, actor_id) {
+                continue;
+            }
             if send_notification(
                 socket,
                 "events.next",
@@ -363,6 +371,16 @@ async fn drain_events(
             return true;
         }
     }
+}
+
+fn event_visible_to_actor(event: &homemagic_domain::DomainEvent, actor_id: &str) -> bool {
+    let automation_scoped = matches!(
+        event.kind,
+        DomainEventKind::AutomationVersionTransitioned { .. }
+            | DomainEventKind::AutomationOperationalTransitioned { .. }
+            | DomainEventKind::AutomationRunTransitioned { .. }
+    );
+    !automation_scoped || event.causation.actor.as_deref() == Some(actor_id)
 }
 
 async fn send_response(socket: &mut WebSocket, response: &RpcResponse) -> Result<(), axum::Error> {
@@ -1193,7 +1211,9 @@ fn automation_error(id: Value, error: AutomationLifecycleError) -> RpcResponse {
             RpcResponse::error(id, -32045, "Automation simulation failed", None)
         }
         AutomationLifecycleError::Scheduler(error) => automation_scheduler_error(id, &error),
-        AutomationLifecycleError::Repository(_) | AutomationLifecycleError::Foundation(_) => {
+        AutomationLifecycleError::Repository(_)
+        | AutomationLifecycleError::Foundation(_)
+        | AutomationLifecycleError::EventWakeup(_) => {
             RpcResponse::error(id, -32046, "Automation persistence failed", None)
         }
     }
@@ -1699,7 +1719,7 @@ mod tests {
     ) -> DomainEvent {
         DomainEvent {
             id: EventId::new(),
-            device_id: device_id.clone(),
+            device_id: Some(device_id.clone()),
             occurred_at,
             causation: CausationMetadata {
                 correlation_id: CorrelationId::new(),
@@ -1711,6 +1731,33 @@ mod tests {
                 fields: vec![field.to_owned()],
             },
         }
+    }
+
+    #[test]
+    fn automation_events_should_be_visible_only_to_their_authenticated_owner() {
+        let owner = actor();
+        let outsider = actor();
+        let event = DomainEvent {
+            id: EventId::new(),
+            device_id: None,
+            occurred_at: Utc::now(),
+            causation: CausationMetadata {
+                correlation_id: CorrelationId::new(),
+                causation_event_id: None,
+                actor: Some(owner.id.to_string()),
+                automation: None,
+            },
+            kind: DomainEventKind::AutomationVersionTransitioned {
+                automation_id: AutomationId::new(),
+                version: AutomationVersion::new(1)
+                    .unwrap_or_else(|error| panic!("version: {error}")),
+                from: None,
+                to: homemagic_domain::AutomationVersionState::Validated,
+            },
+        };
+
+        assert!(event_visible_to_actor(&event, &owner.id.to_string()));
+        assert!(!event_visible_to_actor(&event, &outsider.id.to_string()));
     }
 
     struct FixedAuthenticator(Actor);

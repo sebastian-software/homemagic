@@ -9,6 +9,8 @@ const COMMAND_CONTROL_PLANE_SCHEMA: &str =
 const AUTOMATION_ENGINE_SCHEMA: &str = include_str!("../migrations/0003_automation_engine.sql");
 const AUTOMATION_EVENT_RUNTIME_SCHEMA: &str =
     include_str!("../migrations/0004_automation_event_runtime.sql");
+const GENERAL_EVENT_SUBJECTS_SCHEMA: &str =
+    include_str!("../migrations/0005_general_event_subjects.sql");
 
 struct Migration {
     version: u32,
@@ -37,9 +39,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "automation_event_runtime",
         sql: AUTOMATION_EVENT_RUNTIME_SCHEMA,
     },
+    Migration {
+        version: 5,
+        name: "general_event_subjects",
+        sql: GENERAL_EVENT_SUBJECTS_SCHEMA,
+    },
 ];
 
-pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 5;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let found = schema_version(connection)?;

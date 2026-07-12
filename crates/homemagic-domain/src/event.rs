@@ -2,9 +2,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AutomationId, AutomationRunId, AutomationVersion, AvailabilityState, CapabilityDescriptor,
-    CommandId, CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId, EventId,
-    LifecycleTrigger, RepairId,
+    AutomationId, AutomationOperationalState, AutomationRunId, AutomationRunState,
+    AutomationVersion, AutomationVersionState, AvailabilityState, CapabilityDescriptor, CommandId,
+    CommandState, CorrelationId, DeviceId, DeviceLifecycle, EndpointId, EventId, LifecycleTrigger,
+    RepairId,
 };
 
 /// Exact automation execution that caused an emitted fact.
@@ -37,8 +38,8 @@ pub struct CausationMetadata {
 pub struct DomainEvent {
     /// Stable event identifier.
     pub id: EventId,
-    /// Device affected by the event.
-    pub device_id: DeviceId,
+    /// Device affected by the event; absent for non-device system subjects.
+    pub device_id: Option<DeviceId>,
     /// Time at which the fact occurred.
     pub occurred_at: DateTime<Utc>,
     /// Causal chain metadata.
@@ -111,5 +112,44 @@ pub enum DomainEventKind {
         /// Versioned capability schema when retained by the producing command.
         #[serde(default)]
         capability: Option<String>,
+    },
+    /// One immutable automation version changed governance state.
+    AutomationVersionTransitioned {
+        /// Stable automation identity.
+        automation_id: AutomationId,
+        /// Exact immutable version.
+        version: AutomationVersion,
+        /// Previous state; absent when the version first becomes durable.
+        from: Option<AutomationVersionState>,
+        /// Newly durable state.
+        to: AutomationVersionState,
+    },
+    /// One automation identity changed operational state or active pointer.
+    AutomationOperationalTransitioned {
+        /// Stable automation identity.
+        automation_id: AutomationId,
+        /// Exact active version after the transition, when any.
+        active_version: Option<AutomationVersion>,
+        /// Previous operational state.
+        from: AutomationOperationalState,
+        /// Newly durable state.
+        to: AutomationOperationalState,
+        /// Identity-local optimistic revision after the transition.
+        revision: u64,
+    },
+    /// One automation run changed durable execution state.
+    AutomationRunTransitioned {
+        /// Stable automation identity.
+        automation_id: AutomationId,
+        /// Exact immutable version being executed.
+        version: AutomationVersion,
+        /// Stable run identity.
+        run_id: AutomationRunId,
+        /// Previous state; absent when the run first becomes durable.
+        from: Option<AutomationRunState>,
+        /// Newly durable state.
+        to: AutomationRunState,
+        /// Run-local optimistic revision after the transition.
+        revision: u64,
     },
 }

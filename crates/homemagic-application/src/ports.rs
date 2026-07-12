@@ -365,6 +365,16 @@ pub trait DomainEventSink: Send + Sync {
     /// Returns a sink-specific delivery error.
     async fn publish(&self, events: &[DomainEvent]) -> Result<(), BoxError>;
 
+    /// Wakes durable subscribers after an event was appended by another atomic
+    /// repository transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sink-specific delivery error.
+    async fn wake(&self) -> Result<(), BoxError> {
+        Ok(())
+    }
+
     /// Opens a bounded live wake-up receiver when this sink supports streaming.
     fn subscribe(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
         None

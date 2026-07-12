@@ -792,7 +792,7 @@ impl CommandAuditSink for DomainEventCommandAuditSink {
                 })?;
         let event = DomainEvent {
             id: EventId::new(),
-            device_id: command.envelope.device_id,
+            device_id: Some(command.envelope.device_id),
             occurred_at: audit.occurred_at,
             causation: homemagic_domain::CausationMetadata {
                 correlation_id: audit.correlation_id.clone(),

@@ -188,7 +188,7 @@ fn lifecycle_event(
 ) -> DomainEvent {
     DomainEvent {
         id: EventId::new(),
-        device_id: record.snapshot.id.clone(),
+        device_id: Some(record.snapshot.id.clone()),
         occurred_at: record.snapshot.observed_at,
         causation,
         kind: DomainEventKind::LifecycleChanged {
@@ -206,7 +206,7 @@ fn availability_event(
 ) -> DomainEvent {
     DomainEvent {
         id: EventId::new(),
-        device_id: record.snapshot.id.clone(),
+        device_id: Some(record.snapshot.id.clone()),
         occurred_at: record.snapshot.observed_at,
         causation,
         kind: DomainEventKind::AvailabilityChanged {

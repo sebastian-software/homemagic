@@ -28,7 +28,7 @@ async fn backup_and_restore_should_preserve_foundation_data() -> Result<(), BoxE
     let restored_repository = SqliteRepository::open(restored)?;
     let snapshot = restored_repository.load().await?;
 
-    assert_eq!(backup_report.schema_version, 4);
+    assert_eq!(backup_report.schema_version, 5);
     assert_eq!(backup_report.integrity, "ok");
     assert_eq!(restore_report, backup_report);
     assert_eq!(snapshot.installations, vec![installation]);

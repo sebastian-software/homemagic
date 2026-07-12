@@ -583,7 +583,7 @@ impl HomeMagicApplication {
         }
         let event = DomainEvent {
             id: EventId::new(),
-            device_id: id.clone(),
+            device_id: Some(id.clone()),
             occurred_at: chrono::Utc::now(),
             causation: CausationMetadata {
                 correlation_id: CorrelationId::new(),
@@ -718,7 +718,7 @@ impl HomeMagicApplication {
         let events = vec![
             DomainEvent {
                 id: EventId::new(),
-                device_id: id.clone(),
+                device_id: Some(id.clone()),
                 occurred_at: now,
                 causation: causation.clone(),
                 kind: DomainEventKind::LifecycleChanged {
@@ -729,7 +729,7 @@ impl HomeMagicApplication {
             },
             DomainEvent {
                 id: EventId::new(),
-                device_id: id.clone(),
+                device_id: Some(id.clone()),
                 occurred_at: now,
                 causation,
                 kind: DomainEventKind::AvailabilityChanged {
@@ -859,7 +859,7 @@ impl HomeMagicApplication {
             if device.lifecycle != lifecycle_before {
                 events.push(DomainEvent {
                     id: EventId::new(),
-                    device_id: device.snapshot.id.clone(),
+                    device_id: Some(device.snapshot.id.clone()),
                     occurred_at: now,
                     causation: causation.clone(),
                     kind: DomainEventKind::LifecycleChanged {
@@ -876,7 +876,7 @@ impl HomeMagicApplication {
             if device.availability.state != availability_before {
                 events.push(DomainEvent {
                     id: EventId::new(),
-                    device_id: device.snapshot.id.clone(),
+                    device_id: Some(device.snapshot.id.clone()),
                     occurred_at: now,
                     causation: causation.clone(),
                     kind: DomainEventKind::AvailabilityChanged {
@@ -1360,7 +1360,7 @@ mod tests {
             .unwrap_or_else(|| panic!("broadcast sink should support subscriptions"));
         let event = DomainEvent {
             id: EventId::new(),
-            device_id: record().snapshot.id,
+            device_id: Some(record().snapshot.id),
             occurred_at: Utc::now(),
             causation: CausationMetadata {
                 correlation_id: CorrelationId::new(),

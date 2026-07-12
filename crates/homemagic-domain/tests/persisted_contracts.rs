@@ -81,7 +81,7 @@ fn persisted_domain_contracts_should_round_trip() -> Result<(), Box<dyn Error>> 
     };
     let event = DomainEvent {
         id: EventId::new(),
-        device_id: device_id.clone(),
+        device_id: Some(device_id.clone()),
         occurred_at: now,
         causation: CausationMetadata {
             correlation_id: CorrelationId::new(),

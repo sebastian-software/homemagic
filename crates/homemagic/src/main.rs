@@ -782,7 +782,7 @@ async fn durable_application(
     let command_events = Arc::new(DomainEventCommandAuditSink::new(
         repository.clone(),
         repository.clone(),
-        event_sink,
+        event_sink.clone(),
     ));
     let commands = CommandService::new(
         CommandServiceDependencies {
@@ -800,7 +800,7 @@ async fn durable_application(
         engine: automation,
         lifecycle: automation_lifecycle,
         scheduler: automation_scheduler,
-    } = automation_components(repository, commands.clone());
+    } = automation_components(repository, commands.clone(), event_sink);
     Ok(DurableRuntime {
         application: application.with_sessions(sessions),
         refresh_requests: refresh_receiver,
@@ -821,19 +821,22 @@ struct AutomationComponents {
 fn automation_components(
     repository: Arc<SqliteRepository>,
     commands: CommandService,
+    event_sink: Arc<BroadcastDomainEventSink>,
 ) -> AutomationComponents {
     let clock = Arc::new(SystemClock);
     let events =
         AutomationEventProcessor::new(repository.clone(), repository.clone(), clock.clone());
     let scheduler = AutomationScheduler::new(repository.clone(), clock.clone());
     let lifecycle =
-        AutomationLifecycleService::new(repository.clone(), repository.clone(), clock.clone());
+        AutomationLifecycleService::new(repository.clone(), repository.clone(), clock.clone())
+            .with_event_sink(event_sink.clone());
     let runtime = AutomationRuntime::new(repository.clone(), repository.clone(), clock)
         .with_commands(AutomationRuntimeCommandDependencies {
             repository: repository.clone(),
             service: commands,
         });
-    let engine = AutomationEngine::new(repository, events, scheduler.clone(), runtime);
+    let engine = AutomationEngine::new(repository, events, scheduler.clone(), runtime)
+        .with_event_sink(event_sink);
     AutomationComponents {
         engine,
         lifecycle,

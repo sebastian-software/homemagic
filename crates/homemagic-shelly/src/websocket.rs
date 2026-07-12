@@ -400,7 +400,7 @@ fn event_batch(device: &DeviceRecord, events: Vec<crate::ShellyEvent>) -> LiveOb
             .into_iter()
             .map(|event| DomainEvent {
                 id: EventId::new(),
-                device_id: device.snapshot.id.clone(),
+                device_id: Some(device.snapshot.id.clone()),
                 occurred_at: timestamp_to_utc(event.timestamp),
                 causation: CausationMetadata {
                     correlation_id: correlation_id.clone(),

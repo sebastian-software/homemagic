@@ -2,12 +2,12 @@
 id: E3-008
 epic: EPIC-003
 title: Validate automation operations and exit gate
-status: planned
+status: in_progress
 priority: critical
 depends_on: [E3-007]
 adrs: [ADR-0017, ADR-0018, ADR-0019, ADR-0020]
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-12
 ---
 
 # E3-008: Automation Exit Audit

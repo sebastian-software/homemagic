@@ -10,6 +10,7 @@ use crate::{
     AutomationEventProcessor, AutomationEventProcessorError, AutomationEventProcessorTick,
     AutomationRepository, AutomationRuntime, AutomationRuntimeError, AutomationRuntimeStep,
     AutomationScheduler, AutomationSchedulerError, AutomationSchedulerTick, BoxError,
+    DomainEventSink, NoopDomainEventSink,
 };
 
 const WORK_PAGE: usize = 1_000;
@@ -26,6 +27,9 @@ pub enum AutomationEngineError {
     /// Pending run recovery failed.
     #[error("automation engine recovery stage failed")]
     Recovery(#[source] BoxError),
+    /// Durable run transitions committed but subscriber wake-up failed.
+    #[error("automation engine event wake-up failed")]
+    EventWakeup(#[source] BoxError),
 }
 
 /// One run-local interpreter failure that did not stop sibling runs.
@@ -64,6 +68,7 @@ pub struct AutomationEngine {
     events: AutomationEventProcessor,
     scheduler: AutomationScheduler,
     runtime: AutomationRuntime,
+    event_wakeups: Arc<dyn DomainEventSink>,
 }
 
 impl AutomationEngine {
@@ -80,7 +85,15 @@ impl AutomationEngine {
             events,
             scheduler,
             runtime,
+            event_wakeups: Arc::new(NoopDomainEventSink),
         }
+    }
+
+    /// Uses the shared durable-event subscriber wake-up sink.
+    #[must_use]
+    pub fn with_event_sink(mut self, event_wakeups: Arc<dyn DomainEventSink>) -> Self {
+        self.event_wakeups = event_wakeups;
+        self
     }
 
     /// Processes one bounded event page, one schedule window, and at most one
@@ -119,16 +132,25 @@ impl AutomationEngine {
             no_work: 0,
             failures: Vec::new(),
         };
+        let mut run_transitioned = false;
         for run in recovery.runs {
             match self.runtime.step(&run.id).await {
                 Ok(AutomationRuntimeStep::Advanced) => {
                     result.advanced = result.advanced.saturating_add(1);
+                    run_transitioned = true;
                 }
                 Ok(AutomationRuntimeStep::Waiting) => {
                     result.waiting = result.waiting.saturating_add(1);
+                    run_transitioned |= self
+                        .repository
+                        .automation_run(&run.id)
+                        .await
+                        .map_err(AutomationEngineError::Recovery)?
+                        .is_some_and(|current| current.revision != run.revision);
                 }
                 Ok(AutomationRuntimeStep::Completed) => {
                     result.completed = result.completed.saturating_add(1);
+                    run_transitioned = true;
                 }
                 Ok(AutomationRuntimeStep::NoWork) => {
                     result.no_work = result.no_work.saturating_add(1);
@@ -138,6 +160,12 @@ impl AutomationEngine {
                     error,
                 }),
             }
+        }
+        if result.scheduler.runs > 0 || result.scheduler.runs_cancelled > 0 || run_transitioned {
+            self.event_wakeups
+                .wake()
+                .await
+                .map_err(AutomationEngineError::EventWakeup)?;
         }
         Ok(result)
     }

@@ -188,7 +188,7 @@ fn event(
 ) -> DomainEvent {
     DomainEvent {
         id: EventId::new(),
-        device_id,
+        device_id: Some(device_id),
         occurred_at: now,
         causation: CausationMetadata {
             correlation_id: CorrelationId::new(),
