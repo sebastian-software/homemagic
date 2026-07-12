@@ -711,10 +711,12 @@ async fn run_sequence(values: &[bool]) -> TestResult<Vec<u8>> {
 #[tokio::test]
 async fn normalized_fixture_trace_should_match_committed_hash() -> TestResult {
     let trace = run_sequence(&[true, false, true]).await?;
-    let digest = hex_digest(Sha256::digest(trace).as_slice());
+    let digest = hex_digest(Sha256::digest(&trace).as_slice());
     let expected = include_str!("fixtures/light-trace-v1.sha256").trim();
+    let expected_trace = include_str!("fixtures/light-trace-v1.json").trim();
 
     assert_eq!(digest, expected);
+    assert_eq!(trace, expected_trace.as_bytes());
     Ok(())
 }
 
