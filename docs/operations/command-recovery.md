@@ -23,6 +23,15 @@ On startup, HomeMagic loads every non-terminal command. `received` and
 observation-only confirmation. It never treats a process restart as permission
 to repeat a physical command.
 
+A validated Matter unlock remains pending after restart. Restart does not mint
+an authorization, extend an existing authorization's expiry, or dispatch it.
+The operator must explicitly call the interactive approval application path
+again. That path re-evaluates the current user and exact grant, then storage
+checks the original request hash, command state, target, fresh projection,
+current desired revision, policy revision, expiry, and unused state. If any fact
+changed, approval fails closed. A command already marked `dispatched` receives
+observation-only confirmation and is never unlocked a second time.
+
 Use `commands.get` for the current aggregate and `commands.audit` for the ordered
 transition evidence. A timeout or mismatched observation is a durable outcome.
 Do not retry with a new key until an operator has inspected current physical and

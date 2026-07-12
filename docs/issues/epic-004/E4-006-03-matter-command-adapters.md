@@ -3,7 +3,7 @@ id: E4-006-03
 epic: EPIC-004
 parent: E4-006
 title: Implement governed Matter dispatch and confirmation adapters
-status: ready
+status: done
 priority: critical
 depends_on: [E4-006-01, E4-006-02]
 adrs: [ADR-0014, ADR-0015, ADR-0034, ADR-0036]
@@ -21,33 +21,37 @@ acknowledgement remains distinct from observation-backed confirmation.
 
 ## Tasks
 
-- [ ] Implement a Matter `CommandDispatcher` using projection and desired-slot
+- [x] Implement a Matter `CommandDispatcher` using projection and desired-slot
   identity rather than caller-provided protocol paths.
-- [ ] Translate only explicit On/Off Set, Lock, and Unlock payloads.
-- [ ] Map controller acknowledgement into common adapter acknowledgement without
+- [x] Translate only explicit On/Off Set, Lock, and Unlock payloads.
+- [x] Map controller acknowledgement into common adapter acknowledgement without
   treating it as physical confirmation.
-- [ ] Implement `CommandConfirmation` from accepted projected observations and
+- [x] Implement `CommandConfirmation` from accepted projected observations and
   one bounded read fallback.
-- [ ] Normalize mismatch, timeout, subscription loss, and indeterminate restart
+- [x] Normalize mismatch, timeout, subscription loss, and indeterminate restart
   outcomes without redispatch.
-- [ ] Reconcile toward the latest desired revision after an in-flight command
+- [x] Reconcile toward the latest desired revision after an in-flight command
   reaches an observed terminal outcome.
 
 ## Acceptance criteria
 
-- [ ] Unsupported common payloads fail closed before controller invocation.
-- [ ] Acknowledgement alone never produces `confirmed`.
-- [ ] Restart recovery confirms, fails, times out, or reports indeterminate
+- [x] Unsupported common payloads fail closed before controller invocation.
+- [x] Acknowledgement alone never produces `confirmed`.
+- [x] Restart recovery confirms, fails, times out, or reports indeterminate
   without a second physical invoke.
-- [ ] Adapter code cannot bypass persistence, policy, desired revision, or audit.
+- [x] Adapter code cannot bypass persistence, policy, desired revision, or audit.
 
 ## Verification
 
-- [ ] Simulator barriers cover pre-invoke, acknowledgement, and report phases.
-- [ ] Mismatch, missing report, bounded-read fallback, and restart tests pass.
-- [ ] Invocation traces contain only typed SDK-neutral controller commands.
+- [x] Simulator barriers cover pre-invoke, acknowledgement, and report phases.
+- [x] Mismatch, missing report, bounded-read fallback, and restart tests pass.
+- [x] Invocation traces contain only typed SDK-neutral controller commands.
 
 ## Progress log
 
 - 2026-07-12: E4-006-02 completed durable desired-state coordination and atomic
   dispatch admission; this issue is ready.
+- 2026-07-12: Implemented SDK-neutral On/Off and access-control invocation,
+  acknowledgement-only adapter results, projected observation confirmation,
+  one bounded read, mismatch and indeterminate recovery, and no-redispatch
+  restart contracts.

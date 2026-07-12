@@ -67,11 +67,22 @@ resume, reconcile, ask the user, or expose repair guidance.
 ## Unlock authorization
 
 An unlock authorization stores immutable identities and decision facts:
-authorization, command, requesting actor, approving actor, projection, desired
+authorization, command, canonical request hash, requesting actor, approving
+actor, device, endpoint, `access_control.v1`, `unlock`, projection, desired
 revision, policy revision, issue time, expiry, and optional consumption time.
-It stores no bearer credential. Consumption checks the exact command and
-projection binding, rejects expiry, and changes `consumed_at` only once inside a
-transaction. Lock commands do not need this unlock-specific authorization row.
+It stores no bearer credential and its identifier is not exposed as a command
+request field, event, or log attribute.
+
+Creation requires a validated unlock, the current fresh projection and desired
+slot, the original allowed policy version, and an enabled interactive `user`
+with an exact capability-scoped `approve_unlock` security grant. Immediately
+before dispatch, storage revalidates those facts and the command request hash.
+Authorization consumption, the `dispatched` command transition, immutable audit
+append, and desired-slot dispatch marker commit in one SQLite transaction.
+Concurrent consumers therefore admit exactly one dispatch. Superseded,
+cancelled, terminal, stale-policy, stale-projection, expired, mismatched, and
+already-consumed facts fail closed; retained unused rows are not authority.
+Lock commands do not need this unlock-specific authorization row.
 
 ## Secret boundary
 
@@ -103,11 +114,11 @@ Foreign keys preserve referential integrity while deleting eligible history.
 `crates/homemagic-storage/tests/matter_repository_contract.rs` covers fresh
 storage, reopen, all nonterminal operation phases, pending projection and
 subscription recovery, optimistic conflicts, transaction rollback,
-supersession, dispatch markers, concurrent single-use authorization, expiry,
-malformed payloads, retention protection, database and backup secret canaries,
-and stable identity.
+supersession, dispatch markers, exact request/target/policy binding, concurrent
+authorization-and-dispatch admission, expiry, malformed payloads, retention
+protection, database and backup secret canaries, and stable identity.
 
 `crates/homemagic-storage/tests/migration_fixtures.rs` covers empty and historical
-schemas including an explicit schema-5-to-schema-6 upgrade. The workspace also
+schemas through the explicit schema-6-to-schema-7 unlock-binding upgrade. The workspace also
 runs strict Clippy, all-feature tests, warning-denied Rustdoc, the Matter
 dependency boundary check, and the repository secret scan.
