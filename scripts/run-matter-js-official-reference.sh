@@ -39,6 +39,7 @@ reference_release="$(jq -r '.candidates[] | select(.id == "connectedhomeip") | .
 target="${platform}-${target_architecture}-light-no-ble-no-wifi-no-thread"
 
 workspace="$(mktemp -d)"
+homemagic_root="$PWD"
 reference_pid=""
 cleanup() {
   status="$?"
@@ -60,6 +61,10 @@ git -C "$workspace/candidate" remote add origin "$candidate_repository"
 git -C "$workspace/candidate" fetch --quiet --depth 1 origin "$candidate_revision"
 git -C "$workspace/candidate" checkout --quiet --detach FETCH_HEAD
 test "$(shasum -a 256 "$workspace/candidate/package-lock.json" | awk '{print $1}')" = "$candidate_lock_sha256"
+if test "$operational_address_fallback" = "1"; then
+  git -C "$workspace/candidate" apply \
+    "$homemagic_root/spikes/matter-controller-matter-js/direct-operational-address.patch"
+fi
 (
   cd "$workspace/candidate"
   npm ci --ignore-scripts --no-audit --no-fund

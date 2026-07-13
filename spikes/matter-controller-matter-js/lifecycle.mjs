@@ -5,7 +5,7 @@ import "@matter/nodejs";
 import { Environment, Logger } from "@matter/main";
 import { OnOffClient } from "@matter/main/behaviors/on-off";
 import { BasicInformationCluster, GeneralCommissioning } from "@matter/main/clusters";
-import { ControllerCommissioningFlow, PeerSet } from "@matter/protocol";
+import { ControllerCommissioningFlow } from "@matter/protocol";
 import { CommissioningController } from "@project-chip/matter.js";
 import { writeFile } from "node:fs/promises";
 
@@ -44,17 +44,9 @@ const fail = async (phase, error) => {
 };
 
 class InstrumentedCommissioningFlow extends ControllerCommissioningFlow {
-    constructor(interaction, ca, fabric, commissioningOptions, transitionToCase) {
-        const instrumentedTransition = async (peerAddress, supportsConcurrentConnections) => {
-            if (operationalAddressFallback) {
-                const peer = controller.env.get(PeerSet).for(peerAddress);
-                peer.descriptor.operationalAddress = { ip: address, port, type: "udp" };
-                report.operational_address_fallback = "applied";
-                await persist();
-            }
-            return transitionToCase(peerAddress, supportsConcurrentConnections);
-        };
-        super(interaction, ca, fabric, commissioningOptions, instrumentedTransition);
+    constructor(...args) {
+        super(...args);
+        report.operational_address_fallback = operationalAddressFallback ? "requested" : "disabled";
         report.commissioning_stages = [];
         for (const step of this.commissioningSteps) {
             const execute = step.stepLogic;
