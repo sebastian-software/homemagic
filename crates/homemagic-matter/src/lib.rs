@@ -9,6 +9,7 @@ mod clock;
 mod command;
 mod fixture;
 mod script;
+mod sidecar_control;
 mod sidecar_protocol;
 mod simulator;
 
@@ -22,6 +23,11 @@ pub use fixture::{
 pub use script::{
     SimulatorFault, SimulatorOperation, SimulatorReportFault, SimulatorRestartCheckpoint,
     SimulatorTraceEntry, SimulatorTraceKind,
+};
+pub use sidecar_control::{
+    CancellationAck, CancellationDisposition, EventWindow, RemoteOperationState, SecretDisposition,
+    SecretDriverError, SecretMethod, SecretRecord, SecretRequest, SecretResponse, SensitiveBytes,
+    SidecarSecretStore, dispatch_secret_request, event_may_coalesce,
 };
 pub use sidecar_protocol::{
     Accept, EventAck, HandshakePolicy, Hello, MAX_EVENT_WINDOW, MAX_FRAME_BYTES,

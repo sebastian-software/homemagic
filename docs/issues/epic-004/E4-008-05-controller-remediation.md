@@ -49,6 +49,13 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: The second Rust boundary slice adds zeroizing/redacted secret
+  values, typed reverse get/put/delete/compare-and-swap dispatch, stable backend
+  outcomes, cancellation that never claims a dispatched mutation was stopped,
+  partial-disconnect classification, and a contiguous bounded event window.
+  Secret-shape, optimistic-conflict, redaction, cancellation, gap, duplicate,
+  exhaustion, acknowledgement, and no-coalesce contract tests pass under strict
+  Clippy.
 - 2026-07-13: The Rust adapter now owns a first executable private-protocol
   slice: bounded big-endian framing, runtime/version/capability negotiation,
   nonce-bound envelopes, stable result/partial/error dispositions, event/ack

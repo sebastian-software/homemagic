@@ -11,6 +11,8 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::{CancellationAck, SecretRequest, SecretResponse};
+
 /// Current private protocol major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Current private protocol minor version.
@@ -375,7 +377,7 @@ pub struct EventAck {
 }
 
 /// Every frame allowed on the inherited pipes.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum SidecarFrame {
     /// Initial child handshake.
@@ -390,6 +392,12 @@ pub enum SidecarFrame {
     Event(SidecarEvent),
     /// Rust-to-child event acknowledgement.
     EventAck(EventAck),
+    /// Child-to-Rust reverse secret request.
+    SecretRequest(SecretRequest),
+    /// Rust-to-child reverse secret response.
+    SecretResponse(SecretResponse),
+    /// Child acknowledgement of an operation cancellation.
+    CancellationAck(CancellationAck),
 }
 
 /// Private protocol decoding, validation, and transport failures.
@@ -428,6 +436,18 @@ pub enum ProtocolError {
     /// Peer supplied an invalid opaque token.
     #[error("sidecar token invalid")]
     InvalidToken,
+    /// Event sequence was already received.
+    #[error("sidecar event sequence duplicated")]
+    DuplicateSequence,
+    /// Event sequence skipped a value.
+    #[error("sidecar event sequence gap")]
+    SequenceGap,
+    /// Child exceeded the granted event window.
+    #[error("sidecar event window exhausted")]
+    EventWindowExhausted,
+    /// Event acknowledgement regressed or exceeded received state.
+    #[error("sidecar event acknowledgement invalid")]
+    InvalidAcknowledgement,
 }
 
 impl From<io::Error> for ProtocolError {
