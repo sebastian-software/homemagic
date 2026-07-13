@@ -49,6 +49,13 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: A shell-free Tokio supervisor now owns inherited stdin/stdout,
+  rejects unpinned handshakes before requests, applies caller/supervisor
+  deadlines, kills lost or hung children, distinguishes pre-mutation from
+  partial remote outcomes, drains within one total deadline, and bounds restart
+  backoff with a circuit breaker. A Rust fixture process proves normal request/
+  drain, incompatible version, startup hang, missing runtime, request hang,
+  crash, cross-wired nonce, drain hang, and circuit-open behavior.
 - 2026-07-13: The second Rust boundary slice adds zeroizing/redacted secret
   values, typed reverse get/put/delete/compare-and-swap dispatch, stable backend
   outcomes, cancellation that never claims a dispatched mutation was stopped,

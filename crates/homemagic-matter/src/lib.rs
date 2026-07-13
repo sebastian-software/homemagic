@@ -11,6 +11,7 @@ mod fixture;
 mod script;
 mod sidecar_control;
 mod sidecar_protocol;
+mod sidecar_supervisor;
 mod simulator;
 
 pub use barrier::{SimulatorBarrier, SimulatorDispatchBarriers};
@@ -35,6 +36,10 @@ pub use sidecar_protocol::{
     ResponseDisposition, SessionBinding, SidecarEvent, SidecarEventKind, SidecarFailure,
     SidecarFrame, SidecarMethod, SidecarRequest, SidecarResponse, negotiate, read_json_frame,
     write_json_frame,
+};
+pub use sidecar_supervisor::{
+    RestartBudget, SidecarCommand, SidecarIdentity, SidecarProcess, SupervisorError,
+    SupervisorTimeouts,
 };
 pub use simulator::{DeterministicMatterSimulator, SimulatorCheckpoint, SimulatorControlError};
 

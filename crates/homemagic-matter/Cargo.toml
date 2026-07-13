@@ -5,6 +5,14 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+sidecar-fixture = []
+
+[[bin]]
+name = "homemagic-matter-fake-sidecar"
+path = "tests/support/fake_sidecar.rs"
+required-features = ["sidecar-fixture"]
+
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
