@@ -9,18 +9,16 @@ index 0bb556cb..7870a461 100644
  import { CommissioningTransitionError, PeerCommunicationError } from "./PeerCommunicationError.js";
  import { PeerSet } from "./PeerSet.js";
  import { PeerTimingParameters } from "./PeerTimingParameters.js";
-@@ -578,5 +579,14 @@ export class ControllerCommissioner {
+@@ -578,5 +579,12 @@ export class ControllerCommissioner {
                  }
  
                  const peer = this.#context.peers.for(address);
-+                if (process.env.HOMEMAGIC_MATTER_OPERATIONAL_ADDRESS_FALLBACK === "1") {
-+                    const knownAddress = (options as Partial<LocatedNodeCommissioningOptions>).addresses?.find(address =>
-+                        ServerAddress.isIp(address),
-+                    );
-+                    const operationalAddress = OperationalAddress.from(knownAddress);
-+                    if (operationalAddress !== undefined) {
-+                        peer.descriptor.operationalAddress = operationalAddress;
-+                    }
++                const knownAddress = (options as Partial<LocatedNodeCommissioningOptions>).addresses?.find(address =>
++                    ServerAddress.isIp(address),
++                );
++                const operationalAddress = OperationalAddress.from(knownAddress);
++                if (operationalAddress !== undefined) {
++                    peer.descriptor.operationalAddress = operationalAddress;
 +                }
                  peer.descriptor.discoveryData = discoveryData;
                  // PASE already negotiated the device's session parameters; seed them so the initial operational CASE
