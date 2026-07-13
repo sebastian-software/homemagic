@@ -103,7 +103,7 @@ jq -n \
       runtime_library: (if $runtime_library_name == "" then null else {path: ("lib/" + $runtime_library_name), sha256: $runtime_library_sha256, bytes: $runtime_library_bytes} end),
       licenses: ["Node.js-LICENSE", "matter.js-LICENSE"]
     },
-    advertised_methods: ["fabric_load", "fabric_create", "health_check", "process_drain"],
+    advertised_methods: ["fabric_load", "fabric_create", "node_inventory", "health_check", "process_drain"],
     production_selected: false
   }' > "$output_path/manifest.json"
 

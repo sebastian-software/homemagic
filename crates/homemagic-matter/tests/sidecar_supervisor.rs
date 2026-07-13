@@ -341,6 +341,29 @@ async fn assert_missing_fabric_rejected(
         .unwrap_or_else(|error| panic!("empty sidecar should drain: {error}"));
 }
 
+async fn assert_empty_inventory(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) {
+    let inventory = process
+        .request_controlled(
+            request_for(binding, SidecarMethod::NodeInventory, "node-inventory-1"),
+            RemoteOperationState::PreMutation,
+            secrets,
+            handler,
+            window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("empty packaged inventory should pass: {error:?}"));
+    assert!(matches!(
+        inventory.disposition,
+        ResponseDisposition::Result { ref body } if body.value() == &json!({ "nodes": [] })
+    ));
+}
+
 #[tokio::test]
 async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
     let Some(node) = std::env::var_os("HOMEMAGIC_MATTER_JS_NODE") else {
@@ -355,6 +378,7 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         required_methods: [
             SidecarMethod::FabricLoad,
             SidecarMethod::FabricCreate,
+            SidecarMethod::NodeInventory,
             SidecarMethod::HealthCheck,
             SidecarMethod::ProcessDrain,
         ]
@@ -411,6 +435,7 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         .await
         .unwrap_or_else(|error| panic!("packaged fabric create should pass: {error:?}"));
     assert!(secrets.0.lock().is_ok_and(|values| !values.is_empty()));
+    assert_empty_inventory(&mut process, &binding, &secrets, &handler, &mut window).await;
     process
         .drain_controlled(&secrets, &handler, &mut window)
         .await

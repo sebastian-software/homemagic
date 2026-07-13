@@ -10,7 +10,7 @@ const NODE_VERSION = "v24.18.0";
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_SECRET_FRAME_BYTES = 8 * MAX_FRAME_BYTES;
 const FABRIC_MARKER_HANDLE = "matter/storage/__fabric__";
-const methods = ["fabric_load", "fabric_create", "health_check", "process_drain"];
+const methods = ["fabric_load", "fabric_create", "node_inventory", "health_check", "process_drain"];
 
 if (process.version !== NODE_VERSION) process.exit(78);
 Logger.level = "fatal";
@@ -152,6 +152,15 @@ const handleFrame = async frame => {
             await secretBridge.put(FABRIC_MARKER_HANDLE, Buffer.from("v1"));
         }
         body = { fabric_ready: true, commissioned_nodes: active.getCommissionedNodes().length };
+    } else if (request.method === "node_inventory") {
+        const active = await ensureController();
+        body = {
+            nodes: active.getCommissionedNodesDetails().map(details => ({
+                node_id: details.nodeId.toString(),
+                advertised_name: details.advertisedName,
+                operational_address: details.operationalAddress,
+            })),
+        };
     } else {
         body = {};
     }
