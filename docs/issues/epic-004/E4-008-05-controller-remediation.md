@@ -49,6 +49,12 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: Public run `29217737405` drives the packaged private sidecar
+  against pinned ConnectedHomeIP `v1.5.1.0`. Linux x86_64 passes fabric create,
+  secret-safe setup validation, commission, inventory, process restart,
+  Rust-owned load, remote removal, and empty inventory unmodified. macOS ARM64
+  passes the same boundary lifecycle only with the explicitly marked test-only
+  direct-address diagnostic, so the production mDNS gate remains open.
 - 2026-07-13: Public package run `29217160926` passes on both hosts with
   SDK-neutral node inventory and removal methods. The Rust supervisor proves
   empty inventory and fail-closed missing-node removal; the child validates

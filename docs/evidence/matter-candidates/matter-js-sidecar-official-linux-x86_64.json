@@ -1,0 +1,63 @@
+{
+  "schema": "homemagic.matter.matter-js-sidecar-official-reference.v1",
+  "host": {
+    "captured_at": "2026-07-13T01:44:49Z",
+    "os": "Linux",
+    "architecture": "x86_64"
+  },
+  "reference": {
+    "id": "connectedhomeip-light",
+    "revision": "abcc720b48c5e59c0edcfe65c516f76ca9448aa3",
+    "release": "v1.5.1.0",
+    "target": "linux-x64-light-no-ble-no-wifi-no-thread"
+  },
+  "diagnostic": {
+    "operational_address_fallback": false
+  },
+  "package": {
+    "schema": "homemagic.matter.matter-js-package.v1",
+    "matter_js_revision": "b539372ff41fea24344760d69172508e9df931a2",
+    "node_version": "v24.18.0",
+    "host": {
+      "os": "Linux",
+      "architecture": "x86_64"
+    },
+    "files": {
+      "sidecar.mjs": {
+        "sha256": "fd1689d1bb9184637ee2758385918fc9c0e6151ee8af944a052569748fcb533e",
+        "bytes": 2155027
+      },
+      "bin/node": {
+        "sha256": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+        "bytes": 123655872
+      },
+      "runtime_library": null,
+      "licenses": [
+        "Node.js-LICENSE",
+        "matter.js-LICENSE"
+      ]
+    },
+    "advertised_methods": [
+      "fabric_load",
+      "fabric_create",
+      "node_commission",
+      "node_inventory",
+      "node_remove",
+      "health_check",
+      "process_drain"
+    ],
+    "production_selected": false,
+    "diagnostic_operational_address_fallback": false
+  },
+  "outcomes": {
+    "missing_fabric": "pass",
+    "fabric_create": "pass",
+    "setup_validation": "pass",
+    "commission": "pass",
+    "inventory": "pass",
+    "process_restart": "pass",
+    "fabric_load": "pass",
+    "remove": "pass",
+    "empty_inventory": "pass"
+  }
+}

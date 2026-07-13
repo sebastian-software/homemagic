@@ -103,6 +103,18 @@ canary scans on both hosts. Exact manifests are committed for
 not prove removal of a commissioned independent fixture; that remains part of
 the complete boundary lifecycle gate.
 
+Public run `29217737405` executes the private boundary against the pinned
+official ConnectedHomeIP light. Linux x86_64 passes the unmodified packaged
+path through fabric creation, secret-safe setup validation, commissioning,
+inventory, controlled process restart, Rust-owned fabric reload, remote
+decommission, and empty inventory. macOS ARM64 passes the same Rust/private
+boundary sequence only with the already documented test-only direct operational
+address patch. The macOS package and report mark that diagnostic explicitly; it
+is not production evidence and does not close the mDNS gate. Exact reports are
+committed for
+[Linux x86_64](matter-js-sidecar-official-linux-x86_64.json) and
+[macOS ARM64 diagnostic](matter-js-sidecar-official-macos-arm64.json).
+
 ## Source capabilities and gaps
 
 - `CommissioningController` provides on-network commissioning, inventory,
@@ -156,7 +168,7 @@ not to turn candidate failure into missing evidence.
 | License and provenance | Pass | Apache-2.0, exact commit and lockfile |
 | Build/run on both targets | Pass for build and fabric start | Two-host build and lifecycle reports |
 | SDK-neutral production port | Fail | Protocol specified but not implemented |
-| Complete independent lifecycle | Fail | Linux passes; macOS times out at operational reconnect |
+| Complete independent lifecycle | Fail | Private sidecar passes unmodified on Linux; macOS passes only with the test diagnostic and still fails unmodified operational discovery |
 | ADR-0008/ADR-0037 secrets | Partial | Rust-owned reverse-RPC storage passes two-host missing/create/restart/load; production encrypted-store integration remains open |
 | Errors/cancel/partial/subscription loss | Fail | Partial phase evidence exists; production boundary does not |
 | Reproducible production packaging | Partial | Fabric-storage package passes both hosts; license closure, signing, rollback, and sandbox remain open |

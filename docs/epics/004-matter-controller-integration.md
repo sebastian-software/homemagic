@@ -219,3 +219,8 @@ fabric without learning Matter cluster internals.
   same Rust store on macOS ARM64 and Linux x86_64. Complete device operations,
   production encrypted-store integration, signing, rollback, and an accepted
   exception ADR remain open.
+- 2026-07-12: Public run 29217737405 proves the packaged private sidecar against
+  the pinned official light through create, commission, inventory, process
+  restart, Rust-owned load, remote removal, and empty inventory. Linux x86_64
+  passes unmodified; macOS ARM64 passes only with the explicitly marked
+  direct-address diagnostic, leaving the production mDNS gate open.
