@@ -57,6 +57,14 @@ operations. The exact local report is
 [matter-js-sidecar-package-local-macos-arm64.json](matter-js-sidecar-package-local-macos-arm64.json);
 the two-host workflow owns reproducible runner packages.
 
+Public run `29215942175` passes package build, real Rust handshake/health/drain,
+canary scan, and artifact upload on both targets. The minified SDK bundle is
+byte-identical across hosts (`c39fbcd...`, 2,148,316 bytes). The official
+setup-node runtimes are self-contained: 120,965,360 bytes on macOS ARM64 and
+123,655,872 bytes on Linux x86_64. Exact manifests are committed for
+[macOS ARM64](matter-js-sidecar-package-macos-arm64.json) and
+[Linux x86_64](matter-js-sidecar-package-linux-x86_64.json).
+
 ## Source capabilities and gaps
 
 - `CommissioningController` provides on-network commissioning, inventory,

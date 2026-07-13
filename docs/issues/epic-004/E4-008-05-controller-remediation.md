@@ -49,6 +49,12 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: Public package run `29215942175` passes on macOS ARM64 and Linux
+  x86_64. Both exact Node runtimes launch through the real Rust supervisor; the
+  bundle hash is identical on both hosts and package canary scans pass. Exact
+  manifests are committed. This closes only the reproducible prototype/runtime
+  sub-gate: the package still advertises no device methods and lacks complete
+  bundled-input licenses, signing, and rollback evidence.
 - 2026-07-13: The first real matter.js package prototype now bundles the exact
   pinned SDK, exact Node runtime, detected runtime library, top-level licenses,
   and per-file hashes. Its deliberately limited `health_check`/`process_drain`

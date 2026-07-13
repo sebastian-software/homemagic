@@ -1,0 +1,29 @@
+{
+  "schema": "homemagic.matter.matter-js-package.v1",
+  "matter_js_revision": "b539372ff41fea24344760d69172508e9df931a2",
+  "node_version": "v24.18.0",
+  "host": {
+    "os": "Darwin",
+    "architecture": "arm64"
+  },
+  "files": {
+    "sidecar.mjs": {
+      "sha256": "c39fbcd7b7d4f35afc842df2d73efae3354c73c15774d4c8951c604e306784b5",
+      "bytes": 2148316
+    },
+    "bin/node": {
+      "sha256": "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
+      "bytes": 120965360
+    },
+    "runtime_library": null,
+    "licenses": [
+      "Node.js-LICENSE",
+      "matter.js-LICENSE"
+    ]
+  },
+  "advertised_methods": [
+    "health_check",
+    "process_drain"
+  ],
+  "production_selected": false
+}
