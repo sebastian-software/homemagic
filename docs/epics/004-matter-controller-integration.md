@@ -212,3 +212,9 @@ fabric without learning Matter cluster internals.
   gate-first evaluation. ADR-0039 selects no production controller; remediation
   E4-008-05 blocks E4-009 without reducing the Rust, secret, lifecycle, or
   packaging requirements.
+- 2026-07-12: E4-008-05 now has a pinned packaged matter.js prototype whose
+  custom storage driver persists fabric namespaces only through Rust reverse
+  secret RPC. A real macOS ARM64 package passed create, controlled drain,
+  process restart, load, and controlled drain against the same Rust store.
+  Two-host evidence, complete device operations, production encrypted-store
+  integration, signing, rollback, and an accepted exception ADR remain open.

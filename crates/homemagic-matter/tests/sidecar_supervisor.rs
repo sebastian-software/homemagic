@@ -2,19 +2,22 @@
 #![cfg(feature = "sidecar-fixture")]
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use async_trait::async_trait;
 use homemagic_matter::{
-    EventWindow, PrivatePayload, ProtocolLimits, RemoteOperationState, RestartBudget,
-    SecretDriverError, SecretRecord, SensitiveBytes, SessionBinding, SidecarCommand, SidecarEvent,
-    SidecarEventHandler, SidecarEventHandlerError, SidecarIdentity, SidecarMethod, SidecarProcess,
-    SidecarRequest, SidecarSecretStore, SupervisorError, SupervisorTimeouts,
+    EventWindow, PrivatePayload, ProtocolLimits, RemoteOperationState, ResponseDisposition,
+    RestartBudget, SecretDriverError, SecretRecord, SensitiveBytes, SessionBinding, SidecarCommand,
+    SidecarEvent, SidecarEventHandler, SidecarEventHandlerError, SidecarIdentity, SidecarMethod,
+    SidecarProcess, SidecarRequest, SidecarSecretStore, SupervisorError, SupervisorTimeouts,
 };
 use serde_json::json;
 
@@ -47,39 +50,65 @@ fn timeouts() -> SupervisorTimeouts {
 }
 
 fn request(binding: &SessionBinding) -> SidecarRequest {
+    request_for(binding, SidecarMethod::HealthCheck, "health-1")
+}
+
+fn request_for(
+    binding: &SessionBinding,
+    method: SidecarMethod,
+    request_id: &str,
+) -> SidecarRequest {
     SidecarRequest {
         session: binding.clone(),
-        request_id: "health-1".into(),
-        method: SidecarMethod::HealthCheck,
-        deadline_ms: 100,
-        idempotency_key: "health-1".into(),
+        request_id: request_id.into(),
+        method,
+        deadline_ms: 2_000,
+        idempotency_key: request_id.into(),
         body: PrivatePayload::new(json!({})),
     }
 }
 
-struct EmptySecretStore;
+#[derive(Default)]
+struct MemorySecretStore(Mutex<BTreeMap<String, (u64, Vec<u8>)>>);
 
 #[async_trait]
-impl SidecarSecretStore for EmptySecretStore {
-    async fn get(&self, _handle: &str) -> Result<Option<SecretRecord>, SecretDriverError> {
-        Ok(None)
+impl SidecarSecretStore for MemorySecretStore {
+    async fn get(&self, handle: &str) -> Result<Option<SecretRecord>, SecretDriverError> {
+        let values = self.0.lock().map_err(|_| SecretDriverError::Unavailable)?;
+        Ok(values.get(handle).map(|(revision, value)| SecretRecord {
+            revision: *revision,
+            value: SensitiveBytes::new(value.clone()),
+        }))
     }
 
-    async fn put(&self, _handle: &str, _value: SensitiveBytes) -> Result<u64, SecretDriverError> {
-        Ok(1)
+    async fn put(&self, handle: &str, value: SensitiveBytes) -> Result<u64, SecretDriverError> {
+        let mut values = self.0.lock().map_err(|_| SecretDriverError::Unavailable)?;
+        let revision = values.get(handle).map_or(1, |(revision, _)| revision + 1);
+        values.insert(handle.into(), (revision, value.expose().to_vec()));
+        Ok(revision)
     }
 
-    async fn delete(&self, _handle: &str) -> Result<bool, SecretDriverError> {
-        Ok(false)
+    async fn delete(&self, handle: &str) -> Result<bool, SecretDriverError> {
+        let mut values = self.0.lock().map_err(|_| SecretDriverError::Unavailable)?;
+        Ok(values.remove(handle).is_some())
     }
 
     async fn compare_and_swap(
         &self,
-        _handle: &str,
-        _expected_revision: u64,
-        _value: SensitiveBytes,
+        handle: &str,
+        expected_revision: u64,
+        value: SensitiveBytes,
     ) -> Result<u64, SecretDriverError> {
-        Ok(1)
+        let mut values = self.0.lock().map_err(|_| SecretDriverError::Unavailable)?;
+        let Some((revision, stored)) = values.get_mut(handle) else {
+            return Err(SecretDriverError::Conflict);
+        };
+        if *revision != expected_revision {
+            return Err(SecretDriverError::Conflict);
+        }
+        *revision += 1;
+        *stored = value.expose().to_vec();
+        Ok(*revision)
     }
 }
 
@@ -135,7 +164,7 @@ async fn supervisor_should_service_reverse_secrets_and_ack_durable_events() {
         .request_controlled(
             request(&binding),
             RemoteOperationState::PreMutation,
-            &EmptySecretStore,
+            &MemorySecretStore::default(),
             &handler,
             &mut window,
         )
@@ -272,6 +301,46 @@ fn restart_budget_should_back_off_and_open_its_circuit() {
     assert_eq!(budget.record_failure(), Some(Duration::from_millis(10)));
 }
 
+async fn assert_missing_fabric_rejected(
+    command: &SidecarCommand,
+    identity: &SidecarIdentity,
+    timeouts: SupervisorTimeouts,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+) {
+    let mut process = SidecarProcess::launch(
+        command,
+        identity,
+        timeouts,
+        "installation-real".into(),
+        "session-missing".into(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("packaged sidecar should launch: {error:?}"));
+    let binding = process.binding().clone();
+    let mut window =
+        EventWindow::new(64).unwrap_or_else(|error| panic!("window should pass: {error}"));
+    let response = process
+        .request_controlled(
+            request_for(&binding, SidecarMethod::FabricLoad, "fabric-load-missing"),
+            RemoteOperationState::PreMutation,
+            secrets,
+            handler,
+            &mut window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("missing fabric should return a response: {error:?}"));
+    assert!(matches!(
+        response.disposition,
+        ResponseDisposition::Error { ref error } if error.code == "fabric_not_found"
+    ));
+    assert!(secrets.0.lock().is_ok_and(|values| values.is_empty()));
+    process
+        .drain_controlled(secrets, handler, &mut window)
+        .await
+        .unwrap_or_else(|error| panic!("empty sidecar should drain: {error}"));
+}
+
 #[tokio::test]
 async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
     let Some(node) = std::env::var_os("HOMEMAGIC_MATTER_JS_NODE") else {
@@ -283,31 +352,94 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         matter_js_revision: "b539372ff41fea24344760d69172508e9df931a2".into(),
         node_version: "v24.18.0".into(),
         minimum_minor: 0,
-        required_methods: [SidecarMethod::HealthCheck, SidecarMethod::ProcessDrain]
-            .into_iter()
-            .collect::<BTreeSet<_>>(),
+        required_methods: [
+            SidecarMethod::FabricLoad,
+            SidecarMethod::FabricCreate,
+            SidecarMethod::HealthCheck,
+            SidecarMethod::ProcessDrain,
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>(),
         required_event_kinds: BTreeSet::new(),
         limits: ProtocolLimits::default(),
     };
-    let mut process = SidecarProcess::launch(
-        &SidecarCommand {
-            executable: PathBuf::from(node),
-            arguments: vec![sidecar],
-        },
+    let sidecar_command = SidecarCommand {
+        executable: PathBuf::from(node),
+        arguments: vec![sidecar],
+    };
+    let real_timeouts = SupervisorTimeouts {
+        startup: Duration::from_secs(5),
+        request: Duration::from_secs(10),
+        drain: Duration::from_secs(5),
+    };
+    let secrets = MemorySecretStore::default();
+    let handler = RecordingEventHandler::default();
+    assert_missing_fabric_rejected(
+        &sidecar_command,
         &real_identity,
-        timeouts(),
+        real_timeouts,
+        &secrets,
+        &handler,
+    )
+    .await;
+
+    let process = SidecarProcess::launch(
+        &sidecar_command,
+        &real_identity,
+        real_timeouts,
         "installation-real".into(),
         "session-real".into(),
     )
     .await
     .unwrap_or_else(|error| panic!("packaged sidecar should launch: {error:?}"));
+    let mut process = process;
     let binding = process.binding().clone();
     process
         .request(request(&binding), RemoteOperationState::PreMutation)
         .await
         .unwrap_or_else(|error| panic!("packaged health request should pass: {error}"));
+    let mut window =
+        EventWindow::new(64).unwrap_or_else(|error| panic!("window should pass: {error}"));
     process
-        .drain()
+        .request_controlled(
+            request_for(&binding, SidecarMethod::FabricCreate, "fabric-create-1"),
+            RemoteOperationState::MutationDispatched,
+            &secrets,
+            &handler,
+            &mut window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("packaged fabric create should pass: {error:?}"));
+    assert!(secrets.0.lock().is_ok_and(|values| !values.is_empty()));
+    process
+        .drain_controlled(&secrets, &handler, &mut window)
         .await
         .unwrap_or_else(|error| panic!("packaged sidecar should drain: {error}"));
+
+    let mut restarted = SidecarProcess::launch(
+        &sidecar_command,
+        &real_identity,
+        real_timeouts,
+        "installation-real".into(),
+        "session-restarted".into(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("packaged sidecar should restart: {error:?}"));
+    let binding = restarted.binding().clone();
+    let mut window =
+        EventWindow::new(64).unwrap_or_else(|error| panic!("window should pass: {error}"));
+    restarted
+        .request_controlled(
+            request_for(&binding, SidecarMethod::FabricLoad, "fabric-load-1"),
+            RemoteOperationState::PreMutation,
+            &secrets,
+            &handler,
+            &mut window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("packaged fabric load should pass: {error:?}"));
+    restarted
+        .drain_controlled(&secrets, &handler, &mut window)
+        .await
+        .unwrap_or_else(|error| panic!("restarted sidecar should drain: {error}"));
 }

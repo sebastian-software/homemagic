@@ -34,6 +34,7 @@ git -C "$workspace/source" checkout --quiet --detach FETCH_HEAD
 test "$(shasum -a 256 "$workspace/source/package-lock.json" | awk '{print $1}')" = "$lock_sha256"
 cp "$homemagic_root/sidecars/matter-js/src/main.mjs" "$workspace/source/homemagic-sidecar.mjs"
 cp "$homemagic_root/sidecars/matter-js/src/bun-sqlite-stub.mjs" "$workspace/source/homemagic-bun-sqlite-stub.mjs"
+cp "$homemagic_root/sidecars/matter-js/src/storage.mjs" "$workspace/source/storage.mjs"
 
 (
   cd "$workspace/source"
@@ -102,7 +103,7 @@ jq -n \
       runtime_library: (if $runtime_library_name == "" then null else {path: ("lib/" + $runtime_library_name), sha256: $runtime_library_sha256, bytes: $runtime_library_bytes} end),
       licenses: ["Node.js-LICENSE", "matter.js-LICENSE"]
     },
-    advertised_methods: ["health_check", "process_drain"],
+    advertised_methods: ["fabric_load", "fabric_create", "health_check", "process_drain"],
     production_selected: false
   }' > "$output_path/manifest.json"
 

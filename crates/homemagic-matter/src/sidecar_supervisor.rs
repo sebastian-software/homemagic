@@ -404,6 +404,60 @@ impl SidecarProcess {
             }
         }
     }
+
+    /// Drain while continuing to service reverse secrets and events.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable control, process-loss, or total drain-timeout error.
+    pub async fn drain_controlled<S, H>(
+        mut self,
+        secret_store: &S,
+        event_handler: &H,
+        event_window: &mut EventWindow,
+    ) -> Result<(), SupervisorError>
+    where
+        S: SidecarSecretStore,
+        H: SidecarEventHandler,
+    {
+        let drain_deadline = Instant::now() + self.timeouts.drain;
+        let request = SidecarRequest {
+            session: self.binding.clone(),
+            request_id: "process-drain".into(),
+            method: SidecarMethod::ProcessDrain,
+            deadline_ms: u64::try_from(self.timeouts.drain.as_millis()).unwrap_or(u64::MAX),
+            idempotency_key: "process-drain".into(),
+            body: PrivatePayload::new(json!({})),
+        };
+        let response = match self
+            .request_controlled(
+                request,
+                RemoteOperationState::PreMutation,
+                secret_store,
+                event_handler,
+                event_window,
+            )
+            .await
+        {
+            Err(SupervisorError::RequestTimeout { .. }) => {
+                return Err(SupervisorError::DrainTimeout);
+            }
+            result => result?,
+        };
+        if !matches!(response.disposition, ResponseDisposition::Result { .. }) {
+            return Err(SupervisorError::UnexpectedFrame);
+        }
+
+        let remaining = drain_deadline.saturating_duration_since(Instant::now());
+        match timeout(remaining, self.child.wait()).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(_)) => Err(SupervisorError::ProcessLost { partial: false }),
+            Err(_) => {
+                let _ = self.child.start_kill();
+                Err(SupervisorError::DrainTimeout)
+            }
+        }
+    }
 }
 
 /// Bounded exponential restart policy with a circuit breaker.
