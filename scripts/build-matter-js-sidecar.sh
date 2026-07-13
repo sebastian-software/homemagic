@@ -32,6 +32,11 @@ git -C "$workspace/source" remote add origin "$repository"
 git -C "$workspace/source" fetch --quiet --depth 1 origin "$revision"
 git -C "$workspace/source" checkout --quiet --detach FETCH_HEAD
 test "$(shasum -a 256 "$workspace/source/package-lock.json" | awk '{print $1}')" = "$lock_sha256"
+operational_address_fallback="${HOMEMAGIC_MATTER_OPERATIONAL_ADDRESS_FALLBACK:-0}"
+if test "$operational_address_fallback" = "1"; then
+  git -C "$workspace/source" apply \
+    "$homemagic_root/spikes/matter-controller-matter-js/direct-operational-address.patch"
+fi
 cp "$homemagic_root/sidecars/matter-js/src/main.mjs" "$workspace/source/homemagic-sidecar.mjs"
 cp "$homemagic_root/sidecars/matter-js/src/bun-sqlite-stub.mjs" "$workspace/source/homemagic-bun-sqlite-stub.mjs"
 cp "$homemagic_root/sidecars/matter-js/src/storage.mjs" "$workspace/source/storage.mjs"
@@ -89,6 +94,7 @@ jq -n \
   --arg node_sha256 "$node_sha256" \
   --arg runtime_library_name "$runtime_library_name" \
   --arg runtime_library_sha256 "$runtime_library_sha256" \
+  --arg operational_address_fallback "$operational_address_fallback" \
   --argjson bundle_bytes "$bundle_bytes" \
   --argjson node_bytes "$node_bytes" \
   --argjson runtime_library_bytes "$runtime_library_bytes" \
@@ -104,7 +110,8 @@ jq -n \
       licenses: ["Node.js-LICENSE", "matter.js-LICENSE"]
     },
     advertised_methods: ["fabric_load", "fabric_create", "node_commission", "node_inventory", "node_remove", "health_check", "process_drain"],
-    production_selected: false
+    production_selected: false,
+    diagnostic_operational_address_fallback: ($operational_address_fallback == "1")
   }' > "$output_path/manifest.json"
 
 "$output_path/bin/node" "$output_path/sidecar.mjs" </dev/null >/dev/null

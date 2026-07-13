@@ -264,6 +264,9 @@ const handleFrame = async frame => {
             return;
         }
         try {
+            const node = await active.getNode(matterNodeId);
+            node.connect();
+            if (!node.initialized) await node.events.initialized;
             await active.removeNode(matterNodeId, true);
         } catch {
             partial(request, "node_remove_dispatched", {

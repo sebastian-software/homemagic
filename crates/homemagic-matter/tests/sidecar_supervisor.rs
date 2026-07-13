@@ -428,7 +428,7 @@ async fn assert_invalid_commissioning_rejected(
         ResponseDisposition::Error { ref error } if error.code == "invalid_setup_payload"
     ));
 
-    let valid_setup = b"26318621095".to_vec();
+    let valid_setup = b"34970112332".to_vec();
     let response = process
         .request_controlled(
             request_with_body(
@@ -448,6 +448,148 @@ async fn assert_invalid_commissioning_rejected(
         response.disposition,
         ResponseDisposition::Error { ref error } if error.code == "invalid_known_address"
     ));
+}
+
+fn fixture_configuration() -> Option<(String, u16, Vec<u8>)> {
+    let setup = std::env::var_os("HOMEMAGIC_MATTER_FIXTURE_SETUP")?;
+    let address = std::env::var("HOMEMAGIC_MATTER_FIXTURE_ADDRESS")
+        .unwrap_or_else(|_| panic!("fixture address must accompany fixture setup"));
+    let port = std::env::var("HOMEMAGIC_MATTER_FIXTURE_PORT")
+        .unwrap_or_else(|_| panic!("fixture port must accompany fixture setup"))
+        .parse::<u16>()
+        .unwrap_or_else(|error| panic!("fixture port should be valid: {error}"));
+    Some((address, port, setup.as_encoded_bytes().to_vec()))
+}
+
+async fn commission_fixture(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) -> Option<String> {
+    let (address, port, setup_payload) = fixture_configuration()?;
+    let response = process
+        .request_controlled(
+            request_with_body(
+                binding,
+                SidecarMethod::NodeCommission,
+                "node-commission-fixture",
+                json!({
+                    "setup_payload": setup_payload,
+                    "known_address": { "ip": address, "port": port }
+                }),
+            ),
+            RemoteOperationState::MutationDispatched,
+            secrets,
+            handler,
+            window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("fixture commissioning should respond: {error:?}"));
+    let ResponseDisposition::Result { body } = response.disposition else {
+        panic!("fixture commissioning should complete");
+    };
+    Some(
+        body.value()["node_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("fixture node identity should be present"))
+            .to_owned(),
+    )
+}
+
+async fn assert_inventory_contains(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    node_id: &str,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) {
+    let response = process
+        .request_controlled(
+            request_for(
+                binding,
+                SidecarMethod::NodeInventory,
+                "node-inventory-fixture",
+            ),
+            RemoteOperationState::PreMutation,
+            secrets,
+            handler,
+            window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("fixture inventory should respond: {error:?}"));
+    let ResponseDisposition::Result { body } = response.disposition else {
+        panic!("fixture inventory should complete");
+    };
+    assert!(
+        body.value()["nodes"]
+            .as_array()
+            .is_some_and(|nodes| nodes.iter().any(|node| node["node_id"] == node_id))
+    );
+}
+
+async fn remove_fixture(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    node_id: &str,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) {
+    let response = process
+        .request_controlled(
+            request_with_body(
+                binding,
+                SidecarMethod::NodeRemove,
+                "node-remove-fixture",
+                json!({ "node_id": node_id }),
+            ),
+            RemoteOperationState::MutationDispatched,
+            secrets,
+            handler,
+            window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("fixture removal should respond: {error:?}"));
+    assert!(matches!(
+        response.disposition,
+        ResponseDisposition::Result { .. }
+    ));
+}
+
+async fn exercise_pre_restart_contracts(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) -> Option<String> {
+    assert_empty_inventory(process, binding, secrets, handler, window).await;
+    assert_invalid_commissioning_rejected(process, binding, secrets, handler, window).await;
+    assert_missing_node_removal_rejected(process, binding, secrets, handler, window).await;
+    let fixture_node = commission_fixture(process, binding, secrets, handler, window).await;
+    if let Some(node_id) = fixture_node.as_deref() {
+        assert_inventory_contains(process, binding, node_id, secrets, handler, window).await;
+    }
+    fixture_node
+}
+
+async fn exercise_post_restart_fixture(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    fixture_node: Option<&str>,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) {
+    let Some(node_id) = fixture_node else {
+        return;
+    };
+    assert_inventory_contains(process, binding, node_id, secrets, handler, window).await;
+    remove_fixture(process, binding, node_id, secrets, handler, window).await;
+    assert_empty_inventory(process, binding, secrets, handler, window).await;
 }
 
 fn packaged_identity() -> SidecarIdentity {
@@ -483,9 +625,14 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         executable: PathBuf::from(node),
         arguments: vec![sidecar],
     };
+    let request_timeout = if fixture_configuration().is_some() {
+        Duration::from_secs(180)
+    } else {
+        Duration::from_secs(10)
+    };
     let real_timeouts = SupervisorTimeouts {
         startup: Duration::from_secs(5),
-        request: Duration::from_secs(10),
+        request: request_timeout,
         drain: Duration::from_secs(5),
     };
     let secrets = MemorySecretStore::default();
@@ -527,11 +674,9 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         .await
         .unwrap_or_else(|error| panic!("packaged fabric create should pass: {error:?}"));
     assert!(secrets.0.lock().is_ok_and(|values| !values.is_empty()));
-    assert_empty_inventory(&mut process, &binding, &secrets, &handler, &mut window).await;
-    assert_invalid_commissioning_rejected(&mut process, &binding, &secrets, &handler, &mut window)
-        .await;
-    assert_missing_node_removal_rejected(&mut process, &binding, &secrets, &handler, &mut window)
-        .await;
+    let fixture_node =
+        exercise_pre_restart_contracts(&mut process, &binding, &secrets, &handler, &mut window)
+            .await;
     process
         .drain_controlled(&secrets, &handler, &mut window)
         .await
@@ -559,6 +704,15 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         )
         .await
         .unwrap_or_else(|error| panic!("packaged fabric load should pass: {error:?}"));
+    exercise_post_restart_fixture(
+        &mut restarted,
+        &binding,
+        fixture_node.as_deref(),
+        &secrets,
+        &handler,
+        &mut window,
+    )
+    .await;
     restarted
         .drain_controlled(&secrets, &handler, &mut window)
         .await

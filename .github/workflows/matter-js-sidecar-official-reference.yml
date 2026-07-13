@@ -1,0 +1,74 @@
+name: Matter matter.js sidecar official reference
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - config/matter-js-candidate.json
+      - config/matter-controller-candidates.json
+      - crates/homemagic-matter/**
+      - scripts/build-matter-js-sidecar.sh
+      - scripts/run-matter-js-official-reference.sh
+      - sidecars/matter-js/**
+      - spikes/matter-controller-matter-js/direct-operational-address.patch
+      - .github/workflows/matter-js-sidecar-official-reference.yml
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    name: Private sidecar vs official light (${{ matrix.label }})
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: x86_64
+            fallback: "0"
+            label: Linux x86_64
+          - runner: macos-14
+            architecture: arm64
+            fallback: "1"
+            label: macOS ARM64 diagnostic
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out HomeMagic
+        uses: actions/checkout@v6
+
+      - name: Install pinned Node runtime
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          gcc g++ python3 pkg-config libssl-dev libdbus-1-dev libglib2.0-dev
+          ninja-build python3-venv python3-dev unzip
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Run private sidecar lifecycle
+        run: >-
+          ./scripts/run-matter-js-official-reference.sh report.json
+          "${{ matrix.architecture }}" "${{ matrix.fallback }}" sidecar
+
+      - name: Verify report and canary absence
+        run: |
+          jq -e '.outcomes | to_entries | all(.value == "pass")' report.json
+          if rg --text 'HOMEMAGIC_SECRET_CANARY' report.json; then exit 1; fi
+
+      - name: Upload lifecycle evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: matter-js-sidecar-official-${{ matrix.architecture }}
+          path: report.json
+          if-no-files-found: error

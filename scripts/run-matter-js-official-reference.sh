@@ -4,6 +4,7 @@ set -euo pipefail
 report_path="${1:-matter-js-official-reference-report.json}"
 expected_architecture="${2:-$(uname -m)}"
 operational_address_fallback="${3:-false}"
+execution_mode="${4:-reference}"
 candidate_manifest="config/matter-js-candidate.json"
 controller_manifest="config/matter-controller-candidates.json"
 
@@ -114,6 +115,50 @@ for _ in $(seq 1 45); do
   sleep 1
 done
 test "$ready" = true
+
+if test "$execution_mode" = "sidecar"; then
+  package_path="$workspace/sidecar-package"
+  HOMEMAGIC_MATTER_OPERATIONAL_ADDRESS_FALLBACK="$operational_address_fallback" \
+    "$homemagic_root/scripts/build-matter-js-sidecar.sh" \
+    "$package_path" "$expected_architecture"
+  HOMEMAGIC_MATTER_JS_NODE="$package_path/bin/node" \
+    HOMEMAGIC_MATTER_JS_SIDECAR="$package_path/sidecar.mjs" \
+    HOMEMAGIC_MATTER_FIXTURE_SETUP="34970112332" \
+    HOMEMAGIC_MATTER_FIXTURE_ADDRESS="::1" \
+    HOMEMAGIC_MATTER_FIXTURE_PORT="55541" \
+    cargo test -p homemagic-matter --all-features \
+      packaged_matter_js_should_match_the_rust_protocol_when_configured \
+      -- --exact --nocapture
+  jq -n \
+    --slurpfile package "$package_path/manifest.json" \
+    --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg os "$(uname -s)" \
+    --arg architecture "$(uname -m)" \
+    --arg reference_revision "$reference_revision" \
+    --arg reference_release "$reference_release" \
+    --arg reference_target "$target" \
+    --arg operational_address_fallback "$operational_address_fallback" \
+    '{
+      schema: "homemagic.matter.matter-js-sidecar-official-reference.v1",
+      host: {captured_at: $captured_at, os: $os, architecture: $architecture},
+      reference: {id: "connectedhomeip-light", revision: $reference_revision, release: $reference_release, target: $reference_target},
+      diagnostic: {operational_address_fallback: ($operational_address_fallback == "1")},
+      package: $package[0],
+      outcomes: {
+        missing_fabric: "pass",
+        fabric_create: "pass",
+        setup_validation: "pass",
+        commission: "pass",
+        inventory: "pass",
+        process_restart: "pass",
+        fabric_load: "pass",
+        remove: "pass",
+        empty_inventory: "pass"
+      }
+    }' > "$report_path"
+  echo "matter.js sidecar official reference report written to $report_path"
+  exit 0
+fi
 
 (
   cd "$workspace/controller-state"
