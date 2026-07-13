@@ -26,7 +26,7 @@ and no production compatibility claim.
   device as a second independent fixture on both hosts.
 - [x] Run the same commission, inventory, read, subscribe, invoke, process
   restart, and removal lifecycle against rs-matter and the official fixture.
-- [ ] Classify any implementation-specific incompatibility without weakening
+- [x] Classify any implementation-specific incompatibility without weakening
   the requirement for at least one complete independent lifecycle per host.
 - [ ] If matter.js passes, implement the inherited-pipe private protocol,
   reverse Rust-owned secret driver, cancellation, partial outcomes, event
@@ -49,6 +49,14 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: Test-only run `29214794784` seeds the already known on-network
+  address directly into matter.js immediately before operational CASE. Both
+  hosts then pass commission, inventory, read, toggle, subscription, controller
+  restart, and removal. Combined with unmodified run `29213972862`, this proves
+  macOS Matter credentials and CASE are functional and isolates the remaining
+  failure to operational mDNS address acquisition in the self-hosted fixture
+  topology. The diagnostic patch is not a production workaround and normal
+  push CI remains unmodified.
 - 2026-07-12: Public run `29213972862` builds pinned ConnectedHomeIP
   `v1.5.1.0` light fixtures and runs the same lifecycle on both hosts. Linux
   x86_64 passes commission, inventory, read, toggle, subscription, controller

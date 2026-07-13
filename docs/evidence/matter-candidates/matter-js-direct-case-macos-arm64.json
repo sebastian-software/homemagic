@@ -1,0 +1,111 @@
+{
+  "schema": "homemagic.matter.matter-js-official-reference-report.v1",
+  "candidate": {
+    "id": "matter-js",
+    "revision": "b539372ff41fea24344760d69172508e9df931a2"
+  },
+  "reference": {
+    "id": "connectedhomeip-light",
+    "revision": "abcc720b48c5e59c0edcfe65c516f76ca9448aa3",
+    "release": "v1.5.1.0",
+    "target": "darwin-arm64-light-no-ble-no-wifi-no-thread"
+  },
+  "diagnostic": {
+    "operational_address_fallback": true
+  },
+  "host": {
+    "captured_at": "2026-07-13T00:16:48Z",
+    "os": "Darwin",
+    "architecture": "arm64",
+    "node": "v24.18.0"
+  },
+  "commission_process": {
+    "schema": "homemagic.matter.matter-js-independent-reference.v1",
+    "mode": "commission",
+    "outcomes": {
+      "fabric_create": "pass",
+      "commission": "pass",
+      "inventory": "pass",
+      "read": "pass",
+      "subscribe": "pass",
+      "invoke": "pass",
+      "restart": "not_run",
+      "remove": "not_run"
+    },
+    "active_phase": null,
+    "error": null,
+    "operational_address_fallback": "requested",
+    "commissioning_stages": [
+      {
+        "step": "0.1",
+        "name": "GetInitialData",
+        "status": "completed"
+      },
+      {
+        "step": "7.1",
+        "name": "GeneralCommissioning.ArmFailsafe",
+        "status": "completed"
+      },
+      {
+        "step": "8.1",
+        "name": "GeneralCommissioning.ConfigureRegulatoryInformation",
+        "status": "completed"
+      },
+      {
+        "step": "8.2",
+        "name": "TimeSynchronization.SynchronizeTime",
+        "status": "completed"
+      },
+      {
+        "step": "10.1",
+        "name": "OperationalCredentials.DeviceAttestation",
+        "status": "completed"
+      },
+      {
+        "step": "11.1",
+        "name": "OperationalCredentials.Certificates",
+        "status": "completed"
+      },
+      {
+        "step": "15.1",
+        "name": "AccessControl",
+        "status": "completed"
+      },
+      {
+        "step": "18.1",
+        "name": "Reconnect",
+        "status": "completed"
+      },
+      {
+        "step": "20.1",
+        "name": "GeneralCommissioning.Complete",
+        "status": "completed"
+      },
+      {
+        "step": "98.1",
+        "name": "OperationalCredentials.UpdateFabricLabel",
+        "status": "completed"
+      }
+    ],
+    "product_name": "TEST_PRODUCT",
+    "on_off_before": false,
+    "on_off_after": true
+  },
+  "restart_process": {
+    "schema": "homemagic.matter.matter-js-independent-reference.v1",
+    "mode": "restart",
+    "outcomes": {
+      "fabric_create": "pass",
+      "commission": "not_run",
+      "inventory": "pass",
+      "read": "pass",
+      "subscribe": "not_run",
+      "invoke": "not_run",
+      "restart": "pass",
+      "remove": "pass"
+    },
+    "active_phase": null,
+    "error": null,
+    "product_name": "TEST_PRODUCT"
+  }
+}

@@ -50,7 +50,11 @@ so weighted scores and tie-breaks are intentionally not calculated.
 - Against official ConnectedHomeIP `v1.5.1.0`, Linux x86_64 passes commission,
   inventory, read, invoke, subscription, restart, and removal. macOS ARM64
   stalls at operational reconnect, matching its rs-matter result. The required
-  two-host lifecycle therefore remains failed.
+  unmodified two-host lifecycle therefore remains failed.
+- A test-only direct-address patch makes the same full lifecycle pass on both
+  hosts, isolating the macOS CI failure to operational mDNS address acquisition
+  rather than CASE or credentials. Physical-network macOS discovery remains an
+  explicit selection gap.
 - A minimal private RPC boundary is specified, but Rust-owned secret storage,
   full cancellation, fault handling, and a pruned production package are not
   implemented.

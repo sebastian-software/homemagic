@@ -2,6 +2,12 @@ name: Matter matter.js official reference
 
 on:
   workflow_dispatch:
+    inputs:
+      operational_address_fallback:
+        description: Use the test-only known-address CASE diagnostic
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -49,7 +55,10 @@ jobs:
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
 
       - name: Run official independent lifecycle
-        run: ./scripts/run-matter-js-official-reference.sh report.json "${{ matrix.architecture }}" 1
+        run: >-
+          ./scripts/run-matter-js-official-reference.sh report.json
+          "${{ matrix.architecture }}"
+          "${{ inputs.operational_address_fallback && '1' || '0' }}"
 
       - name: Upload lifecycle report
         uses: actions/upload-artifact@v6
