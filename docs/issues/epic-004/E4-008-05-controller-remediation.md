@@ -49,6 +49,13 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: The first real matter.js package prototype now bundles the exact
+  pinned SDK, exact Node runtime, detected runtime library, top-level licenses,
+  and per-file hashes. Its deliberately limited `health_check`/`process_drain`
+  process passes the actual Rust supervisor locally on macOS ARM64. A two-host
+  workflow is committed; device methods, license closure, signing, rollback,
+  and Rust-backed controller storage remain open and the manifest explicitly
+  records `production_selected: false`.
 - 2026-07-13: A shell-free Tokio supervisor now owns inherited stdin/stdout,
   rejects unpinned handshakes before requests, applies caller/supervisor
   deadlines, kills lost or hung children, distinguishes pre-mutation from

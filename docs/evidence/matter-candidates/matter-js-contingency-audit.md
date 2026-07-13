@@ -40,6 +40,23 @@ production sidecar footprint; pruning, bundling, licenses, signing, and rollback
 remain unproven. Both reports use Node `v24.18.0`, npm `11.16.0`, the exact
 upstream commit, and the exact upstream package-lock hash.
 
+## Private package prototype
+
+The first pruned executable prototype bundles the exact SDK into a 2,148,316
+byte ESM file and packages the exact Node `v24.18.0` runtime. On the local macOS
+ARM64 Homebrew runtime, the executable is a 68,384-byte launcher plus the
+60,198,928-byte `libnode.137.dylib`; the complete directory is 61,132 KiB. Every
+runtime component has a committed SHA-256 manifest, and the packaged process
+passes the real Rust supervisor handshake, health request, and drain path.
+
+This is positive boundary and footprint evidence, not a production package.
+It advertises only `health_check` and `process_drain`, includes Node and
+matter.js top-level licenses but not yet a generated bundled-input license
+closure, and has no signing, rollback, real controller storage, or device
+operations. The exact local report is
+[matter-js-sidecar-package-local-macos-arm64.json](matter-js-sidecar-package-local-macos-arm64.json);
+the two-host workflow owns reproducible runner packages.
+
 ## Source capabilities and gaps
 
 - `CommissioningController` provides on-network commissioning, inventory,

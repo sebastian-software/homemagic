@@ -1,0 +1,73 @@
+name: Matter matter.js sidecar package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - config/matter-js-candidate.json
+      - sidecars/matter-js/**
+      - scripts/build-matter-js-sidecar.sh
+      - crates/homemagic-matter/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/matter-js-sidecar-package.yml
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package and Rust handshake (${{ matrix.label }})
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: x86_64
+            label: Linux x86_64
+          - runner: macos-14
+            architecture: arm64
+            label: macOS ARM64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out HomeMagic
+        uses: actions/checkout@v6
+
+      - name: Install pinned Node runtime
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Build pinned sidecar package
+        run: ./scripts/build-matter-js-sidecar.sh package "${{ matrix.architecture }}"
+
+      - name: Verify packaged process through Rust supervisor
+        env:
+          HOMEMAGIC_MATTER_JS_NODE: ${{ github.workspace }}/package/bin/node
+          HOMEMAGIC_MATTER_JS_SIDECAR: ${{ github.workspace }}/package/sidecar.mjs
+        run: >-
+          cargo test -p homemagic-matter --all-features --locked
+          packaged_matter_js_should_match_the_rust_protocol_when_configured
+          -- --exact
+
+      - name: Verify package manifest and canary absence
+        run: |
+          jq -e '.production_selected == false and .advertised_methods == ["health_check", "process_drain"]' package/manifest.json
+          if rg --text 'HOMEMAGIC_SECRET_CANARY' package; then exit 1; fi
+
+      - name: Upload package evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: matter-js-sidecar-${{ matrix.architecture }}
+          path: package
+          if-no-files-found: error

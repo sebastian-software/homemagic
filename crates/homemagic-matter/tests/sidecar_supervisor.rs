@@ -194,3 +194,43 @@ fn restart_budget_should_back_off_and_open_its_circuit() {
     budget.reset();
     assert_eq!(budget.record_failure(), Some(Duration::from_millis(10)));
 }
+
+#[tokio::test]
+async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
+    let Some(node) = std::env::var_os("HOMEMAGIC_MATTER_JS_NODE") else {
+        return;
+    };
+    let sidecar = std::env::var_os("HOMEMAGIC_MATTER_JS_SIDECAR")
+        .unwrap_or_else(|| panic!("sidecar path must accompany configured Node runtime"));
+    let real_identity = SidecarIdentity {
+        matter_js_revision: "b539372ff41fea24344760d69172508e9df931a2".into(),
+        node_version: "v24.18.0".into(),
+        minimum_minor: 0,
+        required_methods: [SidecarMethod::HealthCheck, SidecarMethod::ProcessDrain]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        required_event_kinds: BTreeSet::new(),
+        limits: ProtocolLimits::default(),
+    };
+    let mut process = SidecarProcess::launch(
+        &SidecarCommand {
+            executable: PathBuf::from(node),
+            arguments: vec![sidecar],
+        },
+        &real_identity,
+        timeouts(),
+        "installation-real".into(),
+        "session-real".into(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("packaged sidecar should launch: {error:?}"));
+    let binding = process.binding().clone();
+    process
+        .request(request(&binding), RemoteOperationState::PreMutation)
+        .await
+        .unwrap_or_else(|error| panic!("packaged health request should pass: {error}"));
+    process
+        .drain()
+        .await
+        .unwrap_or_else(|error| panic!("packaged sidecar should drain: {error}"));
+}
