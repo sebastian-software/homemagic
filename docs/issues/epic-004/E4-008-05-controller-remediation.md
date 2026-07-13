@@ -49,6 +49,18 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: Public package run `29217160926` passes on both hosts with
+  SDK-neutral node inventory and removal methods. The Rust supervisor proves
+  empty inventory and fail-closed missing-node removal; the child validates
+  decimal identities before dispatch and reports an indeterminate dispatched
+  removal as `partial` plus `inventory_required`. A commissioned-node removal
+  through this boundary still requires the independent fixture.
+- 2026-07-13: Public package run `29216848816` proves Rust-owned matter.js
+  fabric persistence on both hosts: missing load fails closed, create writes
+  only through reverse secret RPC, controlled drain closes storage, and a fresh
+  process loads the same fabric state. The bundle is byte-identical across
+  runners; production encryption, license closure, signing, and rollback
+  remain open.
 - 2026-07-13: Controlled requests now multiplex child-to-Rust secret calls and
   events before their final response. Secret frames use their separate limit;
   event delivery is persisted by a Rust handler before contiguous ack. The

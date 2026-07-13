@@ -92,6 +92,17 @@ manifests are committed for
 [macOS ARM64](matter-js-sidecar-fabric-package-macos-arm64.json) and
 [Linux x86_64](matter-js-sidecar-fabric-package-linux-x86_64.json).
 
+The following node-boundary slice adds SDK-neutral `node_inventory` and
+`node_remove`. Removal validates a decimal node identity before dispatch and
+returns `partial` with `inventory_required` when a dispatched decommission
+cannot be classified safely. Public run `29217160926` passes empty inventory,
+missing-node rejection, the fabric restart sequence, manifest checks, and
+canary scans on both hosts. Exact manifests are committed for
+[macOS ARM64](matter-js-sidecar-node-package-macos-arm64.json) and
+[Linux x86_64](matter-js-sidecar-node-package-linux-x86_64.json). The run does
+not prove removal of a commissioned independent fixture; that remains part of
+the complete boundary lifecycle gate.
+
 ## Source capabilities and gaps
 
 - `CommissioningController` provides on-network commissioning, inventory,
