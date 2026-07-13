@@ -12,9 +12,11 @@ use tokio::{
 };
 
 use crate::{
-    Accept, HandshakePolicy, Hello, MAX_FRAME_BYTES, PrivatePayload, ProtocolError, ProtocolLimits,
-    RemoteOperationState, ResponseDisposition, SessionBinding, SidecarEventKind, SidecarFrame,
-    SidecarMethod, SidecarRequest, SidecarResponse, negotiate, read_json_frame, write_json_frame,
+    Accept, EventAck, EventWindow, HandshakePolicy, Hello, MAX_FRAME_BYTES, PrivatePayload,
+    ProtocolError, ProtocolLimits, RemoteOperationState, ResponseDisposition, SessionBinding,
+    SidecarEventHandler, SidecarEventKind, SidecarFrame, SidecarMethod, SidecarRequest,
+    SidecarResponse, SidecarSecretStore, dispatch_secret_request, negotiate, read_json_frame,
+    write_json_frame,
 };
 
 /// Exact child runtime and capability policy owned by Rust.
@@ -94,6 +96,9 @@ pub enum SupervisorError {
     /// Child did not drain and exit in time.
     #[error("Matter sidecar drain timed out")]
     DrainTimeout,
+    /// Rust-owned event handling rejected an event before acknowledgement.
+    #[error("Matter sidecar event was rejected")]
+    EventRejected,
 }
 
 /// One validated running sidecar process.
@@ -103,6 +108,7 @@ pub struct SidecarProcess {
     writer: ChildStdin,
     binding: SessionBinding,
     max_frame_bytes: usize,
+    max_secret_frame_bytes: usize,
     timeouts: SupervisorTimeouts,
 }
 
@@ -178,6 +184,7 @@ impl SidecarProcess {
                 session_nonce: accept.session_nonce,
             },
             max_frame_bytes: accept.limits.max_frame_bytes as usize,
+            max_secret_frame_bytes: accept.limits.max_secret_frame_bytes as usize,
             timeouts,
         })
     }
@@ -238,6 +245,125 @@ impl SidecarProcess {
             return Err(SupervisorError::UnexpectedFrame);
         }
         Ok(response)
+    }
+
+    /// Execute a request while servicing reverse secrets and durable events.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same stable request errors as [`Self::request`], plus
+    /// `EventRejected` when Rust cannot durably accept an event. Secret values
+    /// use the separately negotiated sensitive-frame limit.
+    pub async fn request_controlled<S, H>(
+        &mut self,
+        request: SidecarRequest,
+        operation_state: RemoteOperationState,
+        secret_store: &S,
+        event_handler: &H,
+        event_window: &mut EventWindow,
+    ) -> Result<SidecarResponse, SupervisorError>
+    where
+        S: SidecarSecretStore,
+        H: SidecarEventHandler,
+    {
+        if request.session != self.binding {
+            return Err(SupervisorError::UnexpectedFrame);
+        }
+        let request_id = request.request_id.clone();
+        let deadline =
+            Instant::now() + Duration::from_millis(request.deadline_ms).min(self.timeouts.request);
+        if write_json_frame(
+            &mut self.writer,
+            &SidecarFrame::Request(request),
+            self.max_frame_bytes,
+        )
+        .await
+        .is_err()
+        {
+            let _ = self.child.start_kill();
+            return Err(SupervisorError::ProcessLost {
+                partial: operation_state.disconnect_is_partial(),
+            });
+        }
+
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let frame = match timeout(
+                remaining,
+                read_json_frame::<_, SidecarFrame>(&mut self.reader, self.max_secret_frame_bytes),
+            )
+            .await
+            {
+                Ok(Ok(frame)) => frame,
+                Ok(Err(_)) => {
+                    let _ = self.child.start_kill();
+                    return Err(SupervisorError::ProcessLost {
+                        partial: operation_state.disconnect_is_partial(),
+                    });
+                }
+                Err(_) => {
+                    let _ = self.child.start_kill();
+                    return Err(SupervisorError::RequestTimeout {
+                        partial: operation_state.disconnect_is_partial(),
+                    });
+                }
+            };
+
+            match frame {
+                SidecarFrame::Response(response) => {
+                    if response.session != self.binding || response.request_id != request_id {
+                        return Err(SupervisorError::UnexpectedFrame);
+                    }
+                    return Ok(response);
+                }
+                SidecarFrame::SecretRequest(secret_request) => {
+                    if secret_request.session != self.binding {
+                        return Err(SupervisorError::UnexpectedFrame);
+                    }
+                    let response = dispatch_secret_request(secret_store, secret_request)
+                        .await
+                        .map_err(|_| SupervisorError::UnexpectedFrame)?;
+                    write_json_frame(
+                        &mut self.writer,
+                        &SidecarFrame::SecretResponse(response),
+                        self.max_secret_frame_bytes,
+                    )
+                    .await
+                    .map_err(|_| SupervisorError::ProcessLost {
+                        partial: operation_state.disconnect_is_partial(),
+                    })?;
+                }
+                SidecarFrame::Event(event) => {
+                    if event.session != self.binding {
+                        return Err(SupervisorError::UnexpectedFrame);
+                    }
+                    event_window
+                        .receive(event.sequence)
+                        .map_err(|_| SupervisorError::UnexpectedFrame)?;
+                    event_handler
+                        .handle(&event)
+                        .await
+                        .map_err(|_| SupervisorError::EventRejected)?;
+                    event_window
+                        .acknowledge(event.sequence)
+                        .map_err(|_| SupervisorError::UnexpectedFrame)?;
+                    let ack = EventAck {
+                        session: self.binding.clone(),
+                        through_sequence: event.sequence,
+                    };
+                    write_json_frame(
+                        &mut self.writer,
+                        &SidecarFrame::EventAck(ack),
+                        self.max_frame_bytes,
+                    )
+                    .await
+                    .map_err(|_| SupervisorError::ProcessLost {
+                        partial: operation_state.disconnect_is_partial(),
+                    })?;
+                }
+                _ => return Err(SupervisorError::UnexpectedFrame),
+            }
+        }
     }
 
     /// Ask the child to drain and exit, then kill it if the deadline expires.

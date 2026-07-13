@@ -1,12 +1,20 @@
 //! Process-level tests for the Matter sidecar supervisor.
 #![cfg(feature = "sidecar-fixture")]
 
-use std::{collections::BTreeSet, ffi::OsString, path::PathBuf, time::Duration};
+use std::{
+    collections::BTreeSet,
+    ffi::OsString,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
+use async_trait::async_trait;
 use homemagic_matter::{
-    PrivatePayload, ProtocolLimits, RemoteOperationState, RestartBudget, SessionBinding,
-    SidecarCommand, SidecarIdentity, SidecarMethod, SidecarProcess, SidecarRequest,
-    SupervisorError, SupervisorTimeouts,
+    EventWindow, PrivatePayload, ProtocolLimits, RemoteOperationState, RestartBudget,
+    SecretDriverError, SecretRecord, SensitiveBytes, SessionBinding, SidecarCommand, SidecarEvent,
+    SidecarEventHandler, SidecarEventHandlerError, SidecarIdentity, SidecarMethod, SidecarProcess,
+    SidecarRequest, SidecarSecretStore, SupervisorError, SupervisorTimeouts,
 };
 use serde_json::json;
 
@@ -49,6 +57,43 @@ fn request(binding: &SessionBinding) -> SidecarRequest {
     }
 }
 
+struct EmptySecretStore;
+
+#[async_trait]
+impl SidecarSecretStore for EmptySecretStore {
+    async fn get(&self, _handle: &str) -> Result<Option<SecretRecord>, SecretDriverError> {
+        Ok(None)
+    }
+
+    async fn put(&self, _handle: &str, _value: SensitiveBytes) -> Result<u64, SecretDriverError> {
+        Ok(1)
+    }
+
+    async fn delete(&self, _handle: &str) -> Result<bool, SecretDriverError> {
+        Ok(false)
+    }
+
+    async fn compare_and_swap(
+        &self,
+        _handle: &str,
+        _expected_revision: u64,
+        _value: SensitiveBytes,
+    ) -> Result<u64, SecretDriverError> {
+        Ok(1)
+    }
+}
+
+#[derive(Default)]
+struct RecordingEventHandler(AtomicBool);
+
+#[async_trait]
+impl SidecarEventHandler for RecordingEventHandler {
+    async fn handle(&self, _event: &SidecarEvent) -> Result<(), SidecarEventHandlerError> {
+        self.0.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn supervisor_should_handshake_request_and_drain_without_a_shell() {
     let mut process = SidecarProcess::launch(
@@ -69,6 +114,38 @@ async fn supervisor_should_handshake_request_and_drain_without_a_shell() {
         .drain()
         .await
         .unwrap_or_else(|error| panic!("drain should pass: {error}"));
+}
+
+#[tokio::test]
+async fn supervisor_should_service_reverse_secrets_and_ack_durable_events() {
+    let mut process = SidecarProcess::launch(
+        &command("control"),
+        &identity(),
+        timeouts(),
+        "installation-1".into(),
+        "session-control".into(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("control fixture should launch: {error}"));
+    let binding = process.binding().clone();
+    let handler = RecordingEventHandler::default();
+    let mut window =
+        EventWindow::new(4).unwrap_or_else(|error| panic!("window should pass: {error}"));
+    process
+        .request_controlled(
+            request(&binding),
+            RemoteOperationState::PreMutation,
+            &EmptySecretStore,
+            &handler,
+            &mut window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("controlled request should pass: {error}"));
+    assert!(handler.0.load(Ordering::SeqCst));
+    process
+        .drain()
+        .await
+        .unwrap_or_else(|error| panic!("control fixture should drain: {error}"));
 }
 
 #[tokio::test]

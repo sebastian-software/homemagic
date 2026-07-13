@@ -49,6 +49,12 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: Controlled requests now multiplex child-to-Rust secret calls and
+  events before their final response. Secret frames use their separate limit;
+  event delivery is persisted by a Rust handler before contiguous ack. The
+  process fixture proves reverse secret response and event acknowledgement in
+  one request, closing the supervisor deadlock that a real Rust-backed
+  matter.js storage driver would otherwise encounter.
 - 2026-07-13: Public package run `29215942175` passes on macOS ARM64 and Linux
   x86_64. Both exact Node runtimes launch through the real Rust supervisor; the
   bundle hash is identical on both hosts and package canary scans pass. Exact

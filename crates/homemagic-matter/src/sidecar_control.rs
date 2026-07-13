@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::{ProtocolError, SessionBinding, SidecarEventKind};
+use crate::{ProtocolError, SessionBinding, SidecarEvent, SidecarEventKind};
 
 /// Secret bytes accepted only by reverse secret-driver calls.
 #[derive(PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
@@ -156,6 +156,21 @@ pub trait SidecarSecretStore: Send + Sync {
         expected_revision: u64,
         value: SensitiveBytes,
     ) -> Result<u64, SecretDriverError>;
+}
+
+/// Stable rejection from the Rust event consumer.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum SidecarEventHandlerError {
+    /// Durable event handling rejected the event.
+    #[error("sidecar event handler rejected event")]
+    Rejected,
+}
+
+/// Rust-owned durable consumer for sidecar events.
+#[async_trait]
+pub trait SidecarEventHandler: Send + Sync {
+    /// Persist and publish one validated event before it is acknowledged.
+    async fn handle(&self, event: &SidecarEvent) -> Result<(), SidecarEventHandlerError>;
 }
 
 /// Validate and dispatch one reverse secret request.

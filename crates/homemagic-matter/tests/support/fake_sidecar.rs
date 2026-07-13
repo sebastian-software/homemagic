@@ -4,11 +4,53 @@ use std::collections::BTreeSet;
 
 use homemagic_matter::{
     Hello, MAX_FRAME_BYTES, PrivatePayload, ProtocolLimits, ProtocolVersion, ResponseDisposition,
-    SidecarFailure, SidecarFrame, SidecarMethod, SidecarResponse, read_json_frame,
-    write_json_frame,
+    SecretMethod, SecretRequest, SessionBinding, SidecarEvent, SidecarEventKind, SidecarFailure,
+    SidecarFrame, SidecarMethod, SidecarResponse, read_json_frame, write_json_frame,
 };
 use serde_json::json;
-use tokio::io::{stdin, stdout};
+use tokio::io::{AsyncRead, AsyncWrite, stdin, stdout};
+
+async fn exchange_control<R, W>(reader: &mut R, writer: &mut W, session: SessionBinding) -> bool
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let secret = SidecarFrame::SecretRequest(SecretRequest {
+        session: session.clone(),
+        request_id: "reverse-secret-1".into(),
+        method: SecretMethod::Get,
+        handle: "fabric/main".into(),
+        expected_revision: None,
+        value: None,
+    });
+    if write_json_frame(writer, &secret, MAX_FRAME_BYTES)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    let Ok(SidecarFrame::SecretResponse(_)) = read_json_frame(reader, MAX_FRAME_BYTES).await else {
+        return false;
+    };
+    let event = SidecarFrame::Event(SidecarEvent {
+        session,
+        sequence: 1,
+        subscription_id: "subscription-1".into(),
+        operation_id: None,
+        kind: SidecarEventKind::AttributeReport,
+        body: PrivatePayload::new(json!({"value": true})),
+    });
+    if write_json_frame(writer, &event, MAX_FRAME_BYTES)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    matches!(
+        read_json_frame(reader, MAX_FRAME_BYTES).await,
+        Ok(SidecarFrame::EventAck(_))
+    )
+}
 
 #[tokio::main]
 async fn main() {
@@ -58,6 +100,12 @@ async fn main() {
             std::future::pending::<()>().await;
         }
         let drain = request.method == SidecarMethod::ProcessDrain;
+        if mode == "control"
+            && request.method == SidecarMethod::HealthCheck
+            && !exchange_control(&mut reader, &mut writer, request.session.clone()).await
+        {
+            return;
+        }
         let disposition = if request.method == SidecarMethod::HealthCheck || drain {
             ResponseDisposition::Result {
                 body: PrivatePayload::new(json!({"healthy": true})),

@@ -28,7 +28,8 @@ pub use script::{
 pub use sidecar_control::{
     CancellationAck, CancellationDisposition, EventWindow, RemoteOperationState, SecretDisposition,
     SecretDriverError, SecretMethod, SecretRecord, SecretRequest, SecretResponse, SensitiveBytes,
-    SidecarSecretStore, dispatch_secret_request, event_may_coalesce,
+    SidecarEventHandler, SidecarEventHandlerError, SidecarSecretStore, dispatch_secret_request,
+    event_may_coalesce,
 };
 pub use sidecar_protocol::{
     Accept, EventAck, HandshakePolicy, Hello, MAX_EVENT_WINDOW, MAX_FRAME_BYTES,
