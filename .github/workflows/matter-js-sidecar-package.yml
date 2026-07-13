@@ -62,7 +62,7 @@ jobs:
 
       - name: Verify package manifest and canary absence
         run: |
-          jq -e '.production_selected == false and .advertised_methods == ["fabric_load", "fabric_create", "node_inventory", "health_check", "process_drain"]' package/manifest.json
+          jq -e '.production_selected == false and .advertised_methods == ["fabric_load", "fabric_create", "node_inventory", "node_remove", "health_check", "process_drain"]' package/manifest.json
           if rg --text 'HOMEMAGIC_SECRET_CANARY' package; then exit 1; fi
 
       - name: Upload package evidence

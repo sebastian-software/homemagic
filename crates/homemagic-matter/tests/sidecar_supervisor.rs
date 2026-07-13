@@ -58,13 +58,22 @@ fn request_for(
     method: SidecarMethod,
     request_id: &str,
 ) -> SidecarRequest {
+    request_with_body(binding, method, request_id, json!({}))
+}
+
+fn request_with_body(
+    binding: &SessionBinding,
+    method: SidecarMethod,
+    request_id: &str,
+    body: serde_json::Value,
+) -> SidecarRequest {
     SidecarRequest {
         session: binding.clone(),
         request_id: request_id.into(),
         method,
         deadline_ms: 2_000,
         idempotency_key: request_id.into(),
-        body: PrivatePayload::new(json!({})),
+        body: PrivatePayload::new(body),
     }
 }
 
@@ -364,14 +373,36 @@ async fn assert_empty_inventory(
     ));
 }
 
-#[tokio::test]
-async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
-    let Some(node) = std::env::var_os("HOMEMAGIC_MATTER_JS_NODE") else {
-        return;
-    };
-    let sidecar = std::env::var_os("HOMEMAGIC_MATTER_JS_SIDECAR")
-        .unwrap_or_else(|| panic!("sidecar path must accompany configured Node runtime"));
-    let real_identity = SidecarIdentity {
+async fn assert_missing_node_removal_rejected(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) {
+    let response = process
+        .request_controlled(
+            request_with_body(
+                binding,
+                SidecarMethod::NodeRemove,
+                "node-remove-missing",
+                json!({ "node_id": "123" }),
+            ),
+            RemoteOperationState::MutationDispatched,
+            secrets,
+            handler,
+            window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("missing node removal should respond: {error:?}"));
+    assert!(matches!(
+        response.disposition,
+        ResponseDisposition::Error { ref error } if error.code == "node_not_found"
+    ));
+}
+
+fn packaged_identity() -> SidecarIdentity {
+    SidecarIdentity {
         matter_js_revision: "b539372ff41fea24344760d69172508e9df931a2".into(),
         node_version: "v24.18.0".into(),
         minimum_minor: 0,
@@ -379,6 +410,7 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
             SidecarMethod::FabricLoad,
             SidecarMethod::FabricCreate,
             SidecarMethod::NodeInventory,
+            SidecarMethod::NodeRemove,
             SidecarMethod::HealthCheck,
             SidecarMethod::ProcessDrain,
         ]
@@ -386,7 +418,17 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         .collect::<BTreeSet<_>>(),
         required_event_kinds: BTreeSet::new(),
         limits: ProtocolLimits::default(),
+    }
+}
+
+#[tokio::test]
+async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
+    let Some(node) = std::env::var_os("HOMEMAGIC_MATTER_JS_NODE") else {
+        return;
     };
+    let sidecar = std::env::var_os("HOMEMAGIC_MATTER_JS_SIDECAR")
+        .unwrap_or_else(|| panic!("sidecar path must accompany configured Node runtime"));
+    let real_identity = packaged_identity();
     let sidecar_command = SidecarCommand {
         executable: PathBuf::from(node),
         arguments: vec![sidecar],
@@ -436,6 +478,8 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         .unwrap_or_else(|error| panic!("packaged fabric create should pass: {error:?}"));
     assert!(secrets.0.lock().is_ok_and(|values| !values.is_empty()));
     assert_empty_inventory(&mut process, &binding, &secrets, &handler, &mut window).await;
+    assert_missing_node_removal_rejected(&mut process, &binding, &secrets, &handler, &mut window)
+        .await;
     process
         .drain_controlled(&secrets, &handler, &mut window)
         .await

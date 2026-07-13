@@ -10,7 +10,14 @@ const NODE_VERSION = "v24.18.0";
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_SECRET_FRAME_BYTES = 8 * MAX_FRAME_BYTES;
 const FABRIC_MARKER_HANDLE = "matter/storage/__fabric__";
-const methods = ["fabric_load", "fabric_create", "node_inventory", "health_check", "process_drain"];
+const methods = [
+    "fabric_load",
+    "fabric_create",
+    "node_inventory",
+    "node_remove",
+    "health_check",
+    "process_drain",
+];
 
 if (process.version !== NODE_VERSION) process.exit(78);
 Logger.level = "fatal";
@@ -38,6 +45,17 @@ const fail = (request, code) => {
             session: request.session,
             request_id: request.request_id,
             disposition: { status: "error", error: { code, retryable: false } },
+        },
+    });
+};
+
+const partial = (request, phase, body) => {
+    writeFrame({
+        type: "response",
+        payload: {
+            session: request.session,
+            request_id: request.request_id,
+            disposition: { status: "partial", phase, body },
         },
     });
 };
@@ -161,6 +179,28 @@ const handleFrame = async frame => {
                 operational_address: details.operationalAddress,
             })),
         };
+    } else if (request.method === "node_remove") {
+        const nodeId = request.body?.node_id;
+        if (typeof nodeId !== "string" || !/^[1-9][0-9]*$/.test(nodeId)) {
+            fail(request, "invalid_node_id");
+            return;
+        }
+        const active = await ensureController();
+        const matterNodeId = BigInt(nodeId);
+        if (!active.getCommissionedNodes().some(candidate => candidate === matterNodeId)) {
+            fail(request, "node_not_found");
+            return;
+        }
+        try {
+            await active.removeNode(matterNodeId, true);
+        } catch {
+            partial(request, "node_remove_dispatched", {
+                node_id: nodeId,
+                reconciliation: "inventory_required",
+            });
+            return;
+        }
+        body = { node_id: nodeId, removed: true };
     } else {
         body = {};
     }

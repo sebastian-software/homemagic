@@ -6,9 +6,11 @@ as the production Matter controller yet.
 
 The executable imports the exact pinned matter.js SDK. It supports
 `fabric_create`/`fabric_load` through a Rust-backed, revisioned in-memory storage
-driver, SDK-neutral `node_inventory`, plus `health_check` and `process_drain`.
-It intentionally does not advertise commissioning, node mutation, interaction,
-subscription, event, or cancellation capabilities
+driver, SDK-neutral `node_inventory`/`node_remove`, plus `health_check` and
+`process_drain`. Removal validates identity before dispatch and returns a
+partial outcome requiring inventory reconciliation if the dispatched mutation
+cannot be classified. It intentionally does not advertise commissioning,
+interaction, subscription, event, or cancellation capabilities
 until their production implementations pass the Rust contract suite. Standard
 output is protocol-only; ordinary diagnostic payloads are not written by the
 child.
