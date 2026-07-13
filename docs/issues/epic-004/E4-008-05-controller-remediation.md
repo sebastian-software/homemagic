@@ -49,6 +49,12 @@ and no production compatibility claim.
 
 ## Progress log
 
+- 2026-07-13: The Rust adapter now owns a first executable private-protocol
+  slice: bounded big-endian framing, runtime/version/capability negotiation,
+  nonce-bound envelopes, stable result/partial/error dispositions, event/ack
+  shapes, and payload-wide diagnostic redaction. Matter-crate contract tests and
+  strict all-target Clippy pass; reverse secrets, flow-control state, and process
+  supervision remain deliberately unchecked.
 - 2026-07-13: Test-only run `29214794784` seeds the already known on-network
   address directly into matter.js immediately before operational CASE. Both
   hosts then pass commission, inventory, read, toggle, subscription, controller

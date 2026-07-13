@@ -9,6 +9,7 @@ mod clock;
 mod command;
 mod fixture;
 mod script;
+mod sidecar_protocol;
 mod simulator;
 
 pub use barrier::{SimulatorBarrier, SimulatorDispatchBarriers};
@@ -21,6 +22,13 @@ pub use fixture::{
 pub use script::{
     SimulatorFault, SimulatorOperation, SimulatorReportFault, SimulatorRestartCheckpoint,
     SimulatorTraceEntry, SimulatorTraceKind,
+};
+pub use sidecar_protocol::{
+    Accept, EventAck, HandshakePolicy, Hello, MAX_EVENT_WINDOW, MAX_FRAME_BYTES,
+    MAX_SECRET_FRAME_BYTES, PrivatePayload, ProtocolError, ProtocolLimits, ProtocolVersion,
+    ResponseDisposition, SessionBinding, SidecarEvent, SidecarEventKind, SidecarFailure,
+    SidecarFrame, SidecarMethod, SidecarRequest, SidecarResponse, negotiate, read_json_frame,
+    write_json_frame,
 };
 pub use simulator::{DeterministicMatterSimulator, SimulatorCheckpoint, SimulatorControlError};
 
