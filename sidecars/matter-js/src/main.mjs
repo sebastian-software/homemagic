@@ -2,6 +2,8 @@
 
 import "@matter/nodejs";
 import { Environment, Logger } from "@matter/main";
+import { GeneralCommissioning } from "@matter/main/clusters";
+import { ManualPairingCodeCodec, QrPairingCodeCodec } from "@matter/types";
 import { CommissioningController } from "@project-chip/matter.js";
 import { installRustStorage } from "./storage.mjs";
 
@@ -13,6 +15,7 @@ const FABRIC_MARKER_HANDLE = "matter/storage/__fabric__";
 const methods = [
     "fabric_load",
     "fabric_create",
+    "node_commission",
     "node_inventory",
     "node_remove",
     "health_check",
@@ -117,6 +120,29 @@ const ensureController = async () => {
     return controller;
 };
 
+const decodeSetupPayload = payload => {
+    if (!Array.isArray(payload) || payload.length === 0 || payload.length > 1024) return undefined;
+    if (!payload.every(value => Number.isInteger(value) && value >= 0 && value <= 255)) return undefined;
+    const setupCode = Buffer.from(payload).toString("utf8");
+    try {
+        if (setupCode.startsWith("MT:")) {
+            const decoded = QrPairingCodeCodec.decode(setupCode);
+            if (decoded.length !== 1) return undefined;
+            return {
+                passcode: decoded[0].passcode,
+                identifierData: { longDiscriminator: decoded[0].discriminator },
+            };
+        }
+        const decoded = ManualPairingCodeCodec.decode(setupCode);
+        return {
+            passcode: decoded.passcode,
+            identifierData: { shortDiscriminator: decoded.shortDiscriminator },
+        };
+    } catch {
+        return undefined;
+    }
+};
+
 const handleFrame = async frame => {
     if (accepted === undefined) {
         if (frame?.type !== "accept") process.exit(76);
@@ -170,6 +196,52 @@ const handleFrame = async frame => {
             await secretBridge.put(FABRIC_MARKER_HANDLE, Buffer.from("v1"));
         }
         body = { fabric_ready: true, commissioned_nodes: active.getCommissionedNodes().length };
+    } else if (request.method === "node_commission") {
+        const setup = decodeSetupPayload(request.body?.setup_payload);
+        if (setup === undefined) {
+            fail(request, "invalid_setup_payload");
+            return;
+        }
+        const active = await ensureController();
+        const discovery = {
+            identifierData: setup.identifierData,
+            discoveryCapabilities: { ble: false },
+        };
+        const knownAddress = request.body?.known_address;
+        if (knownAddress !== undefined) {
+            if (
+                typeof knownAddress?.ip !== "string" ||
+                knownAddress.ip.length === 0 ||
+                knownAddress.ip.length > 255 ||
+                !Number.isInteger(knownAddress?.port) ||
+                knownAddress.port <= 0 ||
+                knownAddress.port > 65535
+            ) {
+                fail(request, "invalid_known_address");
+                return;
+            }
+            discovery.knownAddress = { ip: knownAddress.ip, port: knownAddress.port, type: "udp" };
+        }
+        try {
+            const nodeId = await active.commissionNode(
+                {
+                    commissioning: {
+                        regulatoryLocation: GeneralCommissioning.RegulatoryLocationType.IndoorOutdoor,
+                        regulatoryCountryCode: "XX",
+                    },
+                    discovery,
+                    passcode: setup.passcode,
+                    autoSubscribe: false,
+                },
+                { connectNodeAfterCommissioning: false },
+            );
+            body = { node_id: nodeId.toString(), commissioned: true };
+        } catch {
+            partial(request, "commissioning_dispatched", {
+                reconciliation: "inventory_required",
+            });
+            return;
+        }
     } else if (request.method === "node_inventory") {
         const active = await ensureController();
         body = {

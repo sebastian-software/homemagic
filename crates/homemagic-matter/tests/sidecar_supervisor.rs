@@ -401,6 +401,55 @@ async fn assert_missing_node_removal_rejected(
     ));
 }
 
+async fn assert_invalid_commissioning_rejected(
+    process: &mut SidecarProcess,
+    binding: &SessionBinding,
+    secrets: &MemorySecretStore,
+    handler: &RecordingEventHandler,
+    window: &mut EventWindow,
+) {
+    let response = process
+        .request_controlled(
+            request_with_body(
+                binding,
+                SidecarMethod::NodeCommission,
+                "node-commission-invalid",
+                json!({ "setup_payload": [83, 69, 67, 82, 69, 84, 45, 67, 65, 78, 65, 82, 89] }),
+            ),
+            RemoteOperationState::PreMutation,
+            secrets,
+            handler,
+            window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("invalid commissioning should respond: {error:?}"));
+    assert!(matches!(
+        response.disposition,
+        ResponseDisposition::Error { ref error } if error.code == "invalid_setup_payload"
+    ));
+
+    let valid_setup = b"26318621095".to_vec();
+    let response = process
+        .request_controlled(
+            request_with_body(
+                binding,
+                SidecarMethod::NodeCommission,
+                "node-commission-invalid-address",
+                json!({ "setup_payload": valid_setup, "known_address": { "ip": "::1", "port": 0 } }),
+            ),
+            RemoteOperationState::PreMutation,
+            secrets,
+            handler,
+            window,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("invalid known address should respond: {error:?}"));
+    assert!(matches!(
+        response.disposition,
+        ResponseDisposition::Error { ref error } if error.code == "invalid_known_address"
+    ));
+}
+
 fn packaged_identity() -> SidecarIdentity {
     SidecarIdentity {
         matter_js_revision: "b539372ff41fea24344760d69172508e9df931a2".into(),
@@ -409,6 +458,7 @@ fn packaged_identity() -> SidecarIdentity {
         required_methods: [
             SidecarMethod::FabricLoad,
             SidecarMethod::FabricCreate,
+            SidecarMethod::NodeCommission,
             SidecarMethod::NodeInventory,
             SidecarMethod::NodeRemove,
             SidecarMethod::HealthCheck,
@@ -478,6 +528,8 @@ async fn packaged_matter_js_should_match_the_rust_protocol_when_configured() {
         .unwrap_or_else(|error| panic!("packaged fabric create should pass: {error:?}"));
     assert!(secrets.0.lock().is_ok_and(|values| !values.is_empty()));
     assert_empty_inventory(&mut process, &binding, &secrets, &handler, &mut window).await;
+    assert_invalid_commissioning_rejected(&mut process, &binding, &secrets, &handler, &mut window)
+        .await;
     assert_missing_node_removal_rejected(&mut process, &binding, &secrets, &handler, &mut window)
         .await;
     process
