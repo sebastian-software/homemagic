@@ -47,7 +47,7 @@ class InstrumentedCommissioningFlow extends ControllerCommissioningFlow {
     constructor(interaction, ca, fabric, commissioningOptions, transitionToCase) {
         const instrumentedTransition = async (peerAddress, supportsConcurrentConnections) => {
             if (operationalAddressFallback) {
-                const peer = Environment.default.get(PeerSet).for(peerAddress);
+                const peer = controller.env.get(PeerSet).for(peerAddress);
                 peer.descriptor.operationalAddress = { ip: address, port, type: "udp" };
                 report.operational_address_fallback = "applied";
                 await persist();
