@@ -214,7 +214,8 @@ fabric without learning Matter cluster internals.
   packaging requirements.
 - 2026-07-12: E4-008-05 now has a pinned packaged matter.js prototype whose
   custom storage driver persists fabric namespaces only through Rust reverse
-  secret RPC. A real macOS ARM64 package passed create, controlled drain,
-  process restart, load, and controlled drain against the same Rust store.
-  Two-host evidence, complete device operations, production encrypted-store
-  integration, signing, rollback, and an accepted exception ADR remain open.
+  secret RPC. Public run 29216848816 passed missing-fabric rejection, create,
+  controlled drain, process restart, load, and controlled drain against the
+  same Rust store on macOS ARM64 and Linux x86_64. Complete device operations,
+  production encrypted-store integration, signing, rollback, and an accepted
+  exception ADR remain open.

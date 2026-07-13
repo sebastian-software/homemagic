@@ -74,16 +74,23 @@ handle through reverse secret RPC. Rust owns the bytes, revisions, and
 compare-and-swap decisions; the child holds no durable file and serializes
 concurrent SDK commits before updating the Rust revision.
 
-The real packaged macOS ARM64 process passes this sequence through the Rust
-supervisor: handshake, `fabric_create`, reverse secret writes, controlled
-drain, fresh process, `fabric_load` from the same Rust store, and controlled
-drain. The package now advertises `fabric_create`, `fabric_load`,
-`health_check`, and `process_drain`. This closes the local architecture proof
-for Rust-owned fabric persistence. It does not yet prove missing-fabric
-recovery beyond fail-closed rejection, encrypted production storage, two-host
-packaging, downgrade and rollback behavior, or Matter node operations. The
-exact local package manifest is committed as
+The real packaged process passes this sequence through the Rust supervisor on
+macOS ARM64 and Linux x86_64: handshake, fail-closed missing-fabric load,
+`fabric_create`, reverse secret writes, controlled drain, fresh process,
+`fabric_load` from the same Rust store, and controlled drain. The package now
+advertises `fabric_create`, `fabric_load`, `health_check`, and `process_drain`.
+This closes the two-host architecture proof for Rust-owned fabric persistence.
+It does not yet prove encrypted production storage, downgrade and rollback
+behavior, or Matter node operations. The exact local package manifest is
+committed as
 [matter-js-sidecar-fabric-package-local-macos-arm64.json](matter-js-sidecar-fabric-package-local-macos-arm64.json).
+
+Public workflow run `29216848816` passes the real Rust supervisor sequence,
+manifest checks, canary scan, and artifact upload on both targets. The bundle is
+byte-identical across hosts (`5dd6203c...`, 2,151,285 bytes). Exact runner
+manifests are committed for
+[macOS ARM64](matter-js-sidecar-fabric-package-macos-arm64.json) and
+[Linux x86_64](matter-js-sidecar-fabric-package-linux-x86_64.json).
 
 ## Source capabilities and gaps
 
@@ -97,9 +104,8 @@ exact local package manifest is committed as
   phases; the newer node API has narrower abort support that remains unproven in
   this lifecycle.
 - matter.js storage is pluggable. The package prototype now uses an in-memory
-  driver backed only by Rust reverse secret RPC; local create/restart/load is
-  proven, while production encryption, recovery, and two-host evidence remain
-  open.
+  driver backed only by Rust reverse secret RPC; two-host missing/create/restart/load
+  is proven, while production encryption and recovery remain open.
 - The committed private-boundary proposal covers framing, version negotiation,
   reverse secret callbacks, event backpressure, partial outcomes, supervision,
   packaging, and removal criteria. None of those contracts has a production
@@ -140,9 +146,9 @@ not to turn candidate failure into missing evidence.
 | Build/run on both targets | Pass for build and fabric start | Two-host build and lifecycle reports |
 | SDK-neutral production port | Fail | Protocol specified but not implemented |
 | Complete independent lifecycle | Fail | Linux passes; macOS times out at operational reconnect |
-| ADR-0008/ADR-0037 secrets | Partial | Rust-owned reverse-RPC storage passes local create/restart/load; production encrypted-store integration remains open |
+| ADR-0008/ADR-0037 secrets | Partial | Rust-owned reverse-RPC storage passes two-host missing/create/restart/load; production encrypted-store integration remains open |
 | Errors/cancel/partial/subscription loss | Fail | Partial phase evidence exists; production boundary does not |
-| Reproducible production packaging | Partial | Health-only package passes both hosts; fabric-storage package evidence is local only |
+| Reproducible production packaging | Partial | Fabric-storage package passes both hosts; license closure, signing, rollback, and sandbox remain open |
 | ADR-0005 exception | Fail | Boundary fault suite exists, but the exception, complete operations, signing, rollback, and production sandbox are not accepted |
 
 ## Required remediation
